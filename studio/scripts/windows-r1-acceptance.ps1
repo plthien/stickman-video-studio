@@ -45,8 +45,8 @@ function Read-TestCounts([string]$Log) {
   $counts = @{ passed=0; failed=0; skipped=0 }
   foreach ($kind in @('passed','failed','skipped')) {
     $patterns = @(
-      "(?m)^\\s*Tests?\\s+[^\\r\\n]*?(\\d+)\\s+$kind",
-      "(?m)(\\d+)\\s+$kind\\b"
+      "(?m)^\s*Tests?\s+[^\r\n]*?(\d+)\s+$kind",
+      "(?m)(\d+)\s+$kind\b"
     )
     foreach ($pattern in $patterns) {
       $matchesFound = [regex]::Matches($body, $pattern)
