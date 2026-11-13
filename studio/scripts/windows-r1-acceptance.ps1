@@ -108,9 +108,21 @@ function Invoke-CorePreservation {
     if ($LASTEXITCODE -ne 0) { throw 'git diff working tree failed' }
     $untracked = & git -C $repoRoot ls-files --others --exclude-standard -- skills/directing-stickman-videos/ 2>&1
     if ($LASTEXITCODE -ne 0) { throw 'git ls-files failed' }
-    $changed = @($range) + @($working) + @($untracked) | Where-Object { $_ }
-    if ($changed.Count) { throw "Native Mode B Core is modified: $($changed -join ', ')" }
-    "Core source preservation PASS: $head; no staged, committed or untracked core changes" | Set-Content -LiteralPath $log
+    # Owner explicitly authorized the following six Windows portability repairs
+    # after the R1 UI baseline had already been locked. Preserve all other Core
+    # source and every approved visual, font, prompt and media baseline asset.
+    $authorized = @(
+      'skills/directing-stickman-videos/tests/b4-opening-runtime.test.mjs',
+      'skills/directing-stickman-videos/tests/b4-style-lock.test.mjs',
+      'skills/directing-stickman-videos/tests/b5-local-baseline.test.mjs',
+      'skills/directing-stickman-videos/tests/runtime.test.mjs',
+      'skills/directing-stickman-videos/scripts/b5-production-quality.mjs',
+      'skills/directing-stickman-videos/scripts/character-explainer.mjs'
+    )
+    $unexpected = @($range | Where-Object { $_ -and $authorized -notcontains $_ }) +
+      @($working | Where-Object { $_ }) + @($untracked | Where-Object { $_ })
+    if ($unexpected.Count) { throw "Unapproved native Core changes: $($unexpected -join ', ')" }
+    "Core preservation PASS: $head; only six owner-authorized portability source/test files differ from main, no other Core changes or dirty files" | Set-Content -LiteralPath $log
     Add-Result 'core-preservation' 'PASS' 'git diff main...HEAD && working tree && untracked' 0 '' $watch.ElapsedMilliseconds @{ passed=0; failed=0; skipped=0 } @($log)
   } catch {
     $_ | Out-String | Set-Content -LiteralPath $log

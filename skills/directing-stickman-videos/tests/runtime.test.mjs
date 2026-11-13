@@ -10,6 +10,9 @@ import {keyState, render, painter} from '../scripts/autopilot-render.mjs';
 
 const cli = path.join(ROOT, 'scripts/autopilot.mjs');
 const command = args => spawnSync(process.execPath, [cli, ...args], {encoding: 'utf8', timeout: 120000});
+// Directory junctions exercise the same output-escape defenses on Windows,
+// without requiring elevated symlink privileges.
+const linkDirectory = (target, destination) => fs.symlinkSync(target, destination, process.platform === 'win32' ? 'junction' : 'dir');
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stickman-runtime-test-'));
   // Each test owns this exact temporary directory, never a user project.
@@ -194,13 +197,13 @@ test('approval verifies actual preview bytes and never infers approval of legacy
   r = command(['approve', f.file, '--note', 'Synthetic test only']); assert.notEqual(r.status, 0); assert.match(r.stderr, /Preview changed/);
 });
 test('output symlink cannot redirect writes to another directory', async t => {
-  const f = fixture(t); fs.symlinkSync(os.tmpdir(), path.join(f.dir, 'output'), 'dir'); await assert.rejects(render(loadProject(f.file)), /real project-local/);
+  const f = fixture(t); linkDirectory(os.tmpdir(), path.join(f.dir, 'output')); await assert.rejects(render(loadProject(f.file)), /real project-local/);
 });
 test('nested cache symlink cannot redirect renderer-owned writes', async t => {
   const f = fixture(t), external = path.join(f.dir, 'keep');
   fs.mkdirSync(external); fs.mkdirSync(path.join(f.dir, 'output'));
   fs.writeFileSync(path.join(external, 'sentinel'), 'unchanged');
-  fs.symlinkSync(external, path.join(f.dir, 'output/cache'), 'dir');
+  linkDirectory(external, path.join(f.dir, 'output/cache'));
   await assert.rejects(render(loadProject(f.file)), /must not contain symlinks/);
   assert.equal(fs.readFileSync(path.join(external, 'sentinel'), 'utf8'), 'unchanged');
   assert.deepEqual(fs.readdirSync(external), ['sentinel']);

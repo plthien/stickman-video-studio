@@ -20,9 +20,10 @@ test('Jensen baseline has an exact closed lock, explicit B5 release approval and
   assert.match(contract.publication_approval,/2026-11-10/);
   assert.match(contract.rights_review_scope,/Finished editorial composite/);
   assert.equal(lock.video_sha256,'b46c272512277096d7cc3f85a435d52d4657887c68050b15ec555071fd8da387');
-  const actual=list(base).map(p=>path.relative(base,p)).filter(p=>p!=='baseline-lock.json').sort();
+  // The published lock stores POSIX relative names regardless of host OS.
+  const actual=list(base).map(p=>path.relative(base,p).split(path.sep).join('/')).filter(p=>p!=='baseline-lock.json').sort();
   assert.deepEqual(actual,lock.files.map(f=>f.path).sort());
-  for(const f of lock.files){assert(!path.isAbsolute(f.path)&&!f.path.split(path.sep).includes('..'));assert.equal(sha(path.join(base,f.path)),f.sha256,f.path);}
+  for(const f of lock.files){assert(!path.isAbsolute(f.path)&&!f.path.split(/[\\/]/).includes('..'));assert.equal(sha(path.join(base,f.path)),f.sha256,f.path);}
   assert.equal(sha(path.join(base,'approved-sample.mp4')),lock.video_sha256);
 });
 

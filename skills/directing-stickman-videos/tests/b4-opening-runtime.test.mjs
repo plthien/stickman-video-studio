@@ -79,7 +79,7 @@ test('B4 locks rounded typography, colors, hierarchy and the whole-block settle'
     assert.throws(() => loadProject(f.file), /fixed|bundled rounded|covered/);
   }
   Object.assign(f.project, structuredClone(original)); f.write();
-  assert.ok(loadProject(f.file).inputs.some(i => i.sha256 === B4_HOOK.font_sha256 && i.path.endsWith('/Nunito.ttf')));
+  assert.ok(loadProject(f.file).inputs.some(i => i.sha256 === B4_HOOK.font_sha256 && path.basename(i.path) === 'Nunito.ttf'));
 });
 
 test('B4 rejects static renamed assets, camera drift, flash-only and offscreen states', t => {
