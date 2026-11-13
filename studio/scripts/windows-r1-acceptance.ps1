@@ -1,7 +1,8 @@
 #requires -Version 5.1
 param([switch]$VisualReviewAccepted)
 $ErrorActionPreference = 'Stop'
-$studioRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$sourceStudioRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$studioRoot = $sourceStudioRoot
 $repoRoot = (Resolve-Path (Join-Path $studioRoot '..')).Path
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $resultsRoot = Join-Path $studioRoot 'r1-local-results'
@@ -55,6 +56,12 @@ function Read-TestCounts([string]$Log) {
         break
       }
     }
+  }
+  # TAP summary uses "# pass", "# fail" rather than Playwright "passed".
+  if ($body -match '(?m)^# tests (\d+)\s*$') {
+    $counts['passed'] = if ($body -match '(?m)^# pass (\d+)\s*$') { [int]$Matches[1] } else { 0 }
+    $counts['failed'] = if ($body -match '(?m)^# fail (\d+)\s*$') { [int]$Matches[1] } else { 0 }
+    $counts['skipped'] = if ($body -match '(?m)^# skipped (\d+)\s*$') { [int]$Matches[1] } else { 0 }
   }
   return $counts
 }
@@ -112,15 +119,41 @@ function Invoke-CorePreservation {
   } finally { $watch.Stop() }
 }
 $nativeCopy = $null
-$zipFile = Join-Path $studioRoot "r1-local-results-$stamp.zip"
+$studioSnapshot = $null
+$zipFile = Join-Path $sourceStudioRoot "r1-local-results-$stamp.zip"
 try {
   @("timestamp=$stamp", "head_sha=$head", "platform=$($environment.platform)", "PowerShell=$($environment.powershell)", "node=$(& node --version)", "npm=$(& npm.cmd --version)", "git=$(& git --version)", "electron_run_as_node=$($environment.electron_run_as_node)") | Set-Content (Join-Path $resultsRoot 'versions.log')
   if (-not $environment.windows) {
     foreach ($name in @('install','typecheck','lint','test','build','browser','electron-dev','electron-prod','native-core-tests')) { Skip-Step $name 'Windows local acceptance' 'This single-command gate must run on an ordinary Windows desktop.' }
     Invoke-CorePreservation
   } else {
-    $installed = Invoke-CommandStep 'install' 'npm.cmd ci --no-audit --no-fund'
-    if ($installed) {
+    # A clean, temporary Git HEAD checkout prevents locked @esbuild/bin files
+    # in the user's existing studio/node_modules from breaking npm ci.
+    $snapshotOk = $false
+    $snapshotWatch = [Diagnostics.Stopwatch]::StartNew()
+    $snapshotLog = Join-Path $resultsRoot 'studio-snapshot.log'
+    try {
+      $tempBase = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+      $studioSnapshot = Join-Path $tempBase ('mode-b-studio-r1-' + [guid]::NewGuid().ToString('N'))
+      New-Item -ItemType Directory -Path $studioSnapshot | Out-Null
+      $archive = Join-Path $studioSnapshot 'source.zip'
+      & git -C $repoRoot archive --format=zip "--output=$archive" HEAD -- studio docs/ui *>&1 | Out-File -LiteralPath $snapshotLog -Encoding utf8
+      if ($LASTEXITCODE -ne 0) { throw "git archive studio/docs/ui failed: $LASTEXITCODE" }
+      Expand-Archive -LiteralPath $archive -DestinationPath $studioSnapshot -Force
+      $studioRoot = Join-Path $studioSnapshot 'studio'
+      if (-not (Test-Path -LiteralPath (Join-Path $studioRoot 'package-lock.json'))) { throw 'Snapshot missing studio/package-lock.json' }
+      if (-not (Test-Path -LiteralPath (Join-Path $studioSnapshot 'docs/ui/mockups/v3/vertical-stickman-ui-mockup-v3.html'))) { throw 'Snapshot missing locked V3 mockup' }
+      "Exported clean HEAD $head into $studioRoot; user node_modules untouched." | Add-Content -LiteralPath $snapshotLog
+      $snapshotOk = $true
+      Add-Result 'studio-snapshot' 'PASS' 'git archive HEAD studio docs/ui; Expand-Archive to TEMP' 0 '' $snapshotWatch.ElapsedMilliseconds @{ passed=0; failed=0; skipped=0 } @($snapshotLog)
+    } catch {
+      $_ | Out-String | Add-Content -LiteralPath $snapshotLog
+      Add-Result 'studio-snapshot' 'FAIL' 'git archive HEAD studio docs/ui; Expand-Archive to TEMP' 1 $_.Exception.Message $snapshotWatch.ElapsedMilliseconds @{ passed=0; failed=0; skipped=0 } @($snapshotLog)
+      $script:runFailed = $true
+    } finally { $snapshotWatch.Stop() }
+    if ($snapshotOk) {
+      $installed = Invoke-CommandStep 'install' 'npm.cmd ci --no-audit --no-fund'
+      if ($installed) {
       Invoke-CommandStep 'typecheck' 'npm.cmd run typecheck' | Out-Null
       Invoke-CommandStep 'lint' 'npm.cmd run lint' | Out-Null
       Invoke-CommandStep 'test' 'npm.cmd run test' | Out-Null
@@ -139,25 +172,25 @@ try {
         Skip-Step 'electron-dev' 'npm run dev + Electron CDP smoke' 'Build dependency failed; Electron smoke not attempted.'
         Skip-Step 'electron-prod' 'Electron production shell' 'Production build failed; Electron smoke not attempted.'
       }
+      } else {
+        foreach ($name in @('typecheck','lint','test','build','browser','electron-dev','electron-prod')) { Skip-Step $name 'npm.cmd run ...' 'Isolated npm ci failed.' }
+      }
     } else {
-      foreach ($name in @('typecheck','lint','test','build','browser','electron-dev','electron-prod')) { Skip-Step $name 'npm.cmd run ...' 'npm ci failed, dependencies unavailable.' }
+      foreach ($name in @('install','typecheck','lint','test','build','browser','electron-dev','electron-prod')) { Skip-Step $name 'npm.cmd run ...' 'Git source snapshot failed; see studio-snapshot.log.' }
     }
     Invoke-CorePreservation
     $tempBase = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
     $nativeCopy = Join-Path $tempBase ('mode-b-core-r1-' + [guid]::NewGuid().ToString('N'))
     try {
       New-Item -ItemType Directory -Path $nativeCopy | Out-Null
-      $nativeDir = Join-Path $nativeCopy 'native-core'
-      New-Item -ItemType Directory -Force -Path $nativeDir | Out-Null
-      # Copy tracked core source only; never include user-local node_modules, secrets or untracked assets.
-      $trackedCoreFiles = @(& git -C $repoRoot ls-files -- 'skills/directing-stickman-videos/')
-      if ($LASTEXITCODE -ne 0 -or $trackedCoreFiles.Count -eq 0) { throw 'Cannot list tracked native core files' }
-      foreach ($entry in $trackedCoreFiles) {
-        $relative = $entry.Substring('skills/directing-stickman-videos/'.Length)
-        $target = Join-Path $nativeDir $relative
-        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
-        Copy-Item -LiteralPath (Join-Path $repoRoot $entry) -Destination $target -Force
-      }
+      # Git object bytes are mandatory for byte-exact B4/B5 fingerprints.
+      # A regular Windows checkout may have been converted to CRLF.
+      $nativeArchive = Join-Path $nativeCopy 'native-core-source.zip'
+      & git -C $repoRoot archive --format=zip "--output=$nativeArchive" HEAD -- skills/directing-stickman-videos
+      if ($LASTEXITCODE -ne 0) { throw "git archive native core failed: $LASTEXITCODE" }
+      Expand-Archive -LiteralPath $nativeArchive -DestinationPath $nativeCopy -Force
+      $nativeDir = Join-Path $nativeCopy 'skills/directing-stickman-videos'
+      if (-not (Test-Path -LiteralPath (Join-Path $nativeDir 'package-lock.json'))) { throw 'Native snapshot missing package-lock.json' }
       Invoke-CommandStep 'native-core-tests' 'npm.cmd ci --no-audit --no-fund && npm.cmd test' $nativeDir | Out-Null
     } catch {
       $log = Join-Path $resultsRoot 'native-core-tests.log'
@@ -176,6 +209,13 @@ try {
   }
 }
 finally {
+  if ($studioSnapshot -and (Test-Path -LiteralPath $studioSnapshot)) {
+    $resolvedSnapshot = [IO.Path]::GetFullPath($studioSnapshot)
+    $tempBase = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+    if ($resolvedSnapshot.StartsWith($tempBase, [StringComparison]::OrdinalIgnoreCase) -and (Split-Path $resolvedSnapshot -Leaf) -like 'mode-b-studio-r1-*') {
+      Remove-Item -LiteralPath $resolvedSnapshot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+  }
   if ($nativeCopy -and (Test-Path -LiteralPath $nativeCopy)) {
     $resolved = [IO.Path]::GetFullPath($nativeCopy)
     $tempBase = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
