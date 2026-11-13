@@ -3,7 +3,7 @@ import type { Shot } from '../../types/app';
 import type { SelectedClip, TimelineTrackName } from './types';
 import { TimelineTrack, type TimelineClip } from './TimelineTrack';
 
-import { TIMELINE_SECONDS, PX_PER_SECOND, TRACK_LABEL_PX, timelineX } from './timelineScale';
+import { TIMELINE_SECONDS, PX_PER_SECOND, TRACK_LABEL_PX } from './timelineScale';
 interface TrackDefinition { name: TimelineTrackName; tone: string; clips: TimelineClip[] }
 const clip = (label: string, start: number, duration: number): TimelineClip => ({ label, start, duration });
 export function editorTracks(shots: Shot[]): TrackDefinition[] {
@@ -28,22 +28,22 @@ export function EditorTimeline({ shots, selected, time, height, onSelect, onSeek
   onSelect: (clip: SelectedClip) => void; onSeek: (seconds: number) => void;
 }) {
   const tracks = editorTracks(shots);
-  const seekAtX = (x: number, origin: number) => {
-    const seconds = Math.max(0, Math.min(TIMELINE_SECONDS, (x - origin) / PX_PER_SECOND));
+  const seekAtX = (x: number, origin: number, width: number) => {
+    const seconds = Math.max(0, Math.min(TIMELINE_SECONDS, (x - origin) / width * TIMELINE_SECONDS));
     onSeek(Math.round(seconds * 4) / 4);
   };
   const style = {
     '--timeline-label': `${TRACK_LABEL_PX}px`,
     '--timeline-lane': `${TIMELINE_SECONDS * PX_PER_SECOND}px`,
-    '--playhead-px': `${timelineX(time)}px`
+    '--playhead-ratio': time / TIMELINE_SECONDS
   } as CSSProperties;
   return <section className="editor-timeline" style={{ ...style, height }} aria-label="Editor timeline">
-    <header><div><strong>Timeline</strong><small>6 tracks · 30-second demo fixture</small></div><span>Fixed demo scale · {PX_PER_SECOND} px/s</span></header>
+    <header><div><strong>Timeline</strong><small>6 tracks · 30-second demo fixture</small></div><span>Shared 0–30s scale · {PX_PER_SECOND} px/s minimum</span></header>
     <div className="timeline-scroll">
       <div className="ruler">
         <div className="ruler-label" aria-hidden="true">TIME</div>
-        <div className="ruler-scale" aria-label="Timeline ruler" onClick={event => seekAtX(event.clientX, event.currentTarget.getBoundingClientRect().left)}>
-          {ticks.map(second => <span key={second} data-tick={second} style={{ left: second * PX_PER_SECOND }}>
+        <div className="ruler-scale" aria-label="Timeline ruler" onClick={event => { const rect=event.currentTarget.getBoundingClientRect(); seekAtX(event.clientX, rect.left, rect.width); }}>
+          {ticks.map(second => <span key={second} data-tick={second} style={{ left: `${second / TIMELINE_SECONDS * 100}%` }}>
             00:{String(second).padStart(2, '0')}
           </span>)}
         </div>
@@ -51,6 +51,7 @@ export function EditorTimeline({ shots, selected, time, height, onSelect, onSeek
       <div className="tracks">{tracks.map(track => <TimelineTrack key={track.name} {...track} selected={selected} onSelect={onSelect} />)}
         <i className="playhead" data-playhead-seconds={time} aria-hidden="true" />
       </div>
+      <footer className="timeline-footer"><span>Native scene timing · 30 fps</span><span>00:30 demo window</span></footer>
     </div>
   </section>;
 }

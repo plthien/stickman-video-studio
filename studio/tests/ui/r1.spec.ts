@@ -173,7 +173,7 @@ test('scene clip geometry and playhead use one time scale',async({page})=>{
     await expect(page.locator('.portrait-preview')).toHaveAttribute('data-preview-shot',shot);
     const playhead=await page.locator('.playhead').boundingBox();
     const lane=await page.locator('[data-track="Scenes"] .track-lane').boundingBox();
-    expect(playhead&&lane&&Math.abs(playhead.x - (lane.x + time*26))).toBeLessThan(1.1);
+    expect(playhead&&lane&&Math.abs(playhead.x - (lane.x + time/30*lane.width))).toBeLessThan(1.1);
   }
   await page.getByLabel('SFX clip Tick').click();
   await expect(page.locator('.portrait-preview')).toHaveAttribute('data-preview-shot','S03-B');
