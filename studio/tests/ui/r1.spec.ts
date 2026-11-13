@@ -123,7 +123,7 @@ test('route navigation retains Script, External and Editor demo session fields',
   await expect(page.getByText(/No artifact was imported or accepted/)).toBeVisible();
   await page.getByLabel('Import JSON').fill('{"changed":true}');
   await expect(page.getByText(/No artifact was imported or accepted/)).toHaveCount(0);
-  await page.getByRole('link',{name:/Video Editor/}).click();
+  await page.getByRole('link',{name:'07 Video Editor',exact:true}).click();
   await seekRange(page,9.25);
   await page.getByLabel('Layer name').fill('session_hero');
   await page.getByRole('tab',{name:'motion'}).click();
@@ -131,7 +131,7 @@ test('route navigation retains Script, External and Editor demo session fields',
   await separator.focus();await separator.press('ArrowUp');
   await expect(separator).toHaveAttribute('aria-valuenow','254');
   await page.getByRole('link',{name:/Tổng quan/}).click();
-  await page.getByRole('link',{name:/Video Editor/}).click();
+  await page.getByRole('link',{name:'07 Video Editor',exact:true}).click();
   await expect(page.locator('.portrait-preview')).toHaveAttribute('data-preview-shot','S02-A');
   await expect(page.locator('[data-inspector-content="motion"]')).toBeVisible();
   await page.getByRole('tab',{name:'layer'}).click();
@@ -139,7 +139,7 @@ test('route navigation retains Script, External and Editor demo session fields',
   await expect(page.getByRole('separator')).toHaveAttribute('aria-valuenow','254');
   await page.getByRole('button',{name:/Play demo/}).click();
   await page.getByRole('link',{name:/Tổng quan/}).click();
-  await page.getByRole('link',{name:/Video Editor/}).click();
+  await page.getByRole('link',{name:'07 Video Editor',exact:true}).click();
   await expect(page.getByRole('button',{name:/Play demo/})).toBeVisible();
 });
 test('B1–B4 style ID updates Project, Editor, External and Overview',async({page})=>{
