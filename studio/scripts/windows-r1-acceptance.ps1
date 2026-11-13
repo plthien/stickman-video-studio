@@ -148,7 +148,16 @@ try {
     try {
       New-Item -ItemType Directory -Path $nativeCopy | Out-Null
       $nativeDir = Join-Path $nativeCopy 'native-core'
-      Copy-Item -LiteralPath (Join-Path $repoRoot 'skills\directing-stickman-videos') -Destination $nativeDir -Recurse -Force
+      New-Item -ItemType Directory -Force -Path $nativeDir | Out-Null
+      # Copy tracked core source only; never include user-local node_modules, secrets or untracked assets.
+      $trackedCoreFiles = @(& git -C $repoRoot ls-files -- 'skills/directing-stickman-videos/')
+      if ($LASTEXITCODE -ne 0 -or $trackedCoreFiles.Count -eq 0) { throw 'Cannot list tracked native core files' }
+      foreach ($entry in $trackedCoreFiles) {
+        $relative = $entry.Substring('skills/directing-stickman-videos/'.Length)
+        $target = Join-Path $nativeDir $relative
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+        Copy-Item -LiteralPath (Join-Path $repoRoot $entry) -Destination $target -Force
+      }
       Invoke-CommandStep 'native-core-tests' 'npm.cmd ci --no-audit --no-fund && npm.cmd test' $nativeDir | Out-Null
     } catch {
       $log = Join-Path $resultsRoot 'native-core-tests.log'
