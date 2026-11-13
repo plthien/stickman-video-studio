@@ -22,9 +22,9 @@ npm run dev
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-r1-acceptance.ps1
 ```
 
-The script runs install, typecheck, lint, Vitest, production build, browser
+The script exports the committed Git HEAD into a new, isolated temporary directory and runs install, typecheck, lint, Vitest, production build, browser
 interaction/visual screenshots, **actual** Electron dev/prod GUI smoke, and an
-isolated native-core install/test. It writes `r1-local-results/results.json`,
+isolated native-core install/test from Git object bytes (to preserve exact file hashes, not Windows CRLF conversions). The original `studio/node_modules` is never deleted or modified during acceptance. Temporary copies are cleaned up afterward. It writes `r1-local-results/results.json`,
 logs, four viewport screenshot comparisons, `visual-parity-report.md/json`,
 and an evidence ZIP in `studio/`.
 
@@ -38,3 +38,13 @@ attestation. This flag does not override any failed test. Never use
 R1 keeps Script, External JSON and Editor state **in memory only while the app
 session remains open**. No demo changes are saved to a native manifest or disk.
 Provider, native QA, preview, import and rendering actions remain unconnected.
+
+## Windows native core caveats
+
+The native Mode B folder is immutable in R1. Its existing tests include strict
+B4/B5 text and media hashes and platform-specific symlink/relative-path checks.
+If native tests fail even with Git-object-byte snapshots, record **FAIL** with
+the exact TAP counts and logs, not PASS/NOT_RUN. Windows symlink tests can require
+Developer Mode or symlink privilege; some source tests may require upstream
+portability work. Do not disable these tests, edit locked core resources or
+rewrite baseline fingerprints merely to make the R1 UI gate green.
