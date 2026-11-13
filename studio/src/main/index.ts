@@ -1,10 +1,8 @@
 import { app, BrowserWindow, shell } from 'electron';
 import { join } from 'node:path';
 
-// Keep the desktop shell reliable on Windows VMs and remote desktops without a usable GPU process.
-app.disableHardwareAcceleration();
-app.commandLine.appendSwitch('in-process-gpu');
-app.commandLine.appendSwitch('disable-software-rasterizer');
+// Optional compatibility fallback for affected remote desktops; production keeps normal process isolation by default.
+if (process.env.MODE_B_STUDIO_DISABLE_GPU === '1') app.disableHardwareAcceleration();
 
 const createWindow = () => {
   const win = new BrowserWindow({
