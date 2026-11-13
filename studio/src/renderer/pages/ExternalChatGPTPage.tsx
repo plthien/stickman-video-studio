@@ -1,0 +1,2 @@
+import { PageHeader } from '../components/layout/PageHeader'; import { ExternalWorkspace } from '../features/external/ExternalWorkspace';
+export function ExternalChatGPTPage() { return <div className="page"><PageHeader eyebrow="EXTERNAL WORKSPACE" title="External ChatGPT" description="Prepare and inspect task artifacts without embedding ChatGPT or calling an LLM API." /><ExternalWorkspace /></div>; }

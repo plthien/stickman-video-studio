@@ -1,0 +1,2 @@
+import type { EditorMode } from './types';
+export function EditorModeTabs({ mode, onChange }: { mode: EditorMode; onChange: (mode: EditorMode) => void }) { return <div className="editor-mode-tabs" role="tablist">{([['edit','Edit'],['preview','Native Preview'],['approval','Approval']] as const).map(([key,label]) => <button role="tab" aria-selected={mode===key} className={mode===key?'active':''} onClick={() => onChange(key)} key={key}>{label}{key!=='edit'&&<span>DEMO</span>}</button>)}</div>; }

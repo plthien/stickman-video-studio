@@ -1,0 +1,2 @@
+import { PageHeader } from '../components/layout/PageHeader'; import { RenderWorkspace } from '../features/render/RenderWorkspace';
+export function RenderExportPage() { return <div className="page"><PageHeader eyebrow="ORIGINAL RENDER ENGINE" title="Render & Export" description="Review the native delivery contract and blocked gates without fabricating a render result." /><RenderWorkspace /></div>; }

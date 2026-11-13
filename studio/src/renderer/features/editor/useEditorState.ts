@@ -1,0 +1,3 @@
+import { useEffect, useState } from 'react'; import { shots } from '../storyboard/StoryboardWorkspace'; import type { EditorState } from './types';
+const initial: EditorState = { shots, selected: 0, mode: 'edit', time: 0, playing: false, dirty: false, timelineHeight: 244, qaOpen: false, inspectorTab: 'layer' };
+export function useEditorState() { const [state, setState] = useState(initial); useEffect(() => { if (!state.playing) return; const id = window.setInterval(() => setState(s => ({ ...s, time: s.time >= 30 ? 0 : s.time + .25 })), 250); return () => window.clearInterval(id); }, [state.playing]); return { state, patch: (next: Partial<EditorState>) => setState(s => ({ ...s, ...next })), reset: () => setState(initial) }; }

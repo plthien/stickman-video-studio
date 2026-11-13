@@ -6,3 +6,12 @@ node_modules/
 __pycache__/
 *.pyc
 autopilot-work/
+studio/node_modules/
+studio/dist/
+studio/dist-electron/
+studio/playwright-report/
+studio/test-results/
+studio/.artifacts/
+studio/r1-local-results/
+studio/.electron-test*/
+studio/debug.log
