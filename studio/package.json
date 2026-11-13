@@ -6,8 +6,8 @@
   "main": "dist-electron/main/index.js",
   "scripts": {
     "dev": "concurrently -k \"npm:dev:web\" \"npm:dev:electron\"",
-    "dev:web": "vite --host 127.0.0.1 --strictPort",
-    "dev:electron": "wait-on http://127.0.0.1:5173 && npm run build:electron && node scripts/start-electron-dev.mjs",
+    "dev:web": "vite --host 127.0.0.1 --port 5174 --strictPort",
+    "dev:electron": "wait-on http://127.0.0.1:5174 && npm run build:electron && node scripts/start-electron-dev.mjs",
     "build:electron": "tsc -p tsconfig.node.json",
     "build": "npm run typecheck && vite build && npm run build:electron",
     "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.node.json --noEmit",

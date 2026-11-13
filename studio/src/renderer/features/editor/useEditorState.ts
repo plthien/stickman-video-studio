@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { createContext, createElement, useContext, useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { shots } from '../storyboard/StoryboardWorkspace';
 import type { EditorState, InspectorValues, SelectedClip } from './types';
 
@@ -37,8 +37,23 @@ const createInitialState = (): EditorState => ({
   selectedClip: { track: 'Scenes', index: 0 }
 });
 
-export function useEditorState() {
+interface EditorSession {
+  state: EditorState;
+  setState: Dispatch<SetStateAction<EditorState>>;
+}
+const EditorSessionContext = createContext<EditorSession | null>(null);
+/** Kept above the router: navigation never discards in-memory inspector and timeline edits. */
+export function EditorSessionProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState(createInitialState);
+  return createElement(EditorSessionContext.Provider, { value: { state, setState } }, children);
+}
+
+export function useEditorState() {
+  const session = useContext(EditorSessionContext);
+  if (!session) throw new Error('EditorSessionProvider missing');
+  const { state, setState } = session;
+  // The timer is route-scoped and cleaned up as soon as the editor unmounts.
+  useEffect(() => () => setState(current => ({ ...current, playing: false, qaOpen: false })), [setState]);
   const selectedShotIndex = shotIndexAtTime(state.time);
   const selectedShot = state.shots[selectedShotIndex];
   const inspectorValues = state.shotEdits[selectedShot.id];

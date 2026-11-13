@@ -3,3 +3,24 @@
 @media(max-width:1100px), (max-height:619px){.editor-route{height:auto;overflow:auto}.editor-route .app-main{height:auto;display:block}.editor-page{height:auto;overflow:visible}.editor-workbench{grid-template-columns:210px minmax(260px,1fr);min-height:450px}.editor-workbench>.editor-panel:last-child{grid-column:1/-1;max-height:320px}.editor-timeline{height:244px!important}.editor-toolbar{margin-top:4px}}
 @media(max-width:700px){.editor-workbench{display:flex;flex-direction:column;overflow:visible}.scenes-panel{height:260px}.portrait-preview{height:520px}.inspector,.mode-panel{height:340px}.editor-toolbar{height:auto;align-items:stretch;flex-direction:column;padding:8px 0}.editor-toolbar>div:last-child{justify-content:space-between}.editor-mode-tabs button{flex:1;padding:7px 6px}.editor-mode-tabs span{display:none}.timeline-splitter{display:none}.editor-timeline{height:244px!important}.editor-route main{overflow:visible}}
 .style-swatch{display:flex;align-items:center;gap:9px;padding:10px;border:1px solid #315164;border-radius:7px;background:#0b1d2b;color:#b9cbd3;font-size:10px}.style-swatch span{width:28px;height:28px;border-radius:6px;background:linear-gradient(140deg,#f2c764 0 34%,#74d9c4 34% 68%,#879ee8 68%)}
+
+/* R1 fixed demo time geometry. The ruler, clips and playhead share the same 0–30s scale. */
+.editor-route .app-main,.editor-page,.editor-timeline{min-width:0}
+.editor-timeline .timeline-scroll{overflow:auto;max-width:100%;overscroll-behavior:contain}
+.editor-timeline .ruler,.editor-timeline .tracks{width:calc(var(--timeline-label) + var(--timeline-lane));min-width:0}
+.editor-timeline .ruler{padding:0;display:grid;grid-template-columns:var(--timeline-label) var(--timeline-lane);justify-content:initial}
+.editor-timeline .ruler-label{padding:5px 0 0 10px;background:#0d2231;font:8px Consolas;color:#8398a5}
+.editor-timeline .ruler-scale{position:relative;width:var(--timeline-lane);cursor:crosshair}
+.editor-timeline .ruler-scale span{position:absolute;top:5px;transform:translateX(-50%);white-space:nowrap}
+.editor-timeline .ruler-scale span:first-child{transform:none}
+.editor-timeline .ruler-scale span:last-child{transform:translateX(-100%)}
+.editor-timeline .timeline-track{grid-template-columns:var(--timeline-label) var(--timeline-lane)}
+.editor-timeline .track-lane{position:relative;width:var(--timeline-lane);height:28px;padding:0;display:block;overflow:hidden}
+.editor-timeline .track-lane button{position:absolute;top:3px;height:22px;min-width:0;border-radius:2px;padding:2px 4px;box-sizing:border-box}
+.editor-timeline .playhead{left:var(--playhead-px);top:0;bottom:0}
+
+@media(min-width:1101px) and (min-height:620px){
+  /* Locked V3 reference uses approximately 190px assets / fluid portrait / 255px inspector. */
+  .editor-workbench{grid-template-columns:190px minmax(0,1fr) 252px}
+  .scene-list button{height:56px}
+}

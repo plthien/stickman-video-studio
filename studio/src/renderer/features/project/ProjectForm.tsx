@@ -1,12 +1,6 @@
 import { useAppState } from '../../app/AppState';
 import { Badge, Button, Card, CardHeader, Field, Input, Select, Textarea } from '../../components/ui';
-
-const visualStyles = [
-  'B1 · Minimal Line Art',
-  'B2 · Colorful Hand-Drawn',
-  'B3 · Retro TV',
-  'B4 · Survival Thriller',
-];
+import { visualStyleChoices, visualStyleLabel } from './styles';
 
 export function ProjectForm() {
   const { project, setProject, showNotice } = useAppState();
@@ -49,15 +43,15 @@ export function ProjectForm() {
       <div className="stack">
         <Card>
           <CardHeader title="Visual style" hint="Locked native Mode B contracts" />
-          {visualStyles.map((style) => (
+          {visualStyleChoices.map((style) => (
             <button
               className={`choice ${project.style === style ? 'selected' : ''}`}
               key={style}
               onClick={() => update('style', style)}
             >
-              <span className={`swatch ${style.slice(0, 2).toLowerCase()}`} />
+              <span className={`swatch ${style.toLowerCase()}`} />
               <div>
-                <strong>{style}</strong>
+                <strong>{visualStyleLabel(style)}</strong>
                 <small>Original Mode B style contract</small>
               </div>
               <span>›</span>
@@ -86,7 +80,7 @@ export function ProjectForm() {
           </div>
           <Button
             variant="primary"
-            onClick={() => showNotice('Demo saved locally in UI state. No project.json was created.')}
+            onClick={() => showNotice('Demo updated in this app session only. No project.json or disk file was created.')}
           >
             Save demo setup
           </Button>
