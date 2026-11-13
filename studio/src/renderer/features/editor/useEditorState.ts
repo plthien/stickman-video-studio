@@ -66,7 +66,7 @@ export function useEditorState() {
       return { ...current, time: nextTime, playing: nextTime < timelineDuration, selectedClip: { track: 'Scenes', index: shotIndexAtTime(nextTime) } };
     }), 250);
     return () => window.clearInterval(timer);
-  }, [state.playing]);
+  }, [state.playing, setState]);
 
   const seek = (time: number) => setState(current => {
     const nextTime = Math.max(0, Math.min(timelineDuration, time));
