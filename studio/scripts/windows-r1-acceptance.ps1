@@ -66,7 +66,11 @@ function Invoke-CommandStep {
   $reason = ''
   $status = 'PASS'
   Push-Location $WorkingDir
+  $priorErrorPreference = $ErrorActionPreference
   try {
+    # Windows PowerShell can promote a harmless native stderr warning to an exception.
+    # Capture both streams, then trust the real cmd.exe exit code.
+    $ErrorActionPreference = 'Continue'
     $global:LASTEXITCODE = 0
     & cmd.exe /d /s /c $Command *>&1 | Out-File -LiteralPath $log -Encoding utf8
     $exitCode = [int]$LASTEXITCODE
@@ -77,7 +81,7 @@ function Invoke-CommandStep {
     $_ | Out-String | Add-Content -LiteralPath $log -Encoding utf8
     if ($null -eq $exitCode) { $exitCode = 1 }
   }
-  finally { Pop-Location; $watch.Stop() }
+  finally { $ErrorActionPreference = $priorErrorPreference; Pop-Location; $watch.Stop() }
   $count = Read-TestCounts $log
   if ($Name -like 'electron-*' -and $status -eq 'PASS' -and ($count.skipped -gt 0 -or $count.passed -eq 0)) {
     $status = 'NOT_RUN'
