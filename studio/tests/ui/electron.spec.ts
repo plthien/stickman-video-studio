@@ -44,7 +44,7 @@ test('Electron development URL uses the real npm run dev on strict port 5174 wit
   test.skip(guiUnavailable, guiReason);
   test.setTimeout(90_000);
   const env = withoutElectronNodeMode();
-  env.R1_ELECTRON_CDP_PORT = '9337';
+  env.R1_ELECTRON_CDP_PORT = process.env.R1_ELECTRON_CDP_PORT || '9337';
   const dist = resolve('dist');
   const backup = resolve('dist.dev-smoke-backup');
   let moved = false;
@@ -68,7 +68,7 @@ test('Electron development URL uses the real npm run dev on strict port 5174 wit
       try {
         const res = await fetch('http://127.0.0.1:5174/', { signal: AbortSignal.timeout(600) });
         if (!res.ok) throw new Error(`Dev server HTTP ${res.status}`);
-        if (!browser) browser = await chromium.connectOverCDP('http://127.0.0.1:9337', { timeout: 750 });
+        if (!browser) browser = await chromium.connectOverCDP(`http://127.0.0.1:${env.R1_ELECTRON_CDP_PORT}`, { timeout: 750 });
         appPage = browser.contexts().flatMap(context => context.pages()).find(page => page.url().startsWith('http://127.0.0.1:5174'));
         if (appPage) break;
       } catch { /* Vite and Electron may still be starting */ }

@@ -32,7 +32,7 @@ test('captures V3 parity evidence in same editor state and viewport', async ({ p
   };
   for (const size of sizes) {
     await page.setViewportSize(size);
-    await page.goto('http://127.0.0.1:4173/#/editor');
+    await page.goto(`http://127.0.0.1:${process.env.R1_PREVIEW_PORT || '4173'}/#/editor`);
     await page.evaluate(() => document.fonts.ready);
     for (const track of ['Scenes','Layers','Captions','Narration','SFX','Ambience']) await expect(page.locator(`[data-track="${track}"]`)).toBeInViewport();
     await expect(page.locator('.portrait-preview')).toBeInViewport();

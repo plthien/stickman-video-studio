@@ -137,7 +137,7 @@ try {
       $studioSnapshot = Join-Path $tempBase ('mode-b-studio-r1-' + [guid]::NewGuid().ToString('N'))
       New-Item -ItemType Directory -Path $studioSnapshot | Out-Null
       $archive = Join-Path $studioSnapshot 'source.zip'
-      & git -C $repoRoot archive --format=zip "--output=$archive" HEAD -- studio docs/ui *>&1 | Out-File -LiteralPath $snapshotLog -Encoding utf8
+      & git -c core.autocrlf=false -C $repoRoot archive --format=zip "--output=$archive" HEAD -- studio docs/ui *>&1 | Out-File -LiteralPath $snapshotLog -Encoding utf8
       if ($LASTEXITCODE -ne 0) { throw "git archive studio/docs/ui failed: $LASTEXITCODE" }
       Expand-Archive -LiteralPath $archive -DestinationPath $studioSnapshot -Force
       $studioRoot = Join-Path $studioSnapshot 'studio'
@@ -152,6 +152,18 @@ try {
       $script:runFailed = $true
     } finally { $snapshotWatch.Stop() }
     if ($snapshotOk) {
+      # Use a free ephemeral port for *this* preview test run. Never attach to
+      # an unrelated process that happens to own the default preview port 4173.
+      # The development port remains strict 5174 and is NOT changed here.
+      $previewListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+      $previewListener.Start()
+      try { $env:R1_PREVIEW_PORT = [string]$previewListener.LocalEndpoint.Port }
+      finally { $previewListener.Stop() }
+      $cdpListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+      $cdpListener.Start()
+      try { $env:R1_ELECTRON_CDP_PORT = [string]$cdpListener.LocalEndpoint.Port }
+      finally { $cdpListener.Stop() }
+      "R1_BROWSER_PREVIEW_PORT=$env:R1_PREVIEW_PORT; R1_ELECTRON_CDP_PORT=$env:R1_ELECTRON_CDP_PORT; strict Vite dev port=5174" | Add-Content -LiteralPath (Join-Path $resultsRoot 'versions.log')
       $installed = Invoke-CommandStep 'install' 'npm.cmd ci --no-audit --no-fund'
       if ($installed) {
       Invoke-CommandStep 'typecheck' 'npm.cmd run typecheck' | Out-Null
@@ -164,8 +176,8 @@ try {
           Skip-Step 'electron-dev' 'npm run dev + Electron CDP smoke' 'ELECTRON_RUN_AS_NODE injected: GUI smoke cannot be trusted.'
           Skip-Step 'electron-prod' 'Electron production shell' 'ELECTRON_RUN_AS_NODE injected: GUI smoke cannot be trusted.'
         } else {
-          Invoke-CommandStep 'electron-dev' 'npx.cmd playwright test tests/ui/electron.spec.ts --grep "development URL" --reporter=line' | Out-Null
-          Invoke-CommandStep 'electron-prod' 'npx.cmd playwright test tests/ui/electron.spec.ts --grep "production shell" --reporter=line' | Out-Null
+          Invoke-CommandStep 'electron-dev' 'npx.cmd playwright test --config playwright.electron.config.ts --grep "development URL" --reporter=line' | Out-Null
+          Invoke-CommandStep 'electron-prod' 'npx.cmd playwright test --config playwright.electron.config.ts --grep "production shell" --reporter=line' | Out-Null
         }
       } else {
         Skip-Step 'browser' 'npx.cmd playwright test tests/ui/r1.spec.ts' 'Production build failed; browser UI test requires built dist.'
@@ -186,16 +198,39 @@ try {
       # Git object bytes are mandatory for byte-exact B4/B5 fingerprints.
       # A regular Windows checkout may have been converted to CRLF.
       $nativeArchive = Join-Path $nativeCopy 'native-core-source.zip'
-      & git -C $repoRoot archive --format=zip "--output=$nativeArchive" HEAD -- skills/directing-stickman-videos
+      & git -c core.autocrlf=false -C $repoRoot archive --format=zip "--output=$nativeArchive" HEAD -- skills/directing-stickman-videos
       if ($LASTEXITCODE -ne 0) { throw "git archive native core failed: $LASTEXITCODE" }
       Expand-Archive -LiteralPath $nativeArchive -DestinationPath $nativeCopy -Force
       $nativeDir = Join-Path $nativeCopy 'skills/directing-stickman-videos'
       if (-not (Test-Path -LiteralPath (Join-Path $nativeDir 'package-lock.json'))) { throw 'Native snapshot missing package-lock.json' }
+      # Verify exact approved source fingerprints BEFORE running tests. Git autocrlf
+      # would turn LF into CRLF and cause dozens of misleading cascade failures.
+      $expectedLocks = @(
+        @{ relative = 'assets/b4/style-lock.txt'; sha256 = 'a724ce29b03624c13e70a8ae5a8c8209e83a48b697b28244263d3eefa0193795' },
+        @{ relative = 'assets/b5/example/assets/fonts/Anton-OFL.txt'; sha256 = 'dbd945e828dd179a73d9cc376742cdc6a1c9ff399ed127bf544aa3de8913f1a9' },
+        @{ relative = 'assets/b5/local-baselines/jensen-v13/scene/assets/fonts/Anton-OFL.txt'; sha256 = 'dbd945e828dd179a73d9cc376742cdc6a1c9ff399ed127bf544aa3de8913f1a9' }
+      )
+      $hashLog = Join-Path $resultsRoot 'native-source-integrity.log'
+      $integrityWatch = [Diagnostics.Stopwatch]::StartNew()
+      foreach ($lock in $expectedLocks) {
+        $absolute = Join-Path $nativeDir $lock.relative
+        $actual = (Get-FileHash -LiteralPath $absolute -Algorithm SHA256).Hash.ToLowerInvariant()
+        "file=$($lock.relative) actual=$actual expected=$($lock.sha256)" | Add-Content -LiteralPath $hashLog
+        if ($actual -ne $lock.sha256) {
+          throw "NATIVE_SNAPSHOT_BYTE_MISMATCH: $($lock.relative) expected=$($lock.sha256) actual=$actual. Check Git archive EOL filters; do not alter locked Core."
+        }
+      }
+      Add-Result 'native-source-integrity' 'PASS' 'SHA256 verify B4/B5 Git-object-approved files' 0 '' $integrityWatch.ElapsedMilliseconds @{ passed=3; failed=0; skipped=0 } @($hashLog)
       Invoke-CommandStep 'native-core-tests' 'npm.cmd ci --no-audit --no-fund && npm.cmd test' $nativeDir | Out-Null
     } catch {
       $log = Join-Path $resultsRoot 'native-core-tests.log'
       $_ | Out-String | Set-Content -LiteralPath $log
-      Add-Result 'native-core-tests' 'FAIL' 'isolated npm ci && npm test' 1 $_.Exception.Message 0 @{ passed=0; failed=0; skipped=0 } @($log)
+      if ($_.Exception.Message -like 'NATIVE_SNAPSHOT_BYTE_MISMATCH:*') {
+        Add-Result 'native-source-integrity' 'FAIL' 'SHA256 verify B4/B5 Git-object-approved files' 1 $_.Exception.Message 0 @{ passed=0; failed=3; skipped=0 } @((Join-Path $resultsRoot 'native-source-integrity.log'))
+        Skip-Step 'native-core-tests' 'isolated npm ci && npm test' 'Byte integrity prerequisite failed; do not run misleading native regression tests.'
+      } else {
+        Add-Result 'native-core-tests' 'FAIL' 'isolated npm ci && npm test' 1 $_.Exception.Message 0 @{ passed=0; failed=0; skipped=0 } @($log)
+      }
       $runFailed = $true
     }
   }

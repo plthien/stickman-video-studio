@@ -48,3 +48,25 @@ the exact TAP counts and logs, not PASS/NOT_RUN. Windows symlink tests can requi
 Developer Mode or symlink privilege; some source tests may require upstream
 portability work. Do not disable these tests, edit locked core resources or
 rewrite baseline fingerprints merely to make the R1 UI gate green.
+
+## R1 acceptance: browser preview port conflict
+
+The local *development* Vite server is still fixed at `127.0.0.1:5174`.
+When running `windows-r1-acceptance.ps1`, the independent *production preview*
+for browser screenshots uses a free temporary localhost port, passed to Playwright
+as `R1_PREVIEW_PORT` (also logged in `versions.log`). This prevents a foreign
+process listening on the usual default 4173 from blocking every test. Running
+Playwright directly without that variable continues to use port 4173 and fails
+explicitly on a collision, instead of attaching to an unrelated server.
+Electron tests use the separate `playwright.electron.config.ts` configuration
+without any browser preview webServer; they launch actual Electron dev/prod.
+The Electron dev mode still uses strict 5174, which must be available.
+
+### Persistent native regression failures
+
+When native-core tests are still failing from Git-blob snapshots, inspect the
+actual native TAP failures. Known portability issues include B4 prompt hash,
+B5 hashed fonts and Windows path separators, strict CRLF-vs-LF heading parsing
+and Windows symlink permissions. The R1 acceptance script does not skip these
+or change locked assets. Enable Windows Developer Mode only when authorized,
+and never change hashes or test expectations to manufacture PASS.
