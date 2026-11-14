@@ -161,7 +161,7 @@ function validateManifest(state: StudioState, root: string, payload: Record<stri
 }
 interface PendingImport {
   schema:'mode-b-pending-import-v2';token:string;projectId:string;stage:Stage;
-  taskId:string;revision:number;inputSha256:string;responseSha256:string;
+  taskId:string;revision:number;inputSha256:string;responseSha256:string;responsePath:string;
   payloadSha256:string;payload:Record<string,unknown>;before:unknown;
   references:MissingNativeReference[];fulfillments:Record<string,{relative:string;sha256:string;rights:string;kind:'image'|'sfx'}>;
   createdAt:string;
@@ -170,7 +170,9 @@ const pendingPath=(root:string)=>path.join(root,'.studio','external','pending.js
 const readPending=(root:string):PendingImport=>{
   const file=pendingPath(root);if(!fs.existsSync(file))throw new Error('No staged import exists.');
   const pending=strictJson(readUtf8(file)) as unknown as PendingImport;
-  if(pending.schema!=='mode-b-pending-import-v2'||!pending.projectId||!pending.payloadSha256||!Array.isArray(pending.references)||!pending.fulfillments)throw new Error('REBUILD_REQUIRED: pending record has no verifiable source/asset bindings.');
+  if(pending.schema!=='mode-b-pending-import-v2'||!pending.projectId||!pending.payloadSha256||!pending.responsePath||!Array.isArray(pending.references)||!pending.fulfillments)throw new Error('REBUILD_REQUIRED: pending record has no verifiable source/asset bindings.');
+  const frozenResponse=resolveProjectFile(root,pending.responsePath);
+  if(!fs.existsSync(frozenResponse)||sha(fs.readFileSync(frozenResponse))!==pending.responseSha256)throw new Error('Frozen ChatGPT response bytes are missing or modified.');
   if(pending.payloadSha256!==sha(JSON.stringify(pending.payload)))throw new Error('Pending imported payload was modified.');
   return pending;
 };
@@ -211,8 +213,12 @@ export function stageImport(appPath: string, root: string, stage: Stage, text: s
       if(prior.projectId===state.project.id&&prior.taskId===task.id&&prior.revision===task.revision&&prior.stage===stage&&prior.responseSha256===responseSha256)return pendingResult(root,prior);
     }catch{ /* Nonmatching/corrupted pending must never be reused. */ }
   }
+  const responsePath='.studio/external/responses/'+stage+'-'+task.id+'-'+task.revision+'-'+responseSha256+'.json';
+  const responseFile=resolveProjectFile(root,responsePath);fs.mkdirSync(path.dirname(responseFile),{recursive:true});
+  if(fs.existsSync(responseFile)){if(sha(fs.readFileSync(responseFile))!==responseSha256)throw new Error('Original frozen response file changed.');}
+  else fs.writeFileSync(responseFile,text,{encoding:'utf8',flag:'wx'});
   const pending:PendingImport={schema:'mode-b-pending-import-v2',token:randomUUID(),projectId:state.project.id,stage,taskId:task.id,
-    revision:task.revision,inputSha256:task.inputSha256,responseSha256,payloadSha256:sha(JSON.stringify(payload)),payload,
+    revision:task.revision,inputSha256:task.inputSha256,responseSha256,responsePath,payloadSha256:sha(JSON.stringify(payload)),payload,
     before:stage==='script'?state.approvedScript??null:strictJson(readUtf8(path.join(root,'project.json'))),
     references:stage==='native'?(payload as ReturnType<typeof validateManifest>).missing:[],fulfillments:{},createdAt:new Date().toISOString()};
   atomicJson(pendingPath(root),pending);
