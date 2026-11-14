@@ -1,0 +1,16 @@
+{
+  "provenance": {
+    "producer_commit": "7792fb47c292d8f0da8a4666d174be4689ac34b3",
+    "source_path": "tests/fixtures/nano_api_v1/golden_receipt.json",
+    "source_file_sha256": "7146576a2de319e93407bb617c100f9ec179b483925861faea1c7c03c37e9b37",
+    "note": "Fields below are copied byte-for-value from the producer-owned fixture."
+  },
+  "input": "Golden Nano fixture.",
+  "numeric_request_speed": 1.15,
+  "profile": {"id":"fixture-voice","version":3,"ref_sha256":"1111111111111111111111111111111111111111111111111111111111111111"},
+  "reference_binding": "2222222222222222222222222222222222222222222222222222222222222222",
+  "seed": 42,
+  "wav_base64": "UklGRiYAAABXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YQIAAAABAA==",
+  "receipt_json": "{\"atempo_applied\":true,\"audio_frames\":1,\"authored_pause_frames\":0,\"backend\":\"CUDA0\",\"channels\":1,\"effective_speed\":\"1.150000\",\"input_sha256\":\"3bc49a445bb6fb4c6331f300585ac8e33bc8cba3bdfae0018abe0404024c1166\",\"loader_mode\":\"nano=True\",\"model\":\"chatterbox-nano\",\"model_revision\":\"71ccd1d0081b430592cea481f4307e764e07bc64\",\"native_chunk_count\":1,\"native_chunk_sha256\":[\"3bc49a445bb6fb4c6331f300585ac8e33bc8cba3bdfae0018abe0404024c1166\"],\"pause_count\":0,\"pause_policy_version\":\"lite_inline_pause_pcm16_v1\",\"reference_binding\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"reference_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"repo_id\":\"ResembleAI/chatterbox-nano\",\"requested_speed\":\"1.150000\",\"sample_rate_hz\":24000,\"sample_width_bytes\":2,\"schema_version\":\"nano_execution_receipt_v1\",\"seed\":42,\"segmentation_policy\":\"nano_sentence_v2\",\"source_revision\":\"ab55923c27757c90cfcc407baa57dc25a7d25217\",\"speech_frames\":1,\"speech_span_count\":1,\"speed_mode\":\"postprocess_atempo\",\"speed_policy_version\":\"nano_atempo_speech_only_v1\",\"voice_id\":\"fixture-voice\",\"voice_version\":3,\"wav_sha256\":\"09d4e9ad46768eda32b4181a5f8cbe3602dae02c61f4ca5aafae36582ccc6d1a\",\"weights_manifest_sha256\":\"d3771b5c6535499b315470191bcc9e0f89687867f1de5f331bd65f5fbcff01db\"}",
+  "execution_proof_sha256": "06e2da78f5618d3109316ca1c790f9701d0f373097d1d362088dbaa99e503b60"
+}

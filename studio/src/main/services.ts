@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -10,15 +10,17 @@ export interface ProjectSummary { id: string; root: string; title: string; style
 export interface StudioState {
   schema: 'mode-b-studio-state-v1'; project: ProjectSummary; brief: { topic: string; language: string; ratio: '9:16'; targetDuration?: number; audience?: string; purpose?: string };
   external: Partial<Record<Stage, { revision: number; artifact: unknown; importedAt: string }>>;
-  tasks?: Partial<Record<Stage, { id: string; revision: number; inputSha256: string; promptPath: string; status: 'FROZEN' | 'IMPORTED' | 'STALE'; createdAt: string }>>;
-  approvedScript?: { sections: Array<{ id: string; text: string }>; text: string; sha256: string; revision: number; approvedAt: string };
-  voice?: { path: string; sha256: string; receipt?: unknown; generatedAt: string; duration?: number; stale?: boolean; profileId?: string };
-  alignment?: { path: string; captionsPath: string; audioSha256: string; scriptSha256?: string; generatedAt: string };
+  tasks?: Partial<Record<Stage, { id: string; revision: number; inputSha256: string; sourceFingerprint?: string; promptSha256?: string; promptPath: string; status: 'FROZEN' | 'IMPORTED' | 'STALE'; createdAt: string; scope?: string }>>;
+  approvedScript?: { sections: Array<{ id: string; text: string }>; text: string; sha256: string; revision: number; approvedAt: string; authoring?: Record<string, unknown> };
+  voice?: { path: string; sha256: string; receipt?: unknown; generatedAt: string; duration?: number; stale?: boolean; profileId?: string; profileVersion?: number; referenceBinding?: string; origin?: 'NANO_GENERATED' | 'NANO_LONGFORM' | 'IMPORTED_WAV' };
+  alignment?: { path: string; captionsPath: string; audioSha256: string; scriptSha256?: string; wordsSha256?: string; cuesSha256?: string; generatedAt: string; origin?: 'ELEVENLABS' | 'IMPORTED_WORDS'; words?: Array<{word:string;start:number;end:number;loss?:number}>; characters?: unknown; loss?: number };
   approval?: { note: string; previewSha256: string; approvedAt: string };
-  preview?: { path: string; sha256: string; reportPath: string; reportSha256: string; verifiedAt: string; reviewedAt?: string };
+  preview?: { path: string; sha256: string; reportPath: string; reportSha256: string; sourceFingerprint?: string; verifiedAt: string; reviewedAt?: string };
   render?: { path: string; sha256: string; reportPath: string; reportSha256: string; verifiedAt: string };
   nano?: { endpoint: string; profileId?: string };
   imports?: string[];
+  media?: Array<{ path:string; sha256:string; kind:'image'|'sfx'|'ambience'; shotId?:string; layerId?:string; rights:string; importedAt:string }>;
+  longform?: { jobId:string; manifestPath:string; outputPath:string; status:'READY'|'RUNNING'|'UNCERTAIN'|'PASS'|'FAILED'; sourceSha256:string; profileId:string; profileVersion?:number; resume:boolean; updatedAt:string; detail?:string };
 }
 
 const MAX_JSON = 4 * 1024 * 1024;
@@ -35,11 +37,11 @@ export const assertLocalRoot = (candidate: string, mustExist = true) => {
   const resolved = path.resolve(candidate);
   if (mustExist) {
     const real = fs.realpathSync(resolved);
-    if (fs.lstatSync(real).isSymbolicLink() || !fs.statSync(real).isDirectory()) throw new Error('Project root must be a real directory.');
+    if (real.toLowerCase() !== resolved.toLowerCase() || fs.lstatSync(resolved).isSymbolicLink() || !fs.statSync(real).isDirectory()) throw new Error('Project root must be a real non-junction directory.');
     return real;
   }
   const parent = fs.realpathSync(path.dirname(resolved));
-  if (!inside(parent, resolved)) throw new Error('Project path escapes its parent.');
+  if (parent.toLowerCase() !== path.resolve(path.dirname(resolved)).toLowerCase() || !inside(parent, resolved)) throw new Error('Project path escapes or traverses a linked parent.');
   return resolved;
 };
 const noExecutable = (file: string) => {
@@ -48,12 +50,19 @@ const noExecutable = (file: string) => {
 const statePath = (root: string) => path.join(root, '.studio', 'state.json');
 export const readState = (root: string): StudioState => {
   const state = JSON.parse(fs.readFileSync(statePath(assertLocalRoot(root)), 'utf8')) as StudioState;
-  state.tasks ??= {}; state.nano ??= { endpoint: 'http://127.0.0.1:3901' }; state.imports ??= [];
+  state.tasks ??= {}; state.nano ??= { endpoint: 'http://127.0.0.1:3901' }; state.imports ??= []; state.media ??= [];
   return state;
 };
 export const writeState = (root: string, state: StudioState) => atomicJson(statePath(assertLocalRoot(root)), state);
 export const projectId = (root: string) => sha(fs.realpathSync(root).toLowerCase()).slice(0, 24);
-export function projectSnapshot(root: string) { const state=readState(root); const manifest=strictJson(fs.readFileSync(path.join(assertLocalRoot(root),'project.json'),'utf8')) as Record<string,unknown>; const shots=Array.isArray(manifest.shots)?manifest.shots.map((item,index)=>{const shot=item as Record<string,unknown>;const start=Number(shot.start),end=Number(shot.end);const caption=Array.isArray(manifest.captions)?(manifest.captions as Array<Record<string,unknown>>).find(cue=>Number(cue.start)<end&&Number(cue.end)>start)?.text:'';return{id:String(shot.id||`SHOT-${String(index+1).padStart(2,'0')}`),title:String(shot.title||`Native shot ${index+1}`),duration:Math.max(0,end-start),start,end,caption:String(caption||''),status:'Native manifest',color:'#79dfc6'}}):[];return{...state,manifest,projection:{shots,duration:shots.reduce((sum,item)=>sum+item.duration,0),demo:false},job:reconcileJobSafe(root)}; }
+export function projectSnapshot(root: string) {
+  const state=readState(root),manifest=strictJson(fs.readFileSync(path.join(assertLocalRoot(root),'project.json'),'utf8')) as Record<string,unknown>;
+  const captions=Array.isArray(manifest.captions)?manifest.captions as Array<Record<string,unknown>>:[];
+  const shots=Array.isArray(manifest.shots)?manifest.shots.map((item,index)=>{const shot=item as Record<string,unknown>,start=Number(shot.start),end=Number(shot.end);const cue=captions.find(value=>Number(value.start)<end&&Number(value.end)>start);return{id:String(shot.id||`SHOT-${String(index+1).padStart(2,'0')}`),title:String(shot.title||`Native shot ${index+1}`),duration:Math.max(0,end-start),start,end,caption:String(cue?.text||''),status:'Native manifest',color:'#79dfc6',layers:Array.isArray(shot.layers)?shot.layers:[]}}):[];
+  const duration=shots.reduce((max,item)=>Math.max(max,item.end),0),clip=(label:string,start:number,end:number)=>({label,start,duration:Math.max(0,end-start)});
+  const tracks={Scenes:shots.map(item=>clip(item.id,item.start,item.end)),Layers:shots.flatMap(item=>item.layers.map((layer,index)=>clip(String((layer as Record<string,unknown>).id||`${item.id}-layer-${index+1}`),item.start,item.end))),Captions:captions.map((cue,index)=>clip(String(cue.text||`Caption ${index+1}`),Number(cue.start),Number(cue.end))),Narration:state.voice?[clip(state.voice.origin||'Accepted narration',0,state.voice.duration??duration)]:[],SFX:(Array.isArray(manifest.sfx)?manifest.sfx as Array<Record<string,unknown>>:[]).map((value,index)=>clip(String(value.id||value.kind||`SFX ${index+1}`),Number(value.time),Number(value.time)+Number(value.duration||.25))),Ambience:(Array.isArray(manifest.ambience)?manifest.ambience as Array<Record<string,unknown>>:[]).map((value,index)=>clip(String(value.id||value.path||`Ambience ${index+1}`),Number(value.start),Number(value.end)))};
+  return{...state,manifest,projection:{shots,duration,tracks,demo:false},job:reconcileJobSafe(root)};
+}
 function reconcileJobSafe(root:string){const file=path.join(root,'.studio','jobs','latest.json');if(!fs.existsSync(file))return null;try{return strictJson(fs.readFileSync(file,'utf8'))}catch{return{status:'UNKNOWN'}}}
 
 export function strictJson(text: string): unknown {
@@ -91,13 +100,14 @@ export function nativeSkillRoot(appPath: string) {
 }
 export async function runProcess(exe: string, args: string[], options: { cwd: string; timeout?: number; env?: NodeJS.ProcessEnv; signal?: AbortSignal }) {
   return await new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
-    const child = spawn(exe, args, { cwd: options.cwd, shell: false, windowsHide: true, env: options.env ?? process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(exe, args, { cwd: options.cwd, shell: false, windowsHide: true, detached: process.platform !== 'win32', env: options.env ?? process.env, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = ''; let stderr = ''; const cap = 8 * 1024 * 1024;
     const append = (current: string, chunk: Buffer) => (current + chunk.toString('utf8')).slice(-cap);
     child.stdout.on('data', chunk => { stdout = append(stdout, chunk as Buffer); }); child.stderr.on('data', chunk => { stderr = append(stderr, chunk as Buffer); });
-    const stop = () => child.kill(); options.signal?.addEventListener('abort', stop, { once: true });
-    const timer = setTimeout(() => { child.kill(); reject(new Error('Native command timed out.')); }, options.timeout ?? 10 * 60_000);
-    child.once('error', reject); child.once('close', code => { clearTimeout(timer); options.signal?.removeEventListener('abort', stop); if(options.signal?.aborted) reject(new Error('Native command cancelled.')); else resolve({ code: code ?? -1, stdout, stderr }); });
+    let settled=false,timedOut=false;const killTree=()=>{if(!child.pid)return;if(process.platform==='win32')spawnSync('taskkill.exe',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});else try{process.kill(-child.pid,'SIGTERM')}catch{child.kill()}};
+    const stop=()=>killTree();options.signal?.addEventListener('abort',stop,{once:true});
+    const timer=setTimeout(()=>{timedOut=true;killTree()},options.timeout??10*60_000);
+    child.once('error',error=>{if(settled)return;settled=true;clearTimeout(timer);reject(error)});child.once('close',code=>{if(settled)return;settled=true;clearTimeout(timer);options.signal?.removeEventListener('abort',stop);if(options.signal?.aborted)reject(new Error('Native command cancelled.'));else if(timedOut)reject(new Error('Native command timed out.'));else resolve({code:code??-1,stdout,stderr})});
   });
 }
 export async function runNative(appPath: string, root: string, command: NativeCommand, input: { seconds?: number; note?: string; replace?: boolean; file?: string } = {}) {

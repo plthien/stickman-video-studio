@@ -1,109 +1,18 @@
-import { test, expect, _electron as electron, chromium } from '@playwright/test';
+import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import { createRequire } from 'node:module';
-import { spawn, execFile } from 'node:child_process';
+import { spawn, execFile, type ChildProcess } from 'node:child_process';
 import { promisify } from 'node:util';
 import { access, rename } from 'node:fs/promises';
 import { resolve } from 'node:path';
-const electronPath = createRequire(import.meta.url)('electron') as string;
-const execFileAsync = promisify(execFile);
-const withoutElectronNodeMode = () => {
-  const env = { ...process.env };
-  delete env.ELECTRON_RUN_AS_NODE;
-  return env;
-};
-const guiUnavailable = process.platform !== 'win32' || Boolean(process.env.ELECTRON_RUN_AS_NODE);
-const guiReason = 'Real Electron GUI smoke requires an ordinary Windows desktop without ELECTRON_RUN_AS_NODE.';
+const electronPath=createRequire(import.meta.url)('electron') as string,execFileAsync=promisify(execFile);
+const guiUnavailable=process.platform!=='win32'||Boolean(process.env.ELECTRON_RUN_AS_NODE),guiReason='Real Electron GUI requires an ordinary Windows desktop; acceptance clears ELECTRON_RUN_AS_NODE.';
+const cleanEnv=(userData:string)=>{const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;delete env.VITE_DEV_SERVER_URL;env.MODE_B_STUDIO_DISABLE_GPU='1';env.MODE_B_STUDIO_USER_DATA=resolve('test-results-electron',userData);return env};
+async function stop(child?:ChildProcess){if(child?.pid)try{await execFileAsync('taskkill.exe',['/PID',String(child.pid),'/T','/F'])}catch(error){void error}}
+async function connect(port:string,child:ChildProcess,output:()=>string):Promise<{browser:Browser;page:Page}>{let browser:Browser|undefined;for(let attempt=0;attempt<120;attempt++){if(child.exitCode!==null)throw new Error(`Electron exited ${child.exitCode}\n${output()}`);try{browser??=await chromium.connectOverCDP(`http://127.0.0.1:${port}`,{timeout:700});const page=browser.contexts().flatMap(context=>context.pages()).find(value=>!value.url().startsWith('devtools:'));if(page&&await page.locator('#root').count())return{browser,page}}catch(error){void error}await new Promise(done=>setTimeout(done,500))}if(browser)await browser.close();throw new Error(`No Electron renderer over CDP.\n${output()}`)}
+function spawnProduction(port:string,env:NodeJS.ProcessEnv){let output='';const child=spawn(electronPath,[`--remote-debugging-port=${port}`,'--remote-debugging-address=127.0.0.1','--no-sandbox','.'],{cwd:process.cwd(),env,stdio:['ignore','pipe','pipe'],windowsHide:true});child.stdout?.on('data',chunk=>output+=String(chunk));child.stderr?.on('data',chunk=>output+=String(chunk));return{child,output:()=>output}}
 
-test('Electron production shell starts and retains secure BrowserWindow preferences', async () => {
-  test.skip(guiUnavailable, guiReason);
-  const env = withoutElectronNodeMode();
-  delete env.VITE_DEV_SERVER_URL;
-  env.MODE_B_STUDIO_DISABLE_GPU = '1';
-  env.MODE_B_STUDIO_USER_DATA = resolve('test-results-electron','user-data-production');
-  let app: Awaited<ReturnType<typeof electron.launch>> | undefined;
-  try {
-    app = await electron.launch({ executablePath: electronPath, args: ['.'], env });
-    const window = await app.firstWindow();
-    await expect(window.getByRole('heading', { name: 'Project Setup' })).toBeVisible();
-    const security = await window.evaluate(() => ({
-      hasNodeRequire: typeof (globalThis as typeof globalThis & { require?: unknown }).require !== 'undefined',
-      bridge: window.studio,
-      protocol: location.protocol
-    }));
-    expect(security.hasNodeRequire).toBe(false);
-    expect(security.bridge?.version).toBe('0.2.0');
-    expect(security.protocol).toBe('file:');
-    const preferences = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.webContents.getLastWebPreferences());
-    expect(preferences?.contextIsolation).toBe(true);
-    expect(preferences?.sandbox).toBe(true);
-    expect(preferences?.nodeIntegration).toBe(false);
-  } finally {
-    if (app) await app.close();
-  }
-});
+test('Electron production shell starts with real isolated preload',async()=>{test.skip(guiUnavailable,guiReason);test.setTimeout(120_000);const launched=spawnProduction('9338',cleanEnv('user-data-production'));let browser:Browser|undefined;try{const connected=await connect('9338',launched.child,launched.output);browser=connected.browser;await expect(connected.page.getByRole('heading',{name:'Project Setup'})).toBeVisible();expect(await connected.page.evaluate(()=>({bridge:window.studio?.version,node:typeof(globalThis as typeof globalThis&{require?:unknown}).require}))).toEqual({bridge:'0.2.0',node:'undefined'})}finally{if(browser)await browser.close();await stop(launched.child)}});
 
-test('Electron development URL uses the real npm run dev on strict port 5174 without dist', async () => {
-  test.skip(guiUnavailable, guiReason);
-  test.setTimeout(90_000);
-  const env = withoutElectronNodeMode();
-  env.MODE_B_STUDIO_DISABLE_GPU = '1';
-  env.MODE_B_STUDIO_USER_DATA = resolve('test-results-electron','user-data-development');
-  env.R1_ELECTRON_CDP_PORT = process.env.R1_ELECTRON_CDP_PORT || '9337';
-  const dist = resolve('dist');
-  const backup = resolve('dist.dev-smoke-backup');
-  let moved = false;
-  let launched: ReturnType<typeof spawn> | undefined;
-  let browser: Awaited<ReturnType<typeof chromium.connectOverCDP>> | undefined;
-  try {
-    // Fail rather than overwrite a different test's backup.
-    await expect(access(backup)).rejects.toThrow();
-    try { await access(dist); await rename(dist, backup); moved = true; }
-    catch { /* clean workspace with no production build output */ }
-    // This is the actual combined Vite + Electron launcher, not a separate Vite-only process.
-    launched = spawn('cmd.exe', ['/d', '/s', '/c', 'npm run dev'], {
-      cwd: process.cwd(), env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true
-    });
-    let output = '';
-    launched.stdout?.on('data', chunk => { output += String(chunk); });
-    launched.stderr?.on('data', chunk => { output += String(chunk); });
-    let appPage: import('@playwright/test').Page | undefined;
-    for (let attempt = 0; attempt < 90; attempt += 1) {
-      if (launched.exitCode !== null) throw new Error(`npm run dev exited prematurely: ${launched.exitCode}\n${output}`);
-      try {
-        const res = await fetch('http://127.0.0.1:5174/', { signal: AbortSignal.timeout(600) });
-        if (!res.ok) throw new Error(`Dev server HTTP ${res.status}`);
-        if (!browser) browser = await chromium.connectOverCDP(`http://127.0.0.1:${env.R1_ELECTRON_CDP_PORT}`, { timeout: 750 });
-        appPage = browser.contexts().flatMap(context => context.pages()).find(page => page.url().startsWith('http://127.0.0.1:5174'));
-        if (appPage) break;
-      } catch { /* Vite and Electron may still be starting */ }
-      await new Promise(done => setTimeout(done, 500));
-    }
-    if (!appPage) throw new Error(`No real Electron window connected to localhost:5174 from npm run dev.\n${output}`);
-    await expect(appPage.getByRole('heading', { name: 'Project Setup' })).toBeVisible();
-    const check = await appPage.evaluate(() => ({
-      origin: location.origin,
-      bridge: window.studio?.version,
-      nodeExposed: typeof (globalThis as typeof globalThis & { require?: unknown }).require !== 'undefined',
-      wrongPortResources: performance.getEntriesByType('resource').some(resource => resource.name.includes('127.0.0.1:5173'))
-    }));
-    expect(check.origin).toBe('http://127.0.0.1:5174');
-    expect(check.bridge).toBe('0.2.0');
-    expect(check.nodeExposed).toBe(false);
-    expect(check.wrongPortResources).toBe(false);
-  } finally {
-    if (browser) await browser.close();
-    if (launched?.pid) {
-      try { await execFileAsync('taskkill.exe', ['/PID', String(launched.pid), '/T', '/F']); }
-      catch { /* process tree may already have exited */ }
-    }
-    if (moved) {
-      let restored = false;
-      for (let attempt = 0; attempt < 8 && !restored; attempt += 1) {
-        try { await rename(backup, dist); restored = true; }
-        // The final throw is intentional: failure to restore dist is material test damage.
-        // eslint-disable-next-line no-unsafe-finally
-        catch (error) { if (attempt === 7) throw error; await new Promise(done => setTimeout(done, 500)); }
-      }
-    }
-  }
-});
+test('Electron development URL uses real npm run dev on strict port 5174 without dist',async()=>{test.skip(guiUnavailable,guiReason);test.setTimeout(120_000);const env=cleanEnv('user-data-development');env.R1_ELECTRON_CDP_PORT='9337';env.MODE_B_STUDIO_TEST_NO_SANDBOX='1';const dist=resolve('dist'),backup=resolve('dist.dev-smoke-backup');let moved=false,child:ChildProcess|undefined,browser:Browser|undefined,output='';try{await expect(access(backup)).rejects.toThrow();try{await access(dist);await rename(dist,backup);moved=true}catch(error){void error}child=spawn('cmd.exe',['/d','/s','/c','npm run dev'],{cwd:process.cwd(),env,stdio:['ignore','pipe','pipe'],windowsHide:true});child.stdout?.on('data',chunk=>output+=String(chunk));child.stderr?.on('data',chunk=>output+=String(chunk));const connected=await connect('9337',child,()=>output);browser=connected.browser;await expect(connected.page.getByRole('heading',{name:'Project Setup'})).toBeVisible();expect(await connected.page.evaluate(()=>({origin:location.origin,bridge:window.studio?.version,node:typeof(globalThis as typeof globalThis&{require?:unknown}).require,wrongPort:performance.getEntriesByType('resource').some(resource=>resource.name.includes('127.0.0.1:5173'))}))).toEqual({origin:'http://127.0.0.1:5174',bridge:'0.2.0',node:'undefined',wrongPort:false})}finally{if(browser)await browser.close();await stop(child);if(moved)await rename(backup,dist)}});
+
+test('real main/preload Electron drives offline native preview approval render and reopen',async()=>{test.skip(guiUnavailable,guiReason);const project=process.env.R2_ELECTRON_PROJECT;test.skip(!project,'R2_ELECTRON_PROJECT must point to the acceptance fixture.');test.setTimeout(20*60_000);const env=cleanEnv('user-data-e2e');env.MODE_B_SKILL_ROOT=resolve('..','skills','directing-stickman-videos');const launched=spawnProduction('9339',env);let browser:Browser|undefined;try{const connected=await connect('9339',launched.child,launched.output);browser=connected.browser;const page=connected.page;await expect(page.getByRole('heading',{name:'Project Setup'})).toBeVisible();const opened=await page.evaluate(async root=>window.studio!.openProject(root),project);expect(opened.voice?.origin).toBe('IMPORTED_WAV');expect(opened.alignment?.origin).toBe('IMPORTED_WORDS');await page.evaluate(async id=>window.studio!.nativeRun(id,'validate',{seconds:20}),opened.project.id);const preview=await page.evaluate(async id=>window.studio!.nativeRun(id,'preview',{seconds:20,replace:true}),opened.project.id);expect(preview.state.preview?.sha256).toMatch(/^[a-f0-9]{64}$/);const approved=await page.evaluate(async({id,sha256})=>window.studio!.nativeRun(id,'approve',{note:'Electron E2E explicitly reviewed deterministic offline fixture',attested:true,reviewedSha256:sha256}),{id:opened.project.id,sha256:preview.state.preview!.sha256});expect(approved.state.approval?.previewSha256).toBe(preview.state.preview?.sha256);const rendered=await page.evaluate(async id=>window.studio!.nativeRun(id,'render',{replace:true}),opened.project.id);expect(rendered.state.render?.sha256).toMatch(/^[a-f0-9]{64}$/);const reopened=await page.evaluate(async root=>window.studio!.openProject(root),project);expect(reopened.render?.sha256).toBe(rendered.state.render?.sha256)}finally{if(browser)await browser.close();await stop(launched.child)}});
