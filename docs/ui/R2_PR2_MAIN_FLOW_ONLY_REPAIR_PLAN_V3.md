@@ -1,4 +1,7 @@
 # R2 / PR #2 — MAIN FLOW ONLY REPAIR PLAN V3
+
+> **SUPERSEDED FOR THE NEXT CODEX IMPLEMENTATION ROUND:** [R2 PR #2 — Six-Issue UT-Only Repair Plan V4](R2_PR2_SIX_ISSUE_UT_ONLY_ONE_ROUND_REPAIR_PLAN_V4.md). Owner now handles E2E directly. V3 remains background for architecture, but V4 overrides its wider FIX and end-to-end test requirements.
+
 **Status:** OWNER RE-SCOPE — AUTHORITATIVE FOR THE NEXT CODEX ROUND.
 **Repository:** plthien/stickman-video-studio
 **Branch:** feat/r2-external-native-workflow
