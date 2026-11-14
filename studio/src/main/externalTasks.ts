@@ -247,8 +247,8 @@ export function fulfillMedia(appPath:string,root:string,token:string,key:string,
   const binding={relative,sha256:hash,rights:rights.trim(),kind:ref.kind};
   const previous=pending.fulfillments[key];
   if(previous){if(JSON.stringify(previous)!==JSON.stringify(binding))throw new Error('A frozen target cannot be silently remapped; rebuild/review the task.');return pendingResult(root,pending);}
-  const mapped={...original,...(ref.kind==='image'?{shotId:ref.shotId,layerId:ref.layerId}:{track:ref.track==='music'?'sfx':ref.track,trackIndex:ref.trackIndex})};
-  state.media=[...(state.media??[]).filter(item=>!(item.path===relative&&item.shotId===mapped.shotId&&item.layerId===mapped.layerId&&item.track===mapped.track&&item.trackIndex===mapped.trackIndex)),mapped];
+  const mapped={...original,...(ref.kind==='image'?{shotId:ref.shotId,layerId:ref.layerId}:{track:ref.track,trackIndex:ref.trackIndex})};
+  state.media=[...(state.media??[]).filter(item=>!(item.path===relative&&item.shotId===ref.shotId&&item.layerId===ref.layerId&&item.track===ref.track&&item.trackIndex===ref.trackIndex)),mapped];
   pending.fulfillments[key]=binding;
   atomicJson(pendingPath(root),pending);
   writeState(root,state);
