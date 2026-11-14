@@ -7,10 +7,13 @@ export function VoiceWorkspace() {
   const [profiles, setProfiles] = useState<Array<Record<string, unknown>>>([]), [voice, setVoice] = useState(native?.nano?.profileId ?? '');
   const [status, setStatus] = useState<'idle'|'ready'|'busy'|'error'>('idle'), [message, setMessage] = useState(''), [authorized, setAuthorized] = useState(false);
   const id = native?.project.id, script = native?.approvedScript?.text ?? '';
+  const hasAlignment = Boolean(native?.alignment);
+  const wordsSha256 = native?.alignment?.wordsSha256;
+  const captionRevision = native?.alignment?.captionReview?.revision;
   const [review,setReview]=useState<null|{words:Array<{word:string;start:number;end:number}>;original:Array<{start:number;end:number;text:string}>;originalBoundaries:number[];draft:null|{boundaries:number[];cues:Array<{start:number;end:number;text:string}>};approved:null|{revision:number;cues:Array<{start:number;end:number;text:string}>}}>(null);
   const [boundaries,setBoundaries]=useState<number[]>([]),[selectedBoundary,setSelectedBoundary]=useState(1),[reviewNote,setReviewNote]=useState('');
   const refreshCaptionReview=async()=>{if(!id||!window.studio)return;const value=await window.studio.captionReview(id);setReview(value);setBoundaries(value.draft?.boundaries??value.originalBoundaries);};
-  useEffect(()=>{let active=true;if(!id||!native?.alignment||!window.studio){setReview(null);return;}void window.studio.captionReview(id).then(value=>{if(active){setReview(value);setBoundaries(value.draft?.boundaries??value.originalBoundaries);}}).catch(()=>{if(active)setReview(null)});return()=>{active=false};},[id,native?.alignment?.wordsSha256,native?.alignment?.captionReview?.revision]);
+  useEffect(()=>{let active=true;if(!id||!hasAlignment||!window.studio){setReview(null);return;}void window.studio.captionReview(id).then(value=>{if(active){setReview(value);setBoundaries(value.draft?.boundaries??value.originalBoundaries);}}).catch(()=>{if(active)setReview(null)});return()=>{active=false};},[id,hasAlignment,wordsSha256,captionRevision]);
   const runReview=async(work:()=>Promise<unknown>,success:string)=>{setStatus('busy');try{await work();if(id&&window.studio)setNative(await window.studio.projectState(id));await refreshCaptionReview();setStatus('ready');showNotice(success);}catch(reason){fail(reason)}};
   const splitAtWord=()=>{const number=selectedBoundary;if(!review||number<1||number>=review.words.length)return;setBoundaries(value=>[...new Set([...value,number])].sort((a,b)=>a-b));};
   const mergeAtWord=()=>{if(!review)return;setBoundaries(value=>value.filter(number=>number!==selectedBoundary));};
