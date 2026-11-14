@@ -4,9 +4,10 @@ const forbiddenKeys = new Set(['__proto__','prototype','constructor']);
 const controls = /[\u0000-\u001f\u007f]/;
 const proseControls = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 const schemes = /(?:javascript|file|data|vbscript):/i;
+const htmlMarkup = /<\/?[a-z][^>]*>/i;
 const urlInText = /https?:\/\/[^\s<>"']+/gi;
 function publicCitationUrl(input: string) {
-  if (input.length > 2048 || controls.test(input) || schemes.test(input)) throw new Error('Unsafe research citation URL.');
+  if (input.length > 2048 || controls.test(input) || schemes.test(input) || htmlMarkup.test(input)) throw new Error('Unsafe research citation URL.');
   let url:URL;try{url=new URL(input);}catch{throw new Error('Invalid research citation URL.');}
   if (!['http:','https:'].includes(url.protocol)||!url.hostname||url.username||url.password) throw new Error('Only public HTTP(S) citations without credentials are permitted.');
   const host=url.hostname.replace(/^\[|\]$/g,'').toLowerCase().replace(/\.$/,'');
@@ -14,7 +15,7 @@ function publicCitationUrl(input: string) {
   return input;
 }
 function safeText(value: unknown, limit=2048): string {
-  if (typeof value!=='string'||!value.trim()||value.length>limit||controls.test(value)||schemes.test(value)) throw new Error('Invalid research citation text.');
+  if (typeof value!=='string'||!value.trim()||value.length>limit||controls.test(value)||schemes.test(value)||htmlMarkup.test(value)) throw new Error('Invalid research citation text.');
   for (const match of value.match(urlInText)??[]) publicCitationUrl(match.replace(/[),.;]+$/,''));
   return value;
 }
