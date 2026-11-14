@@ -1,0 +1,2 @@
+import { PageHeader } from '../components/layout/PageHeader'; import { StoryboardWorkspace } from '../features/storyboard/StoryboardWorkspace';
+export function StoryboardImagesPage() { return <div className="page"><PageHeader eyebrow="VISUAL PLANNING" title="Storyboard & Images" description="Select shots, inspect briefs and distinguish local references from production assets." /><StoryboardWorkspace /></div>; }

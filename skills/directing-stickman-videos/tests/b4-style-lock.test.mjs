@@ -92,9 +92,20 @@ test('incorrect declared image dimensions fail', t => {
 
 test('resource symlink cannot depend on assets outside the installed Skill', t => {
   const installed = fixture(t);
-  const target = path.join(installed, 'assets/b4', expectedReferences[3][1]);
-  fs.unlinkSync(target);
-  fs.symlinkSync(path.join(root, 'assets/b4', expectedReferences[3][1]), target);
+  if (process.platform === 'win32') {
+    // A Windows directory junction is a real reparse-point escape, and it does
+    // not require Developer Mode or SeCreateSymbolicLinkPrivilege.
+    const external = path.join(installed, 'assets/b4/outside');
+    fs.symlinkSync(path.join(root, 'assets/b4'), external, 'junction');
+    changeManifest(installed, manifest => {
+      manifest.references[3].path = 'outside/' + expectedReferences[3][1];
+    });
+  } else {
+    // Keep the more direct file-symlink regression on POSIX systems.
+    const target = path.join(installed, 'assets/b4', expectedReferences[3][1]);
+    fs.unlinkSync(target);
+    fs.symlinkSync(path.join(root, 'assets/b4', expectedReferences[3][1]), target);
+  }
   assert.throws(() => verifyB4StyleLock(installed), /escapes installed Skill/);
 });
 

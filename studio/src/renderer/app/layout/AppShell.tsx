@@ -1,0 +1,2 @@
+import { Outlet, useLocation } from 'react-router-dom'; import { Sidebar } from './Sidebar'; import { Topbar } from './Topbar'; import { PipelineStrip } from './PipelineStrip';
+export function AppShell() { const { pathname } = useLocation(); return <div className={`app-shell ${pathname === '/editor' ? 'editor-route' : ''}`}><Sidebar /><div className="app-main"><Topbar /><PipelineStrip /><main><Outlet /></main></div></div>; }

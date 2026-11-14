@@ -1,0 +1,2 @@
+import { PageHeader } from '../components/layout/PageHeader'; import { SettingsWorkspace } from '../features/settings/SettingsWorkspace';
+export function SystemSettingsPage() { return <div className="page"><PageHeader eyebrow="GLOBAL SETTINGS" title="System Settings & Diagnostics" description="Configure local form values and inspect security posture without making network requests." /><SettingsWorkspace /></div>; }

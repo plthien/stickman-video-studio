@@ -1,0 +1,2 @@
+import { useLocation } from 'react-router-dom';
+export function PipelineStrip() { const { pathname } = useLocation(); if (pathname === '/editor') return null; return <div className="pipeline" aria-label="Production pipeline">{['Setup', 'Script', 'Voice', 'Images', 'Edit', 'Render'].map((item, index) => <div key={item} className={index === 0 ? 'current' : ''}><span>{index + 1}</span>{item}</div>)}</div>; }

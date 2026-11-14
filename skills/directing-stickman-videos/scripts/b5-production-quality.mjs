@@ -23,7 +23,9 @@ function lockedFile(scene, item) {
 }
 function exactLegacy(scene, pack) {
   const expected = read(path.join(pack, 'baseline-lock.json')).files.filter(f => f.path.startsWith('example/'));
-  const actual = files(scene).map(f => path.relative(scene, f)).sort();
+  // The baseline lock uses forward slashes on every platform. Normalize only
+  // the comparison key, never the locked file bytes or SHA-256 validation.
+  const actual = files(scene).map(f => path.relative(scene, f).split(path.sep).join('/')).sort();
   return JSON.stringify(actual) === JSON.stringify(expected.map(f => f.path.slice(8)).sort()) &&
     expected.every(f => sha(path.join(scene, f.path.slice(8))) === f.sha256);
 }
