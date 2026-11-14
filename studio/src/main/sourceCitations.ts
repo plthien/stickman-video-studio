@@ -2,6 +2,7 @@ import path from 'node:path';
 
 const forbiddenKeys = new Set(['__proto__','prototype','constructor']);
 const controls = /[\u0000-\u001f\u007f]/;
+const proseControls = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 const schemes = /(?:javascript|file|data|vbscript):/i;
 const urlInText = /https?:\/\/[^\s<>"']+/gi;
 function publicCitationUrl(input: string) {
@@ -22,7 +23,7 @@ export function validateAuthoring(value: unknown): Record<string,unknown> {
   const object=value as Record<string,unknown>;
   function inspect(data:unknown,depth=0):void {
     if(depth>40)throw new Error('Creative authoring nesting too deep.');
-    if(typeof data==='string'){if(data.length>65536||controls.test(data))throw new Error('Invalid creative prose.');return;}
+    if(typeof data==='string'){if(data.length>65536||proseControls.test(data))throw new Error('Invalid creative prose.');return;}
     if(Array.isArray(data)){if(data.length>10000)throw new Error('Creative array is too large.');data.forEach(item=>inspect(item,depth+1));return;}
     if(data&&typeof data==='object'){const row=data as Record<string,unknown>;for(const [key,item] of Object.entries(row)){if(forbiddenKeys.has(key))throw new Error('Forbidden authoring key.');inspect(item,depth+1);}}
   }
