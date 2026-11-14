@@ -5,7 +5,7 @@ import {afterEach,describe,expect,it,vi} from 'vitest';
 import {confirmImport,freezeTask,stageImport} from '../../src/main/externalTasks';
 import {validateAuthoring} from '../../src/main/sourceCitations';
 import {readState} from '../../src/main/services';
-import {appPath,cleanup,fixture,frozenEnvelope,nativePayload,stageNative,validator} from './SixIssueFixtures';
+import {appPath,cleanup,fixture,frozenEnvelope,nativePayload,stageNative} from './SixIssueFixtures';
 
 afterEach(()=>{vi.unstubAllGlobals();cleanup()});
 const script=(refs:unknown[]=[],direction='Research-led survival narrative')=>({schema:'mode-b-script-v1',sections:[{id:'opening',text:'One two three'}],authoring:{creative_direction:{description:direction},source_references:refs,characters:[],style_decisions:{},voice_intentions:{},sound_intentions:{}}});
