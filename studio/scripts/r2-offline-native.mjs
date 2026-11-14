@@ -1,0 +1,31 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import {spawnSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
+import {fileURLToPath} from 'node:url';
+import {createRequire} from 'node:module';
+
+const require=createRequire(import.meta.url);process.env.FFMPEG=require('ffmpeg-static');process.env.FFPROBE=require('@ffprobe-installer/ffprobe').path;
+const {FFMPEG,run,save}=await import('../../skills/directing-stickman-videos/scripts/autopilot-core.mjs');
+
+const studio=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+const cli=path.resolve(studio,'../skills/directing-stickman-videos/scripts/autopilot.mjs');
+const destination=path.resolve(process.argv[2]||path.join(studio,'test-results-native'));
+if(!destination.startsWith(studio+path.sep))throw new Error('Evidence destination must stay inside studio.');
+const root=path.join(destination,'native-fixture');fs.mkdirSync(root,{recursive:true});
+run(FFMPEG,['-v','error','-f','lavfi','-i','sine=frequency=440:duration=20','-ar','24000','-ac','1','-y',path.join(root,'voice.wav')]);
+const shots=Array.from({length:4},(_,index)=>{const start=index*5,end=start+5,x=260+index*30;return{id:`N${index+1}`,start,end,layers:[{id:`prop-${index+1}`,type:'image',path:'@b1/idea-bulb-crayon.png',x,y:560,w:220,motion:{role:'prop',reason:'Offline acceptance fixture motion; not creative approval'},keys:[{t:0,x},{t:5,x:x+180}]}]}});
+const project={version:1,style:'B1',width:360,height:640,fps:12,grid:false,voice:{path:'voice.wav'},captions:[{start:0,end:5,text:'OFFLINE NATIVE CHECK'},{start:5,end:10,text:'ACTUAL TWENTY SECONDS'},{start:10,end:15,text:'EXPLICIT FIXTURE REVIEW'},{start:15,end:20,text:'VERIFIED FINAL OUTPUT'}],shots,ambience:[{path:'voice.wav',start:0,end:20,gain:.01}],sfx:[{time:1,kind:'tap',gain:.02},{time:6,kind:'pop',gain:.02},{time:11,kind:'tap',gain:.02},{time:16,kind:'pop',gain:.02}]};
+const candidate=path.join(root,'project.candidate.json'),projectFile=path.join(root,'project.json');save(candidate,project);
+const parseLastJson=text=>{const starts=[0,...Array.from(text.matchAll(/\n(?=\{)/g),match=>match.index+1)];for(const start of starts.reverse())try{return JSON.parse(text.slice(start).trim())}catch(error){void error}return{raw:text.trim()}};
+const execute=(name,args)=>{const result=spawnSync(process.execPath,[cli,...args],{cwd:path.dirname(cli),encoding:'utf8',timeout:15*60_000,maxBuffer:16*1024*1024});fs.writeFileSync(path.join(destination,`${name}.log`),`${result.stdout}\n${result.stderr}`);if(result.status!==0)throw new Error(`${name} failed (${result.status}): ${result.stderr||result.stdout}`);return parseLastJson(result.stdout)};
+execute('01-validate-candidate',['validate',candidate,'--seconds','20']);fs.renameSync(candidate,projectFile);
+const preview=execute('02-preview',['preview',projectFile,'--seconds','20']);
+const approval=execute('03-approve',['approve',projectFile,'--note','Owner-approved offline engineering fixture only; this is not approval of a real user video.']);
+const film=execute('04-render',['render',projectFile]);const reuse=execute('05-render-cache-reuse',['render',projectFile,'--replace']);
+const hash=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+const required=['output/preview.mp4','output/preview-report.json','output/preview.srt','output/preview.vtt','output/preview-contact-sheet.png','output/approval.json','output/film.mp4','output/film-report.json','output/film.srt','output/film.vtt','output/checkpoint.json'];for(const relative of required)if(!fs.existsSync(path.join(root,relative)))throw new Error(`Missing native artifact ${relative}`);
+const previewReport=JSON.parse(fs.readFileSync(path.join(root,'output/preview-report.json'),'utf8')),filmReport=JSON.parse(fs.readFileSync(path.join(root,'output/film-report.json'),'utf8'));
+if(previewReport.full_decode!=='pass'||filmReport.full_decode!=='pass'||hash(path.join(root,'output/preview.mp4'))!==previewReport.output_sha256||hash(path.join(root,'output/film.mp4'))!==filmReport.output_sha256||Number(reuse.cache_hits)<4)throw new Error('Native report, decode, fingerprint, or cache-reuse gate failed.');
+const summary={schema:'r2-offline-native-evidence-v1',duration_seconds:20,project:projectFile,preview:{path:path.join(root,'output/preview.mp4'),sha256:previewReport.output_sha256,report:path.join(root,'output/preview-report.json'),srt:path.join(root,'output/preview.srt'),vtt:path.join(root,'output/preview.vtt'),full_decode:previewReport.full_decode},approval,film:{path:path.join(root,'output/film.mp4'),sha256:filmReport.output_sha256,report:path.join(root,'output/film-report.json'),full_decode:filmReport.full_decode},cache_reuse_hits:reuse.cache_hits,cli,preview_result:preview,film_result:film};
+fs.writeFileSync(path.join(destination,'offline-native-results.json'),`${JSON.stringify(summary,null,2)}\n`);process.stdout.write(`${JSON.stringify(summary,null,2)}\n`);

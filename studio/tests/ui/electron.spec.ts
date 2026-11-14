@@ -18,6 +18,8 @@ test('Electron production shell starts and retains secure BrowserWindow preferen
   test.skip(guiUnavailable, guiReason);
   const env = withoutElectronNodeMode();
   delete env.VITE_DEV_SERVER_URL;
+  env.MODE_B_STUDIO_DISABLE_GPU = '1';
+  env.MODE_B_STUDIO_USER_DATA = resolve('test-results-electron','user-data-production');
   let app: Awaited<ReturnType<typeof electron.launch>> | undefined;
   try {
     app = await electron.launch({ executablePath: electronPath, args: ['.'], env });
@@ -44,6 +46,8 @@ test('Electron development URL uses the real npm run dev on strict port 5174 wit
   test.skip(guiUnavailable, guiReason);
   test.setTimeout(90_000);
   const env = withoutElectronNodeMode();
+  env.MODE_B_STUDIO_DISABLE_GPU = '1';
+  env.MODE_B_STUDIO_USER_DATA = resolve('test-results-electron','user-data-development');
   env.R1_ELECTRON_CDP_PORT = process.env.R1_ELECTRON_CDP_PORT || '9337';
   const dist = resolve('dist');
   const backup = resolve('dist.dev-smoke-backup');

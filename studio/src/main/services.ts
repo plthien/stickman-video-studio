@@ -4,27 +4,33 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export type Stage = 'script' | 'storyboard' | 'captions';
+export type Stage = 'script' | 'native';
 export type NativeCommand = 'doctor' | 'probe' | 'captions' | 'validate' | 'preview' | 'approve' | 'render';
 export interface ProjectSummary { id: string; root: string; title: string; style: string; updatedAt: string; projectFile: string }
 export interface StudioState {
-  schema: 'mode-b-studio-state-v1'; project: ProjectSummary; brief: { topic: string; language: string; ratio: '9:16' };
+  schema: 'mode-b-studio-state-v1'; project: ProjectSummary; brief: { topic: string; language: string; ratio: '9:16'; targetDuration?: number; audience?: string; purpose?: string };
   external: Partial<Record<Stage, { revision: number; artifact: unknown; importedAt: string }>>;
-  voice?: { path: string; sha256: string; receipt?: unknown; generatedAt: string };
-  alignment?: { path: string; captionsPath: string; audioSha256: string; generatedAt: string };
+  tasks?: Partial<Record<Stage, { id: string; revision: number; inputSha256: string; promptPath: string; status: 'FROZEN' | 'IMPORTED' | 'STALE'; createdAt: string }>>;
+  approvedScript?: { sections: Array<{ id: string; text: string }>; text: string; sha256: string; revision: number; approvedAt: string };
+  voice?: { path: string; sha256: string; receipt?: unknown; generatedAt: string; duration?: number; stale?: boolean; profileId?: string };
+  alignment?: { path: string; captionsPath: string; audioSha256: string; scriptSha256?: string; generatedAt: string };
   approval?: { note: string; previewSha256: string; approvedAt: string };
+  preview?: { path: string; sha256: string; reportPath: string; reportSha256: string; verifiedAt: string; reviewedAt?: string };
+  render?: { path: string; sha256: string; reportPath: string; reportSha256: string; verifiedAt: string };
+  nano?: { endpoint: string; profileId?: string };
+  imports?: string[];
 }
 
 const MAX_JSON = 4 * 1024 * 1024;
-const sha = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
-const atomicJson = (file: string, value: unknown) => {
+export const sha = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
+export const atomicJson = (file: string, value: unknown) => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
   fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
   fs.renameSync(temporary, file);
 };
-const inside = (parent: string, child: string) => child === parent || child.startsWith(`${parent}${path.sep}`);
-const assertLocalRoot = (candidate: string, mustExist = true) => {
+export const inside = (parent: string, child: string) => child === parent || child.startsWith(`${parent}${path.sep}`);
+export const assertLocalRoot = (candidate: string, mustExist = true) => {
   if (!path.isAbsolute(candidate) || candidate.startsWith('\\\\')) throw new Error('A local absolute path is required.');
   const resolved = path.resolve(candidate);
   if (mustExist) {
@@ -40,74 +46,42 @@ const noExecutable = (file: string) => {
   if (/\.(?:exe|com|bat|cmd|ps1|msi|scr|js|mjs|cjs|vbs)$/i.test(file)) throw new Error('Executable files are not accepted.');
 };
 const statePath = (root: string) => path.join(root, '.studio', 'state.json');
-export const readState = (root: string): StudioState => JSON.parse(fs.readFileSync(statePath(assertLocalRoot(root)), 'utf8')) as StudioState;
+export const readState = (root: string): StudioState => {
+  const state = JSON.parse(fs.readFileSync(statePath(assertLocalRoot(root)), 'utf8')) as StudioState;
+  state.tasks ??= {}; state.nano ??= { endpoint: 'http://127.0.0.1:3901' }; state.imports ??= [];
+  return state;
+};
 export const writeState = (root: string, state: StudioState) => atomicJson(statePath(assertLocalRoot(root)), state);
 export const projectId = (root: string) => sha(fs.realpathSync(root).toLowerCase()).slice(0, 24);
+export function projectSnapshot(root: string) { const state=readState(root); const manifest=strictJson(fs.readFileSync(path.join(assertLocalRoot(root),'project.json'),'utf8')) as Record<string,unknown>; const shots=Array.isArray(manifest.shots)?manifest.shots.map((item,index)=>{const shot=item as Record<string,unknown>;const start=Number(shot.start),end=Number(shot.end);const caption=Array.isArray(manifest.captions)?(manifest.captions as Array<Record<string,unknown>>).find(cue=>Number(cue.start)<end&&Number(cue.end)>start)?.text:'';return{id:String(shot.id||`SHOT-${String(index+1).padStart(2,'0')}`),title:String(shot.title||`Native shot ${index+1}`),duration:Math.max(0,end-start),start,end,caption:String(caption||''),status:'Native manifest',color:'#79dfc6'}}):[];return{...state,manifest,projection:{shots,duration:shots.reduce((sum,item)=>sum+item.duration,0),demo:false},job:reconcileJobSafe(root)}; }
+function reconcileJobSafe(root:string){const file=path.join(root,'.studio','jobs','latest.json');if(!fs.existsSync(file))return null;try{return strictJson(fs.readFileSync(file,'utf8'))}catch{return{status:'UNKNOWN'}}}
 
 export function strictJson(text: string): unknown {
   if (Buffer.byteLength(text, 'utf8') > MAX_JSON) throw new Error('JSON exceeds the 4 MiB limit.');
   if (!text.trim()) throw new Error('JSON is empty.');
-  const stack: Array<Set<string> | null> = []; let inString = false; let escaped = false; let token = ''; let expectingKey = false;
+  const stack: Array<{ type: 'object'; keys: Set<string>; expectingKey: boolean } | { type: 'array' }> = [];
   for (let i = 0; i < text.length; i += 1) {
     const c = text[i];
-    if (inString) {
-      if (escaped) { token += c; escaped = false; continue; }
-      if (c === '\\') { token += c; escaped = true; continue; }
-      if (c === '"') {
-        inString = false;
-        if (expectingKey) {
-          let key: string;
-          try { key = JSON.parse(`"${token}"`) as string; } catch { throw new Error('Invalid JSON string.'); }
-          if (['__proto__', 'prototype', 'constructor'].includes(key)) throw new Error(`Forbidden object key: ${key}`);
-          const keys = stack.at(-1); if (!keys) throw new Error('Invalid object key.');
-          if (keys.has(key)) throw new Error(`Duplicate object key: ${key}`); keys.add(key); expectingKey = false;
-        }
-        token = ''; continue;
+    if (c === '"') {
+      const start = i; let escaped = false; i += 1;
+      for (; i < text.length; i += 1) { const q = text[i]; if (escaped) escaped = false; else if (q === '\\') escaped = true; else if (q === '"') break; }
+      if (i >= text.length) throw new Error('Unterminated JSON string.');
+      const current = stack.at(-1); let next = i + 1; while (/\s/.test(text[next] ?? '')) next += 1;
+      if (current?.type === 'object' && current.expectingKey && text[next] === ':') {
+        const key = JSON.parse(text.slice(start, i + 1)) as string;
+        if (['__proto__', 'prototype', 'constructor'].includes(key)) throw new Error(`Forbidden object key: ${key}`);
+        if (current.keys.has(key)) throw new Error(`Duplicate object key: ${key}`); current.keys.add(key); current.expectingKey = false;
       }
-      token += c; continue;
+      continue;
     }
-    if (c === '"') { inString = true; token = ''; continue; }
-    if (c === '{') { stack.push(new Set()); expectingKey = true; if (stack.length > 64) throw new Error('JSON nesting exceeds 64 levels.'); }
-    else if (c === '[') { stack.push(null); if (stack.length > 64) throw new Error('JSON nesting exceeds 64 levels.'); }
-    else if (c === '}' || c === ']') { stack.pop(); expectingKey = false; }
-    else if (c === ',' && stack.at(-1) instanceof Set) expectingKey = true;
-    else if (c === ':' && stack.at(-1) instanceof Set) expectingKey = false;
+    if (c === '{') { stack.push({ type: 'object', keys: new Set(), expectingKey: true }); if (stack.length > 64) throw new Error('JSON nesting exceeds 64 levels.'); }
+    else if (c === '[') { stack.push({ type: 'array' }); if (stack.length > 64) throw new Error('JSON nesting exceeds 64 levels.'); }
+    else if (c === '}' || c === ']') stack.pop();
+    else if (c === ',') { const current = stack.at(-1); if (current?.type === 'object') current.expectingKey = true; }
   }
   const value = JSON.parse(text) as unknown;
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('The root must be a JSON object.');
   return value;
-}
-
-const stageContracts: Record<Stage, string> = {
-  script: 'Return {"schema":"mode-b-script-v1","sections":[{"id":"...","text":"..."}]}. Keep every supplied fact and section ID.',
-  storyboard: 'Return {"schema":"mode-b-storyboard-v1","shots":[{"id":"...","start":0,"end":1,"layers":[]}]}. Use only native B1-B4 manifest fields.',
-  captions: 'Return {"schema":"mode-b-captions-v1","cues":[{"start":0,"end":1,"text":"..."}]}. One semantic line per cue.'
-};
-export function externalPrompt(state: StudioState, stage: Stage) {
-  const source = state.external.script?.artifact ?? { title: state.project.title, topic: state.brief.topic, language: state.brief.language };
-  return `# MODE B EXTERNAL CHATGPT — ${stage.toUpperCase()}\n\nManual transport only. Do not return Markdown or executable code. Return exactly one UTF-8 JSON object.\n\nProject ID: ${state.project.id}\nStyle contract: ${state.project.style}\nOutput ratio: ${state.brief.ratio}\n\n## Source material\n${JSON.stringify(source, null, 2)}\n\n## Frozen output contract\n${stageContracts[stage]}\n`;
-}
-const validateStage = (stage: Stage, artifact: unknown) => {
-  const object = artifact as Record<string, unknown>; const expected = `mode-b-${stage}-v1`;
-  if (object.schema !== expected) throw new Error(`Expected schema ${expected}.`);
-  const key = stage === 'script' ? 'sections' : stage === 'storyboard' ? 'shots' : 'cues';
-  if (!Array.isArray(object[key]) || !(object[key] as unknown[]).length) throw new Error(`${key} must be a non-empty array.`);
-  return object;
-};
-const pending = new Map<string, { root: string; stage: Stage; artifact: unknown; before: unknown; created: number }>();
-export function stageExternalImport(root: string, stage: Stage, text: string) {
-  const state = readState(root); const artifact = validateStage(stage, strictJson(text)); const before = state.external[stage]?.artifact ?? null;
-  const token = randomUUID(); pending.set(token, { root: state.project.root, stage, artifact, before, created: Date.now() });
-  return { token, stage, before, after: artifact, changes: JSON.stringify(before) === JSON.stringify(artifact) ? 0 : 1 };
-}
-export function confirmExternalImport(token: string) {
-  const item = pending.get(token); if (!item || Date.now() - item.created > 10 * 60_000) throw new Error('Import confirmation expired.');
-  const state = readState(item.root); const previous = state.external[item.stage];
-  const revision = (previous?.revision ?? 0) + 1; const dir = path.join(item.root, '.studio', 'external');
-  if (previous) atomicJson(path.join(item.root, '.studio', 'revisions', `${item.stage}-${previous.revision}.json`), previous);
-  atomicJson(path.join(dir, `${item.stage}.json`), item.artifact);
-  state.external[item.stage] = { revision, artifact: item.artifact, importedAt: new Date().toISOString() }; state.project.updatedAt = new Date().toISOString(); writeState(item.root, state); pending.delete(token);
-  return state;
 }
 
 export function nativeSkillRoot(appPath: string) {
@@ -115,14 +89,15 @@ export function nativeSkillRoot(appPath: string) {
   const root = path.resolve(configured || appPath, configured ? '.' : '../skills/directing-stickman-videos');
   const cli = path.join(root, 'scripts', 'autopilot.mjs'); if (!fs.existsSync(cli)) throw new Error('Original Mode B CLI was not found.'); return { root, cli };
 }
-export async function runProcess(exe: string, args: string[], options: { cwd: string; timeout?: number; env?: NodeJS.ProcessEnv }) {
+export async function runProcess(exe: string, args: string[], options: { cwd: string; timeout?: number; env?: NodeJS.ProcessEnv; signal?: AbortSignal }) {
   return await new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
     const child = spawn(exe, args, { cwd: options.cwd, shell: false, windowsHide: true, env: options.env ?? process.env, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = ''; let stderr = ''; const cap = 8 * 1024 * 1024;
     const append = (current: string, chunk: Buffer) => (current + chunk.toString('utf8')).slice(-cap);
     child.stdout.on('data', chunk => { stdout = append(stdout, chunk as Buffer); }); child.stderr.on('data', chunk => { stderr = append(stderr, chunk as Buffer); });
+    const stop = () => child.kill(); options.signal?.addEventListener('abort', stop, { once: true });
     const timer = setTimeout(() => { child.kill(); reject(new Error('Native command timed out.')); }, options.timeout ?? 10 * 60_000);
-    child.once('error', reject); child.once('close', code => { clearTimeout(timer); resolve({ code: code ?? -1, stdout, stderr }); });
+    child.once('error', reject); child.once('close', code => { clearTimeout(timer); options.signal?.removeEventListener('abort', stop); if(options.signal?.aborted) reject(new Error('Native command cancelled.')); else resolve({ code: code ?? -1, stdout, stderr }); });
   });
 }
 export async function runNative(appPath: string, root: string, command: NativeCommand, input: { seconds?: number; note?: string; replace?: boolean; file?: string } = {}) {
@@ -142,6 +117,12 @@ export function resolveProjectFile(root: string, relative: string) {
   return target;
 }
 export const mediaUrl = (root: string, relative: string) => `studio-media://${projectId(assertLocalRoot(root))}/${encodeURIComponent(relative.replaceAll('\\', '/'))}`;
+export function assertMediaRelative(relative: string) {
+  const normalized = relative.replaceAll('\\', '/');
+  if (normalized.startsWith('/') || normalized.split('/').some(part => !part || part === '.' || part === '..' || part.startsWith('.'))) throw new Error('Invalid media path.');
+  if (!/^(?:assets\/(?:images|sfx)|output)\/[\p{L}\p{N}_.@+ -]+\.(?:png|jpe?g|webp|wav|mp3|m4a|aac|ogg|flac|mp4|webm|srt|vtt)$/iu.test(normalized)) throw new Error('Path is not an allowlisted project media file.');
+  return normalized;
+}
 export const fileFetchUrl = (root: string, relative: string) => pathToFileURL(resolveProjectFile(root, relative)).toString();
 export function inspectWav(file: string) {
   const data = fs.readFileSync(file); if (data.length < 44 || data.toString('ascii', 0, 4) !== 'RIFF' || data.toString('ascii', 8, 12) !== 'WAVE') throw new Error('Nano output is not WAV.');
@@ -151,7 +132,8 @@ export function inspectWav(file: string) {
 }
 export function safeImportedFile(root: string, source: string, kind: 'image' | 'sfx') {
   const projectRoot = assertLocalRoot(root); const real = fs.realpathSync(source); noExecutable(real);
-  const allowed = kind === 'image' ? /\.(?:png|jpe?g)$/i : /\.(?:wav|mp3|m4a|aac|ogg|flac)$/i; if (!allowed.test(real) || !fs.statSync(real).isFile()) throw new Error(`Unsupported ${kind} file.`);
+  const allowed = kind === 'image' ? /\.(?:png|jpe?g)$/i : /\.(?:wav|mp3|m4a|aac|ogg|flac)$/i; if (!allowed.test(real) || !fs.statSync(real).isFile() || fs.statSync(real).size > 512 * 1024 * 1024) throw new Error(`Unsupported ${kind} file.`);
+  const head=fs.readFileSync(real).subarray(0,12);if(kind==='image'&&!((head[0]===0x89&&head.toString('ascii',1,4)==='PNG')||(head[0]===0xff&&head[1]===0xd8&&head[2]===0xff)))throw new Error('Image extension does not match PNG/JPEG bytes.');if(kind==='sfx'&&!['RIFF','ID3','fLaC','OggS'].includes(head.toString('ascii',0,4))&&!(head[0]===0xff&&(head[1]&0xe0)===0xe0))throw new Error('Audio extension does not match supported audio bytes.');
   const dir = path.join(projectRoot, 'assets', kind === 'image' ? 'images' : 'sfx'); fs.mkdirSync(dir, { recursive: true });
   const target = path.join(dir, `${sha(fs.readFileSync(real)).slice(0, 12)}-${path.basename(real)}`); if (!fs.existsSync(target)) fs.copyFileSync(real, target); return path.relative(projectRoot, target).replaceAll('\\', '/');
 }
