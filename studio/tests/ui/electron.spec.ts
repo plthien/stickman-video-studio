@@ -29,7 +29,7 @@ test('Electron production shell starts and retains secure BrowserWindow preferen
       protocol: location.protocol
     }));
     expect(security.hasNodeRequire).toBe(false);
-    expect(security.bridge?.version).toBe('0.1.0');
+    expect(security.bridge?.version).toBe('0.2.0');
     expect(security.protocol).toBe('file:');
     const preferences = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.webContents.getLastWebPreferences());
     expect(preferences?.contextIsolation).toBe(true);
@@ -83,7 +83,7 @@ test('Electron development URL uses the real npm run dev on strict port 5174 wit
       wrongPortResources: performance.getEntriesByType('resource').some(resource => resource.name.includes('127.0.0.1:5173'))
     }));
     expect(check.origin).toBe('http://127.0.0.1:5174');
-    expect(check.bridge).toBe('0.1.0');
+    expect(check.bridge).toBe('0.2.0');
     expect(check.nodeExposed).toBe(false);
     expect(check.wrongPortResources).toBe(false);
   } finally {
@@ -92,6 +92,14 @@ test('Electron development URL uses the real npm run dev on strict port 5174 wit
       try { await execFileAsync('taskkill.exe', ['/PID', String(launched.pid), '/T', '/F']); }
       catch { /* process tree may already have exited */ }
     }
-    if (moved) await rename(backup, dist);
+    if (moved) {
+      let restored = false;
+      for (let attempt = 0; attempt < 8 && !restored; attempt += 1) {
+        try { await rename(backup, dist); restored = true; }
+        // The final throw is intentional: failure to restore dist is material test damage.
+        // eslint-disable-next-line no-unsafe-finally
+        catch (error) { if (attempt === 7) throw error; await new Promise(done => setTimeout(done, 500)); }
+      }
+    }
   }
 });

@@ -13,3 +13,5 @@
 .sidebar nav a{min-height:36px;padding:8px 10px;font-size:12px}
 .sidebar nav a.active{border:1px solid #39776f;box-shadow:none}
 @media(max-width:700px){.project-context,.sidebar-section-label{display:none}.sidebar nav a{min-height:40px}}
+.diff-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.diff-grid .prompt{max-height:260px;overflow:auto}.mode-panel video{width:100%;max-height:300px;background:#000;border-radius:8px}.kvs code{overflow-wrap:anywhere}.check input{display:inline-block;margin-right:8px}
+@media(max-width:700px){.diff-grid{grid-template-columns:1fr}}

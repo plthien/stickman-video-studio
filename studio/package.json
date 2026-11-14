@@ -14,6 +14,7 @@
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "test:ui": "playwright test --reporter=line",
+    "accept:r2": "powershell.exe -ExecutionPolicy Bypass -File scripts/windows-r2-acceptance.ps1",
     "preview": "vite preview"
   },
   "dependencies": {
