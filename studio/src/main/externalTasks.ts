@@ -78,7 +78,7 @@ function validateEnvelope(state: StudioState, stage: Stage, value: unknown): Env
 }
 function validateScript(payload: Record<string, unknown>) { exactKeys(payload, ['schema','sections','authoring']); if (payload.schema !== 'mode-b-script-v1' || !Array.isArray(payload.sections) || !payload.sections.length || !payload.authoring || typeof payload.authoring !== 'object' || Array.isArray(payload.authoring)) throw new Error('Invalid script payload.'); const ids = new Set<string>(); const sections = payload.sections.map(item => { const value = item as Record<string, unknown>; exactKeys(value, ['id','text']); if (typeof value.id !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(value.id) || ids.has(value.id) || typeof value.text !== 'string' || !value.text.trim()) throw new Error('Invalid or duplicate script section.'); ids.add(value.id); return { id: value.id, text: value.text.trim() }; }); return { schema: 'mode-b-script-v1', sections, authoring: validateAuthoring(payload.authoring) }; }
 export interface MissingNativeReference {
-  key:string; kind:'image'|'sfx'; path:string; shotId?:string; layerId?:string;
+  key:string; kind:'image'|'sfx'; path:string; shotId?:string; shotIndex?:number; layerId?:string;
   track?:'sfx'|'dialogue'|'ambience'|'music'; trackIndex?:number; scopeStart:number;
 }
 const mediaRelative=(root:string,relative:string,kind:'image'|'sfx')=>{
@@ -99,7 +99,7 @@ function nativeRefs(manifest:Record<string,unknown>):MissingNativeReference[]{
       const layer=layerValue as Record<string,unknown>;
       if(layer?.type==='image'&&typeof layer.path==='string'&&!layer.path.startsWith('@b1/')){
         const shotId=typeof shot.id==='string'?shot.id:undefined,layerId=typeof layer.id==='string'?layer.id:undefined;
-        refs.push({key:'image:'+index+':'+String(layerId??''),kind:'image',path:layer.path,shotId,layerId,scopeStart:Number(shot.start)+Number(layer.from??0)});
+        refs.push({key:'image:'+index+':'+String(layerId??''),kind:'image',path:layer.path,shotId,shotIndex:index,layerId,scopeStart:Number(shot.start)+Number(layer.from??0)});
       }
       if(Array.isArray(layer?.children))visit(layer.children,shot,index);
     }
@@ -119,8 +119,8 @@ function nativeRefs(manifest:Record<string,unknown>):MissingNativeReference[]{
 }
 function exactNativeTarget(manifest:Record<string,unknown>,ref:MissingNativeReference):Record<string,unknown>{
   if(ref.kind==='image'){
-    const shot=(manifest.shots as Array<Record<string,unknown>>).find(item=>item.id===ref.shotId);
-    if(!shot||!ref.shotId||!ref.layerId||!Array.isArray(shot.layers))throw new Error('Mapping requires an existing explicit shot and image layer ID.');
+    const shot=(manifest.shots as Array<Record<string,unknown>>)[ref.shotIndex??-1];
+    if(!shot||shot.id!==ref.shotId||!ref.shotId||!ref.layerId||!Array.isArray(shot.layers))throw new Error('Mapping requires an existing explicit shot and image layer ID.');
     const matches:Record<string,unknown>[]=[];
     const walk=(layers:unknown[])=>{for(const value of layers){const node=value as Record<string,unknown>;if(node.id===ref.layerId)matches.push(node);if(Array.isArray(node.children))walk(node.children)}};
     walk(shot.layers);
