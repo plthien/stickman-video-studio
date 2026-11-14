@@ -68,11 +68,11 @@ ElevenLabs: POST /v1/forced-alignment, multipart file=FINAL actual Nano WAV, tex
 
 1. Branch from merged main. Never alter locked V3 mockup, the B1–B5 approved style materials, native CLI/renderer/cache/QA, or the six previously owner-authorized Windows portability fixes. Run git diff main...HEAD -- skills/directing-stickman-videos/ and require empty output for R2.
 2. Production code in studio/ with existing page/component/feature architecture retained. Reuse R1 UI; wire real state and actions instead of redesigning. No monolithic TSX/service file. Keep Vite dev port **5174**.
-3. Do not call any LLM API, automate ChatGPT Web, or ship secrets into exported prompts. External ChatGPT = copy/export prompt → user manually runs it in ChatGPT Web → paste/import JSON. No remote provider HTTP work in R2.
+3. Do not call an LLM API or automate ChatGPT Web. External ChatGPT = user manually copies/exports prompt, obtains results on ChatGPT Web and imports JSON. Nano communication stays on localhost; the owner-authorized ElevenLabs forced-alignment upload is the ONLY cloud provider call in R2. Keep API secrets out of prompts, renderer and logs.
 4. Electron renderer is untrusted. No Node, fs, shell, arbitrary URLs or unrestricted IPC in React. Main-process IPC has typed allowlist and validated DTOs; contextIsolation/sandbox/nodeIntegration settings remain secure.
 5. Select project paths through native system dialog; internally use opaque project IDs, not arbitrary renderer-controlled filesystem paths. All import/read/write paths must be canonicalized, confined to the selected project and reviewed allowed external inputs, reject traversal, symlinks/junction escapes, UNC/URL injection, executable files and unapproved overwrite. Avoid unsafe zip extraction.
 6. Spawn native commands with executable Node + argv array, shell:false, fixed CLI path and command/flag allowlist; no cmd/powershell interpolation. Capture JSON/stdout/stderr boundedly with safe logs, timeout/cancellation, job state, Windows child process lifecycle and exclusive per-project mutating commands. Do not block Electron main thread.
-7. R2 neither implements Nano or G-Labs nor guesses their API. Import already-created local narration and images. R3 owns voice/image generation. Missing media means WAITING_FOR_MEDIA, never a fake success.
+7. R2 implements the selected Nano producer adapter using its exact source contract and ElevenLabs Forced Alignment. R2 imports existing local artwork; only optional future G-Labs image generation belongs to R3. Missing real media means WAITING_FOR_MEDIA, never a fake success.
 8. Use truthful states: scaffold ≠ valid project, JSON syntax valid ≠ accepted artifact, painted UI preview ≠ encoded preview, validate PASS ≠ human approval, render launched ≠ finished MP4.
 9. Explicit human input is required before native sample approval. Do not auto-approve after validation or preview and do not silently use --replace.
 
@@ -128,7 +128,7 @@ Use deterministic small local fixtures; no paid API or network dependency. Conti
 7. Approve only after explicit human action and note; original native approve invoked. Changed sample media/shot/voice blocks stale approval and render.
 8. Native full render only with required media/shot coverage + valid approval, output MP4/report verified; retain cache and verify unrelated shot cache reuse after a scoped change.
 9. App restart during/recovery after job: no duplicate conflicting render, checkpoint status reconciled; cancellation does not mark outputs successful.
-10. No change to Native Core or approved V3 reference. No API calls, no secrets leaked to renderer, no shell injection or unexpected filesystem writes.
+10. No change to Native Core or approved V3 reference. No LLM/G-Labs calls; Nano loopback and explicit user-authorized ElevenLabs alignment only. No secrets leaked to renderer, no shell injection or unexpected filesystem writes.
 
 **C1 supporting tests:**
 
@@ -206,7 +206,7 @@ R2 IMPLEMENTATION REPORT
 BASE_MAIN_SHA:
 BRANCH / HEAD / DRAFT_PR:
 WP-A Projects+IPC:
-WP-B External tasks:
+WP-B Manual External ChatGPT authoring handoff:
 WP-C Nano TTS + ElevenLabs actual word alignment + local media:
 WP-D Native preview/approval/render:
 WP-E Tests/evidence:
