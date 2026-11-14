@@ -31,7 +31,7 @@ describe('WP-A: persisted approved media fulfillment and exact native fields',()
     expect(getPendingMedia(appPath,root).missing).toHaveLength(1);
     expect(readState(root).media?.some(item=>item.shotId)).toBe(false);
   });
-  it('UT-A03 duplicate basenames have distinct frozen shot/layer references',()=>{
+  it('UT-A03 duplicate basenames have distinct frozen shot/layer references',async()=>{
     const {root}=fixture(),{response}=stageNative(root,nativePayload(root,{image:'both',sameBasename:true}));
     expect(response.missing.map(item=>item.key)).toEqual(['image:0:image-1','image:1:image-2']);
     const entry=importMediaFile(root,importedSource(root),'image','owner');
