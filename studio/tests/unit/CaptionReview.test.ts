@@ -31,7 +31,7 @@ describe('WP-B: exact word-grounded caption draft, approval and frozen native bi
     expect(approvedCaptionCues(root)).toEqual([{start:.1,end:.9,text:'One two three'}]);
   });
   it('UT-B03 unreviewed Core captions and unapproved draft cannot authorize native import',()=>{
-    const {root}=fixture({approve:false}),envelope=frozenEnvelope(root,'native',{...nativePayload(root,{image:'early'}),manifest:{version:1,style:'B1',voice:{path:'assets/audio/narration.wav'},captions:[],shots:[{start:0,end:30,layers:[]}]}});
+    const {root}=fixture({approve:false}),envelope=frozenEnvelope(root,'native',{manifest:{version:1,style:'B1',width:1080,height:1920,fps:30,voice:{path:'assets/audio/narration.wav'},captions:[{start:.1,end:.9,text:'One two three'}],shots:[{id:'one',start:0,end:30,layers:[{id:'one-text',type:'text',text:'Actual content'}]}]},shot_ledger:[],sound_script:[],asset_needs:[]});
     expect(()=>stageImport(appPath,root,'native',JSON.stringify(envelope))).toThrow(/REVIEW_REQUIRED|Caption/);
     draftCaptionReview(root,[1,3]);
     expect(()=>stageImport(appPath,root,'native',JSON.stringify(envelope))).toThrow(/REVIEW_REQUIRED|Caption/);
