@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { useAppState } from '../../app/AppState';
 import { visualStyleLabel } from '../project/styles';
-import { Badge, Button, Card, CardHeader, Textarea } from '../../components/ui';
+import { Badge, Button, Card, CardHeader, Field, Input, Textarea } from '../../components/ui';
 const tabs = ['Script', 'Native'] as const; type PromptTab = (typeof tabs)[number]; type SyntaxResult = 'idle' | 'valid' | 'invalid';
 interface ExternalSession { tab: PromptTab; setTab: Dispatch<SetStateAction<PromptTab>>; json: string; setJson: Dispatch<SetStateAction<string>>; result: SyntaxResult; setResult: Dispatch<SetStateAction<SyntaxResult>> }
 const Context = createContext<ExternalSession | null>(null);
