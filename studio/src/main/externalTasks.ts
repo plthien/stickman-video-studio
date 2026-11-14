@@ -159,16 +159,166 @@ function validateManifest(state: StudioState, root: string, payload: Record<stri
   let shotEnd=0;for(const item of manifest.shots as unknown[]){const shot=item as Record<string,unknown>,start=Number(shot.start),end=Number(shot.end);if(!Number.isFinite(start)||!Number.isFinite(end)||start<shotEnd||end<=start||end>duration+.05)throw new Error('Native shots must be finite, non-overlapping and within accepted narration.');shotEnd=end}
   return {manifest,shotLedger:payload.shot_ledger??[],soundScript:payload.sound_script??[],assetNeeds:payload.asset_needs??[],missing:collectMissing(root,state,manifest)};
 }
-export function stageImport(appPath: string, root: string, stage: Stage, text: string) {
-  const state = readState(root), task = state.tasks?.[stage]; if (!task || sourceFingerprint(appPath, root, stage) !== task.sourceFingerprint) { if (task) { task.status = 'STALE'; writeState(root, state); } throw new Error('frozen task source is stale; rebuild it before import.'); } const envelope = validateEnvelope(state, stage, strictJson(text)); const payload = stage === 'script' ? validateScript(envelope.payload) : validateManifest(state, root, envelope.payload);
-  const pending = { schema: 'mode-b-pending-import-v1', token: randomUUID(), stage, taskId: envelope.task_id, revision: envelope.revision, inputSha256: envelope.input_sha256, payload, before: stage === 'script' ? state.approvedScript ?? null : strictJson(readUtf8(path.join(root, 'project.json'))), createdAt: new Date().toISOString() };
-  atomicJson(path.join(root, '.studio', 'external', 'pending.json'), pending); return { token: pending.token, stage, before: pending.before, after: payload, changes: JSON.stringify(pending.before) === JSON.stringify(payload) ? 0 : 1, status: stage === 'native' && (payload as {missing:string[]}).missing.length ? 'WAITING_FOR_MEDIA' : 'STAGED' };
+interface PendingImport {
+  schema:'mode-b-pending-import-v2';token:string;projectId:string;stage:Stage;
+  taskId:string;revision:number;inputSha256:string;responseSha256:string;
+  payloadSha256:string;payload:Record<string,unknown>;before:unknown;
+  references:MissingNativeReference[];fulfillments:Record<string,{relative:string;sha256:string;rights:string;kind:'image'|'sfx'}>;
+  createdAt:string;
 }
-export async function confirmImport(appPath: string, root: string, token: string) {
-  const file = path.join(root, '.studio', 'external', 'pending.json'); if (!fs.existsSync(file)) throw new Error('No staged import exists.'); const pending = strictJson(readUtf8(file)) as Record<string, unknown>; if (pending.token !== token) throw new Error('Import confirmation token mismatch.');
-  const state = readState(root); const stage = pending.stage as Stage; const task = state.tasks?.[stage]; if (!task || task.id !== pending.taskId || task.revision !== pending.revision || task.status !== 'FROZEN' || sourceFingerprint(appPath, root, stage) !== task.sourceFingerprint) { if (task) { task.status='STALE'; writeState(root,state); } throw new Error('frozen task import is stale or replayed.'); }
-  const revision = (state.external[stage]?.revision ?? 0) + 1; atomicJson(path.join(root, '.studio', 'revisions', `${stage}-${revision}.json`), pending.payload);
-  if (stage === 'script') { const script = pending.payload as {sections:Array<{id:string;text:string}>;authoring:Record<string,unknown>}; const text = script.sections.map(item => item.text).join('\n\n'); const changed = state.approvedScript?.sha256 !== sha(text); state.approvedScript = { sections: script.sections, text, sha256: sha(text), revision, approvedAt: new Date().toISOString(), authoring: script.authoring }; if (changed) { if (state.voice) state.voice.stale = true; state.alignment = undefined; state.preview = undefined; state.approval = undefined; state.render = undefined; } }
-  else { const value = pending.payload as {manifest:Record<string,unknown>;shotLedger:unknown;soundScript:unknown;assetNeeds:unknown;missing:string[]}; if(value.missing.length)throw new Error(`Native import still references missing media: ${value.missing.join(', ')}`);const candidate = path.join(root, `.project-candidate-${revision}.json`); atomicJson(candidate, value.manifest); try{const { cli } = nativeSkillRoot(appPath); const result = await runProcess(process.execPath, [cli, 'validate', candidate], { cwd: path.dirname(cli) }); if (result.code !== 0) throw new Error(result.stderr || 'Original native validation rejected the candidate.'); const current = path.join(root, 'project.json'); fs.copyFileSync(current, path.join(root, '.studio', 'revisions', `project-before-${revision}.json`)); const temp = `${current}.${process.pid}.tmp`; fs.copyFileSync(candidate, temp); fs.renameSync(temp, current); atomicJson(path.join(root,'.studio','revisions',`native-authoring-${revision}.json`),{shot_ledger:value.shotLedger,sound_script:value.soundScript,asset_needs:value.assetNeeds});}finally{if(fs.existsSync(candidate))fs.unlinkSync(candidate)} state.preview = undefined; state.approval = undefined; state.render = undefined; }
-  state.external[stage] = { revision, artifact: pending.payload, importedAt: new Date().toISOString() }; task.status = 'IMPORTED'; fs.unlinkSync(file); writeState(root, state); return state;
+const pendingPath=(root:string)=>path.join(root,'.studio','external','pending.json');
+const readPending=(root:string):PendingImport=>{
+  const file=pendingPath(root);if(!fs.existsSync(file))throw new Error('No staged import exists.');
+  const pending=strictJson(readUtf8(file)) as unknown as PendingImport;
+  if(pending.schema!=='mode-b-pending-import-v2'||!pending.projectId||!pending.payloadSha256||!Array.isArray(pending.references)||!pending.fulfillments)throw new Error('REBUILD_REQUIRED: pending record has no verifiable source/asset bindings.');
+  if(pending.payloadSha256!==sha(JSON.stringify(pending.payload)))throw new Error('Pending imported payload was modified.');
+  return pending;
+};
+const pendingResult=(root:string,pending:PendingImport)=>{
+  const state=readState(root);
+  if(pending.stage==='script')return{token:pending.token,stage:pending.stage,before:pending.before,after:pending.payload,changes:1,status:'STAGED',missing:[]};
+  const resolved=resolvePendingCandidate(root,state,pending);
+  return{token:pending.token,stage:pending.stage,before:pending.before,after:resolved.manifest,changes:1,status:resolved.missing.length?'WAITING_FOR_MEDIA':'STAGED',missing:resolved.missing,fulfillments:pending.fulfillments};
+};
+function resolvePendingCandidate(root:string,state:StudioState,pending:PendingImport){
+  const value=pending.payload as {manifest:Record<string,unknown>;shotLedger:unknown;soundScript:unknown;assetNeeds:unknown;missing:MissingNativeReference[]};
+  const manifest=JSON.parse(JSON.stringify(value.manifest)) as Record<string,unknown>;
+  for(const [key,binding] of Object.entries(pending.fulfillments)){
+    const original=pending.references.find(ref=>ref.key===key);
+    if(!original)throw new Error('Media fulfillment has no frozen missing-native target.');
+    if(!verifiedMedia(root,state,original,binding.relative,binding.rights)||!fs.existsSync(resolveProjectFile(root,binding.relative))||sha(fs.readFileSync(resolveProjectFile(root,binding.relative)))!==binding.sha256||binding.kind!==original.kind)throw new Error('Approved media binding/file/hash/rights is stale.');
+    const target=exactNativeTarget(manifest,original);
+    if(target.path!==original.path)throw new Error('Frozen native target path was changed without authorization.');
+    target.path=binding.relative;
+  }
+  return {manifest,missing:collectMissing(root,state,manifest),shotLedger:value.shotLedger,soundScript:value.soundScript,assetNeeds:value.assetNeeds};
+}
+function assertTaskCurrent(appPath:string,root:string,stage:Stage,state:StudioState){
+  try{return assertFrozenSource(appPath,root,stage,state)}catch(error){
+    const task=state.tasks?.[stage];
+    if(task&&task.status==='FROZEN'&&!String((error as Error).message).startsWith('No current')){task.status='STALE';writeState(root,state);}
+    throw error;
+  }
+}
+export function stageImport(appPath: string, root: string, stage: Stage, text: string) {
+  const state=readState(root),task=assertTaskCurrent(appPath,root,stage,state);
+  const envelope=validateEnvelope(state,stage,strictJson(text));
+  const payload=stage==='script'?validateScript(envelope.payload):validateManifest(state,root,envelope.payload);
+  const responseSha256=sha(text);
+  if(fs.existsSync(pendingPath(root))){
+    try{
+      const prior=readPending(root);
+      if(prior.projectId===state.project.id&&prior.taskId===task.id&&prior.revision===task.revision&&prior.stage===stage&&prior.responseSha256===responseSha256)return pendingResult(root,prior);
+    }catch{ /* Nonmatching/corrupted pending must never be reused. */ }
+  }
+  const pending:PendingImport={schema:'mode-b-pending-import-v2',token:randomUUID(),projectId:state.project.id,stage,taskId:task.id,
+    revision:task.revision,inputSha256:task.inputSha256,responseSha256,payloadSha256:sha(JSON.stringify(payload)),payload,
+    before:stage==='script'?state.approvedScript??null:strictJson(readUtf8(path.join(root,'project.json'))),
+    references:stage==='native'?(payload as ReturnType<typeof validateManifest>).missing:[],fulfillments:{},createdAt:new Date().toISOString()};
+  atomicJson(pendingPath(root),pending);
+  return pendingResult(root,pending);
+}
+export function getPendingMedia(appPath:string,root:string) {
+  const pending=readPending(root);if(pending.stage!=='native')throw new Error('No pending native media request.');
+  const state=readState(root);if(pending.projectId!==state.project.id||pending.taskId!==assertTaskCurrent(appPath,root,'native',state).id)throw new Error('Pending native media task is stale.');
+  return pendingResult(root,pending);
+}
+export function importMediaFile(root:string,source:string,kind:'image'|'sfx',rights:string) {
+  if(!['image','sfx'].includes(kind)||typeof rights!=='string'||!rights.trim())throw new Error('Media kind and owner rights are required.');
+  const relative=safeImportedFile(root,source,kind),target=resolveProjectFile(root,relative),hash=sha(fs.readFileSync(target)),state=readState(root);
+  state.imports=[...new Set([...(state.imports??[]),relative])];
+  const existing=state.media?.find(item=>item.path===relative&&item.sha256===hash&&item.kind===kind&&!item.shotId&&!item.track);
+  const entry=existing??{path:relative,sha256:hash,kind,rights:rights.trim(),importedAt:new Date().toISOString()};
+  if(!existing)state.media=[...(state.media??[]),entry];
+  // File import alone never claims native mapping and never corrupts a frozen task.
+  writeState(root,state);return{...entry,status:'IMPORTED_UNASSIGNED'};
+}
+export function fulfillMedia(appPath:string,root:string,token:string,key:string,relative:string,rights:string){
+  const pending=readPending(root),state=readState(root);
+  if(pending.stage!=='native'||pending.projectId!==state.project.id||pending.token!==token)throw new Error('Project/pending token mismatch.');
+  if(pending.taskId!==assertTaskCurrent(appPath,root,'native',state).id||pending.revision!==state.tasks?.native?.revision)throw new Error('Frozen task binding mismatch.');
+  const ref=pending.references.find(item=>item.key===key);
+  if(!ref)throw new Error('Only an exact frozen missing native reference may be fulfilled.');
+  exactNativeTarget((pending.payload as {manifest:Record<string,unknown>}).manifest,ref);
+  if(typeof rights!=='string'||!rights.trim()||!state.imports?.includes(relative)||!mediaRelative(root,relative,ref.kind))throw new Error('Owner-imported, rights-cleared local asset required.');
+  const hash=sha(fs.readFileSync(resolveProjectFile(root,relative)));
+  const original=state.media?.find(item=>item.path===relative&&item.sha256===hash&&item.kind===ref.kind&&item.rights===rights.trim());
+  if(!original)throw new Error('Imported file SHA, rights or media kind mismatch.');
+  const binding={relative,sha256:hash,rights:rights.trim(),kind:ref.kind};
+  const previous=pending.fulfillments[key];
+  if(previous){if(JSON.stringify(previous)!==JSON.stringify(binding))throw new Error('A frozen target cannot be silently remapped; rebuild/review the task.');return pendingResult(root,pending);}
+  const mapped={...original,...(ref.kind==='image'?{shotId:ref.shotId,layerId:ref.layerId}:{track:ref.track==='music'?'sfx':ref.track,trackIndex:ref.trackIndex})};
+  state.media=[...(state.media??[]).filter(item=>!(item.path===relative&&item.shotId===mapped.shotId&&item.layerId===mapped.layerId&&item.track===mapped.track&&item.trackIndex===mapped.trackIndex)),mapped];
+  pending.fulfillments[key]=binding;
+  atomicJson(pendingPath(root),pending);
+  writeState(root,state);
+  return pendingResult(root,pending);
+}
+type Validator=(exe:string,args:string[],options:{cwd:string})=>Promise<{code:number;stdout:string;stderr:string}>;
+export interface ConfirmOptions { previewSeconds?:number; allowSampleDraft?:boolean; validator?:Validator }
+const checkedSeconds=(result:{code:number;stdout:string;stderr:string},label:string)=>{
+  if(result.code!==0)throw new Error(result.stderr.trim()||result.stdout.trim()||'Original native '+label+' validator failed.');
+  let proof:Record<string,unknown>;
+  try{proof=JSON.parse(result.stdout.trim()) as Record<string,unknown>}catch{throw new Error('Original native '+label+' validator produced no verifiable result.');}
+  if(proof.valid!==true||typeof proof.fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(proof.fingerprint)||!Number.isFinite(proof.checked_seconds))throw new Error('Invalid original native '+label+' validation proof.');
+  return {fingerprint:proof.fingerprint,checkedSeconds:Number(proof.checked_seconds)};
+};
+const validateSeconds=(value:number|undefined)=>{
+  if(value===undefined)return 20;
+  if(typeof value!=='number'||!Number.isFinite(value)||value<1||value>60)throw new Error('Owner sample preview length must be 1..60 seconds.');
+  return value;
+};
+export async function confirmImport(appPath: string, root: string, token: string, options: ConfirmOptions={}) {
+  const pending=readPending(root);if(pending.token!==token)throw new Error('Import confirmation token mismatch.');
+  const state=readState(root),stage=pending.stage,task=assertTaskCurrent(appPath,root,stage,state);
+  if(state.project.id!==pending.projectId||task.id!==pending.taskId||task.revision!==pending.revision||task.inputSha256!==pending.inputSha256)throw new Error('Frozen task/project identity mismatch.');
+  const revision=(state.external[stage]?.revision??0)+1;
+  if(stage==='script'){
+    const script=pending.payload as {sections:Array<{id:string;text:string}>;authoring:Record<string,unknown>};
+    const approvedText=script.sections.map(item=>item.text).join('\n\n'),changed=state.approvedScript?.sha256!==sha(approvedText);
+    state.approvedScript={sections:script.sections,text:approvedText,sha256:sha(approvedText),revision,approvedAt:new Date().toISOString(),authoring:script.authoring};
+    if(changed){if(state.voice)state.voice.stale=true;state.alignment=undefined;state.nativeReadiness=undefined;state.preview=undefined;state.approval=undefined;state.render=undefined;}
+    state.external.script={revision,artifact:pending.payload,importedAt:new Date().toISOString()};
+    task.status='IMPORTED';
+    writeState(root,state);
+    atomicJson(path.join(root,'.studio','revisions','script-'+revision+'.json'),pending.payload);
+    fs.unlinkSync(pendingPath(root));return state;
+  }
+  const seconds=validateSeconds(options.previewSeconds);
+  const resolved=resolvePendingCandidate(root,state,pending);
+  const missingInside=resolved.missing.filter(ref=>ref.scopeStart<seconds);
+  if(missingInside.length)throw new Error('Missing media inside the selected sample: '+missingInside.map(item=>item.key).join(', '));
+  // The unmodified original native CLI decides whether the candidate is valid.
+  const candidate=path.join(root,'.project-candidate-'+randomUUID()+'.json');
+  const current=path.join(root,'project.json'),beforeBytes=fs.readFileSync(current),runner=options.validator??runProcess;
+  let promoted=false;let tmp='';
+  atomicJson(candidate,resolved.manifest);
+  try{
+    const {cli}=nativeSkillRoot(appPath),cwd=path.dirname(cli);
+    const sample=checkedSeconds(await runner(process.execPath,[cli,'validate',candidate,'--seconds',String(seconds)],{cwd}),'scoped sample');
+    let full:ReturnType<typeof checkedSeconds>|null=null;
+    if(!resolved.missing.length){
+      const result=await runner(process.execPath,[cli,'validate',candidate],{cwd});
+      if(result.code===0)full=checkedSeconds(result,'full-film');
+    }
+    if(!full&&!options.allowSampleDraft)throw new Error('Only SAMPLE_READY. Explicitly approve incomplete draft promotion; full-film is not ready.');
+    const readiness={sampleReady:true,fullReady:Boolean(full),previewSeconds:seconds,checkedSeconds:sample.checkedSeconds,
+      validationSha256:sample.fingerprint,missingOutsideScope:resolved.missing.map(item=>item.key),
+      reviewedDraft:!full&&options.allowSampleDraft===true,verifiedAt:new Date().toISOString()};
+    const backup=path.join(root,'.studio','revisions','project-before-'+revision+'.json');
+    fs.mkdirSync(path.dirname(backup),{recursive:true});fs.copyFileSync(current,backup);
+    tmp=current+'.'+randomUUID()+'.tmp';fs.copyFileSync(candidate,tmp);fs.renameSync(tmp,current);promoted=true;
+    state.external.native={revision,artifact:{...resolved,missing:resolved.missing},importedAt:new Date().toISOString()};
+    state.nativeReadiness=readiness;state.preview=undefined;state.approval=undefined;state.render=undefined;task.status='IMPORTED';
+    writeState(root,state);
+    atomicJson(path.join(root,'.studio','revisions','native-'+revision+'.json'),resolved.manifest);
+    atomicJson(path.join(root,'.studio','revisions','native-authoring-'+revision+'.json'),{shot_ledger:resolved.shotLedger,sound_script:resolved.soundScript,asset_needs:resolved.assetNeeds,fulfillments:pending.fulfillments,missing:resolved.missing});
+    fs.unlinkSync(pendingPath(root));return state;
+  }catch(error){
+    if(promoted){const restore=current+'.'+randomUUID()+'.restore';fs.writeFileSync(restore,beforeBytes);fs.renameSync(restore,current);}
+    throw error;
+  }finally{
+    if(fs.existsSync(candidate))fs.unlinkSync(candidate);
+    if(tmp&&fs.existsSync(tmp))fs.unlinkSync(tmp);
+  }
 }
