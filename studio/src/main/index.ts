@@ -2,11 +2,12 @@ import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from 'elect
 import fs from 'node:fs';
 import path, { join } from 'node:path';
 import { alignWithElevenLabs } from './alignment.js';
-import { confirmImport, freezeTask, stageImport } from './externalTasks.js';
+import { confirmImport, freezeTask, stageImport, getPendingMedia, fulfillMedia, importMediaFile } from './externalTasks.js';
+import { getCaptionReview, draftCaptionReview, approveCaptionReview } from './captionReview.js';
 import { discoverNano, generateNano, nanoBase } from './nanoClient.js';
 import { cancelJob, nativeJob, reconcileJob } from './nativeJobs.js';
 import { importAlignedWords, importApprovedWav, longformStatus, runLongform } from './voiceMedia.js';
-import { assertMediaRelative, fileFetchUrl, mediaUrl, nativeSkillRoot, projectId, projectSnapshot, readState, runProcess, safeImportedFile, sha, strictJson, writeState, type NativeCommand, type Stage, type StudioState } from './services.js';
+import { assertMediaRelative, fileFetchUrl, mediaUrl, nativeSkillRoot, projectId, projectSnapshot, readState, runProcess, strictJson, writeState, type NativeCommand, type Stage, type StudioState } from './services.js';
 
 if (process.env.MODE_B_STUDIO_DISABLE_GPU === '1') { app.disableHardwareAcceleration(); app.commandLine.appendSwitch('disable-gpu'); app.commandLine.appendSwitch('disable-gpu-compositing'); }
 if(process.env.MODE_B_STUDIO_USER_DATA){const userData=path.resolve(process.env.MODE_B_STUDIO_USER_DATA);if(!path.isAbsolute(process.env.MODE_B_STUDIO_USER_DATA)||userData.startsWith('\\\\'))throw new Error('MODE_B_STUDIO_USER_DATA must be a local absolute path.');fs.mkdirSync(userData,{recursive:true});app.setPath('userData',userData)}
@@ -37,7 +38,12 @@ function registerIpc() {
   ipcMain.handle('external:freeze', (_event, id: string, stage: Stage, rebuild = false) => freezeTask(app.getAppPath(), rootFor(id), stage, rebuild));
   ipcMain.handle('external:exportPrompt', async (_event, id: string, stage: Stage) => { const root = rootFor(id), task = freezeTask(app.getAppPath(), root, stage, false); const result = await dialog.showSaveDialog({ defaultPath: path.join(root, '.studio', 'external', `${stage}-prompt.md`), filters: [{ name: 'Markdown', extensions: ['md'] }] }); if (result.canceled || !result.filePath) return null; fs.copyFileSync(path.join(root, task.promptPath), result.filePath); return result.filePath; });
   ipcMain.handle('external:stageImport', (_event, id: string, stage: Stage, text: string) => stageImport(app.getAppPath(), rootFor(id), stage, text));
-  ipcMain.handle('external:confirmImport', async (_event, id: string, token: string) => { const root = rootFor(id); await confirmImport(app.getAppPath(), root, token); return projectSnapshot(root); });
+  ipcMain.handle('external:confirmImport', async (_event, id: string, token: string, options?: {previewSeconds?:number;allowSampleDraft?:boolean}) => { const root = rootFor(id); await confirmImport(app.getAppPath(), root, token, options); return projectSnapshot(root); });
+  ipcMain.handle('external:pendingMedia', (_event, id: string) => getPendingMedia(app.getAppPath(), rootFor(id)));
+  ipcMain.handle('external:fulfillMedia', (_event, id: string, token:string, key:string, relative:string, rights:string) => fulfillMedia(app.getAppPath(), rootFor(id), token, key, relative, rights));
+  ipcMain.handle('voice:captionReview', (_event, id: string) => getCaptionReview(rootFor(id)));
+  ipcMain.handle('voice:captionDraft', (_event, id: string, boundaries: number[]) => draftCaptionReview(rootFor(id),boundaries));
+  ipcMain.handle('voice:captionApprove', (_event, id: string, note: string) => approveCaptionReview(rootFor(id),note));
   ipcMain.handle('voice:nanoDiscover', (_event, endpoint: string) => discoverNano(endpoint));
   ipcMain.handle('voice:nanoGenerate', async (_event, id: string, request: { voice: string; speed: number; seed: number }) => { const root = rootFor(id), state = readState(root); return generateNano(root, { ...request, endpoint: state.nano?.endpoint ?? 'http://127.0.0.1:3901' }); });
   ipcMain.handle('voice:align', (_event, id: string, authorized: boolean) => alignWithElevenLabs(app.getAppPath(), rootFor(id), authorized));
@@ -45,7 +51,12 @@ function registerIpc() {
   ipcMain.handle('voice:longformRun', (_event, id: string, input: {voice?:string;resume?:boolean;retryUncertain?:boolean}) => runLongform(rootFor(id), input));
   ipcMain.handle('voice:importWav', async (_event, id: string) => { const result=await dialog.showOpenDialog({properties:['openFile'],filters:[{name:'PCM WAV',extensions:['wav']}]}); return result.canceled?null:importApprovedWav(rootFor(id),result.filePaths[0]); });
   ipcMain.handle('voice:importWords', async (_event, id: string) => { const result=await dialog.showOpenDialog({properties:['openFile'],filters:[{name:'Aligned words JSON',extensions:['json']}]}); return result.canceled?null:importAlignedWords(app.getAppPath(),rootFor(id),result.filePaths[0]); });
-  ipcMain.handle('media:import', async (_event, id: string, mapping: {kind:'image'|'sfx';shotId?:string;layerId?:string;rights:string}) => { if(!mapping||!['image','sfx'].includes(mapping.kind)||typeof mapping.rights!=='string'||!mapping.rights.trim())throw new Error('Media kind and rights/source attestation are required.'); const root = rootFor(id); const result = await dialog.showOpenDialog({ properties: ['openFile'], filters: mapping.kind === 'image' ? [{ name: 'Images', extensions: ['png','jpg','jpeg'] }] : [{ name: 'Audio', extensions: ['wav','mp3','m4a','aac','ogg','flac'] }] }); if (result.canceled) return null; const relative = safeImportedFile(root, result.filePaths[0], mapping.kind), state = readState(root), entry={path:relative,sha256:sha(fs.readFileSync(path.join(root,relative))),kind:mapping.kind,shotId:mapping.shotId,layerId:mapping.layerId,rights:mapping.rights.trim(),importedAt:new Date().toISOString()} as const; state.imports = [...new Set([...(state.imports ?? []), relative])]; state.media=[...(state.media??[]).filter(item=>!(item.path===relative&&item.shotId===mapping.shotId&&item.layerId===mapping.layerId)),entry]; if(state.tasks?.native)state.tasks.native.status='STALE'; writeState(root, state); return entry; });
+  ipcMain.handle('media:import', async (_event, id: string, mapping: {kind:'image'|'sfx';rights:string}) => {
+    if(!mapping||!['image','sfx'].includes(mapping.kind)||typeof mapping.rights!=='string'||!mapping.rights.trim())throw new Error('Media kind and rights/source attestation are required.');
+    const root = rootFor(id);
+    const result=await dialog.showOpenDialog({properties:['openFile'],filters:mapping.kind==='image'?[{name:'Images',extensions:['png','jpg','jpeg']}]:[{name:'Audio',extensions:['wav','mp3','m4a','aac','ogg','flac']}]});
+    return result.canceled?null:importMediaFile(root,result.filePaths[0],mapping.kind,mapping.rights);
+  });
   ipcMain.handle('native:run', async (_event, id: string, command: NativeCommand, input: Parameters<typeof nativeJob>[3]) => { const root = rootFor(id), result = await nativeJob(app.getAppPath(), root, command, input); return { ...result, state: projectSnapshot(root) }; });
   ipcMain.handle('native:cancel', (_event, id: string, jobId: string) => cancelJob(rootFor(id), jobId));
   ipcMain.handle('project:mediaUrl', (_event, id: string, relative: string) => mediaUrl(rootFor(id), assertMediaRelative(relative)));
