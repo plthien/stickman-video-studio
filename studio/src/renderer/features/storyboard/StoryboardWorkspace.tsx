@@ -16,7 +16,7 @@ export function StoryboardWorkspace(){
   const active=native?.projection?.shots?.length?native.projection.shots:shots;
   const index=Math.min(selected,active.length-1),shot=active[index];
   useEffect(()=>{let mounted=true;if(!id||!window.studio){setPending(null);return;}void window.studio.pendingMedia(id).then(value=>{if(mounted)setPending(value as PendingTargets)}).catch(()=>{if(mounted)setPending(null)});return()=>{mounted=false};},[id,native?.external?.native?.revision]);
-  const available=(pending?.missing??[]).filter(item=>item.kind==='sfx'||item.shotId===shot.id);
+  const available=pending?.missing??[]; // Targets belong to the frozen candidate, which may not yet be promoted to project.json.
   const target=available.find(item=>item.key===targetKey);
   const mapping= (native?.media??[]).filter(item=>{
     if(!item.rights?.trim())return false;
@@ -47,11 +47,11 @@ export function StoryboardWorkspace(){
     <div className="shot-grid">{active.map((item,i)=><button key={item.id} className={index===i?'selected':''} onClick={()=>{setSelected(i);setTargetKey('');}}><ShotArt color={item.color} caption={item.caption}/><div><strong>{item.id} · {item.title}</strong><small>{item.duration.toFixed(2)}s · {item.status}</small></div></button>)}</div>
   </Card><Card><CardHeader title={shot.id+' · '+shot.title} hint="Approved native fields only"/><div className="portrait-detail"><ShotArt color={shot.color} caption={shot.caption}/></div>
     <dl className="kvs"><dt>Duration</dt><dd>{shot.duration.toFixed(2)} seconds</dd><dt>Committed native media</dt><dd>{mapping.map(item=>item.path).join(', ')||'No committed mapping'}</dd><dt>Unassigned imports</dt><dd>{importedUnassigned.length}</dd><dt>Source</dt><dd>{native?'Original project.json':'DEMO only'}</dd></dl>
-    {native&&<><Field label="Select exact missing shot/layer or original audio track">
+    {native&&<><Field label="Select exact missing candidate shot/layer or original audio track">
       <Select value={targetKey} onChange={event=>setTargetKey(event.target.value)}><option value="">Select an explicit target — no automatic primary layer</option>{available.map(item=><option key={item.key} value={item.key}>{item.kind.toUpperCase()} · {item.shotId||item.track} / {item.layerId||item.trackIndex} · {item.path}</option>)}</Select>
     </Field><Field label="Owner-confirmed rights/source"><Input value={rights} onChange={event=>setRights(event.target.value)} placeholder="Owned or licensed source and rights"/></Field>
     <div className="actions"><Button variant="primary" disabled={!target||!rights.trim()} onClick={importAndBind}>Import and bind selected target</Button><Button onClick={async()=>{if(!window.studio||!id)return;try{setPending(await window.studio.pendingMedia(id) as PendingTargets);setError('')}catch(e){setError(String(e))}}}>Refresh targets</Button></div>
-    {pending&&<div className="info">Pending target state: {pending.status}; owner must confirm the resolved candidate in External Native before project.json changes. Unassigned imports are never marked MAPPED.</div>}
+    {pending&&<div className="info">Pending target state: {pending.status}; owner must confirm the resolved candidate in External Native before project.json changes. Pending candidate shots may not appear in the last-good storyboard until confirmation. Unassigned imports are never marked MAPPED.</div>}
     {error&&<div className="info error" role="alert">{error}</div>}
     </>}
     {!native&&<div className="info">Illustrative UI only. Open a real project to inspect shots and their native media references.</div>}
