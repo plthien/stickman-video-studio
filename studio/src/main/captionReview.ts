@@ -1,8 +1,7 @@
 import fs from 'node:fs';
-import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { alignmentText } from './alignment.js';
-import { atomicJson, readState, resolveProjectFile, sha, strictJson, writeState, type StudioState } from './services.js';
+import { atomicJson, readState, resolveProjectFile, sha, strictJson, writeState } from './services.js';
 
 export interface CaptionCue { start: number; end: number; text: string }
 export interface CaptionReviewRecord {
