@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {afterEach,describe,expect,it,vi} from 'vitest';
-import {confirmImport,fulfillMedia,getPendingMedia,importMediaFile,stageImport,freezeTask} from '../../src/main/externalTasks';
+import {confirmImport,fulfillMedia,getPendingMedia,importMediaFile,stageImport} from '../../src/main/externalTasks';
 import {readState,sha,writeState} from '../../src/main/services';
 import {appPath,cleanup,fixture,frozenEnvelope,importedSource,nativePayload,stageNative,validator} from './SixIssueFixtures';
 
