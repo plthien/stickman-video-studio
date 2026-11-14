@@ -275,9 +275,10 @@ export async function confirmImport(appPath: string, root: string, token: string
   const revision=(state.external[stage]?.revision??0)+1;
   if(stage==='script'){
     const script=pending.payload as {sections:Array<{id:string;text:string}>;authoring:Record<string,unknown>};
-    const approvedText=script.sections.map(item=>item.text).join('\n\n'),changed=state.approvedScript?.sha256!==sha(approvedText);
+    const approvedText=script.sections.map(item=>item.text).join('\n\n'),changed=state.approvedScript?.sha256!==sha(approvedText),creativeChanged=JSON.stringify(state.approvedScript?.authoring??null)!==JSON.stringify(script.authoring);
     state.approvedScript={sections:script.sections,text:approvedText,sha256:sha(approvedText),revision,approvedAt:new Date().toISOString(),authoring:script.authoring};
-    if(changed){if(state.voice)state.voice.stale=true;state.alignment=undefined;state.nativeReadiness=undefined;state.preview=undefined;state.approval=undefined;state.render=undefined;}
+    if(changed){if(state.voice)state.voice.stale=true;state.alignment=undefined;}
+    if(changed||creativeChanged){if(state.tasks?.native)state.tasks.native.status='STALE';state.nativeReadiness=undefined;state.preview=undefined;state.approval=undefined;state.render=undefined;}
     state.external.script={revision,artifact:pending.payload,importedAt:new Date().toISOString()};
     task.status='IMPORTED';
     writeState(root,state);
@@ -290,7 +291,7 @@ export async function confirmImport(appPath: string, root: string, token: string
   if(missingInside.length)throw new Error('Missing media inside the selected sample: '+missingInside.map(item=>item.key).join(', '));
   // The unmodified original native CLI decides whether the candidate is valid.
   const candidate=path.join(root,'.project-candidate-'+randomUUID()+'.json');
-  const current=path.join(root,'project.json'),beforeBytes=fs.readFileSync(current),runner=options.validator??runProcess;
+  const current=path.join(root,'project.json'),beforeBytes=fs.readFileSync(current),stateFile=path.join(root,'.studio','state.json'),beforeStateBytes=fs.readFileSync(stateFile),runner=options.validator??runProcess;
   let promoted=false;let tmp='';
   atomicJson(candidate,resolved.manifest);
   try{
@@ -315,7 +316,10 @@ export async function confirmImport(appPath: string, root: string, token: string
     atomicJson(path.join(root,'.studio','revisions','native-authoring-'+revision+'.json'),{shot_ledger:resolved.shotLedger,sound_script:resolved.soundScript,asset_needs:resolved.assetNeeds,fulfillments:pending.fulfillments,missing:resolved.missing});
     fs.unlinkSync(pendingPath(root));return state;
   }catch(error){
-    if(promoted){const restore=current+'.'+randomUUID()+'.restore';fs.writeFileSync(restore,beforeBytes);fs.renameSync(restore,current);}
+    if(promoted){
+      const restore=current+'.'+randomUUID()+'.restore';fs.writeFileSync(restore,beforeBytes);fs.renameSync(restore,current);
+      const stateRestore=stateFile+'.'+randomUUID()+'.restore';fs.writeFileSync(stateRestore,beforeStateBytes);fs.renameSync(stateRestore,stateFile);
+    }
     throw error;
   }finally{
     if(fs.existsSync(candidate))fs.unlinkSync(candidate);
