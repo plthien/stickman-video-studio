@@ -1,5 +1,8 @@
 # R2 / PR #2 — FINAL CLOSURE REPAIR PLAN V2 (ONE IMPLEMENTATION ROUND)
 
+> **SUPERSEDED FOR THE CURRENT CODEX ROUND BY:** [`R2_PR2_MAIN_FLOW_ONLY_REPAIR_PLAN_V3.md`](R2_PR2_MAIN_FLOW_ONLY_REPAIR_PLAN_V3.md). Owner explicitly deferred Electron GUI smoke, platform infrastructure and visual-parity repair until after the core video-production workflow is complete. This V2 remains historical background; when priorities conflict, V3 governs.
+
+
 **Status:** Owner-directed implementation plan, not evidence of implemented code.
 **Repository:** plthien/stickman-video-studio
 **Existing Draft PR:** #2, branch feat/r2-external-native-workflow -> main; keep Draft, DO NOT MERGE.
