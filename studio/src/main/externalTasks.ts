@@ -94,14 +94,14 @@ const mediaRelative=(root:string,relative:string,kind:'image'|'sfx')=>{
 function nativeRefs(manifest:Record<string,unknown>):MissingNativeReference[]{
   const refs:MissingNativeReference[]=[];
   const shots=manifest.shots as Array<Record<string,unknown>>;
-  const visit=(layers:unknown[],shot:Record<string,unknown>,index:number)=>{
+  const visit=(layers:unknown[],shot:Record<string,unknown>,index:number,parentFrom=0)=>{
     for(const layerValue of layers){
       const layer=layerValue as Record<string,unknown>;
       if(layer?.type==='image'&&typeof layer.path==='string'&&!layer.path.startsWith('@b1/')){
         const shotId=typeof shot.id==='string'?shot.id:undefined,layerId=typeof layer.id==='string'?layer.id:undefined;
-        refs.push({key:'image:'+index+':'+String(layerId??''),kind:'image',path:layer.path,shotId,shotIndex:index,layerId,scopeStart:Number(shot.start)+Number(layer.from??0)});
+        refs.push({key:'image:'+index+':'+String(layerId??''),kind:'image',path:layer.path,shotId,shotIndex:index,layerId,scopeStart:Number(shot.start)+Math.max(parentFrom,Number(layer.from??0))});
       }
-      if(Array.isArray(layer?.children))visit(layer.children,shot,index);
+      if(Array.isArray(layer?.children))visit(layer.children,shot,index,Math.max(parentFrom,Number(layer.from??0)));
     }
   };
   shots.forEach((shot,index)=>{if(Array.isArray(shot.layers))visit(shot.layers,shot,index)});
@@ -281,8 +281,9 @@ export async function confirmImport(appPath: string, root: string, token: string
     if(changed||creativeChanged){if(state.tasks?.native)state.tasks.native.status='STALE';state.nativeReadiness=undefined;state.preview=undefined;state.approval=undefined;state.render=undefined;}
     state.external.script={revision,artifact:pending.payload,importedAt:new Date().toISOString()};
     task.status='IMPORTED';
+    const revisionFile=path.join(root,'.studio','revisions','script-'+revision+'.json');
+    atomicJson(revisionFile,pending.payload);
     writeState(root,state);
-    atomicJson(path.join(root,'.studio','revisions','script-'+revision+'.json'),pending.payload);
     fs.unlinkSync(pendingPath(root));return state;
   }
   const seconds=validateSeconds(options.previewSeconds);
