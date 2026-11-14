@@ -95,6 +95,10 @@ export function approveCaptionReview(root:string,note:string) {
   if (!draft || draft.sourceSha256!==sourceSha256 || sha(fs.readFileSync(resolveProjectFile(root,draft.path)))!==draft.sha256) throw new Error('Caption draft source is stale or missing.');
   const cues=buildCues(words,draft.boundaries,offset,duration);
   if (!same(cues,readCues(root,draft.path))) throw new Error('Caption draft was changed outside review.');
+  const existing=alignment.captionReview;
+  if(existing&&existing.sourceSha256===sourceSha256&&fs.existsSync(resolveProjectFile(root,existing.path))&&sha(fs.readFileSync(resolveProjectFile(root,existing.path)))===existing.sha256&&same(readCues(root,existing.path),cues)){
+    alignment.captionDraft=undefined;writeState(root,state);return{...existing,cues};
+  }
   const revision=(alignment.captionReview?.revision??0)+1;
   const relative=`.studio/alignment/caption-review-${revision}-${randomUUID()}.json`;
   atomicJson(resolveProjectFile(root,relative),cues);
