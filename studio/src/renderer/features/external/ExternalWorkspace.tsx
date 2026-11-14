@@ -1,72 +1,35 @@
-import { createContext, useContext, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { useAppState } from '../../app/AppState';
 import { visualStyleLabel } from '../project/styles';
-import { Badge, Button, Card, CardHeader, Textarea } from '../../components/ui';
-
-const tabs = ['Script', 'Storyboard', 'Captions'] as const;
-type PromptTab = (typeof tabs)[number];
-type SyntaxResult = 'idle' | 'valid' | 'invalid';
-interface ExternalSession {
-  tab: PromptTab; setTab: Dispatch<SetStateAction<PromptTab>>;
-  json: string; setJson: Dispatch<SetStateAction<string>>;
-  result: SyntaxResult; setResult: Dispatch<SetStateAction<SyntaxResult>>;
-}
-const ExternalSessionContext = createContext<ExternalSession | null>(null);
-export function ExternalSessionProvider({ children }: { children: ReactNode }) {
-  const [tab, setTab] = useState<PromptTab>('Script');
-  const [json, setJson] = useState('');
-  const [result, setResult] = useState<SyntaxResult>('idle');
-  return <ExternalSessionContext.Provider value={{ tab, setTab, json, setJson, result, setResult }}>{children}</ExternalSessionContext.Provider>;
-}
-const useExternalSession = () => {
-  const state = useContext(ExternalSessionContext);
-  if (!state) throw new Error('ExternalSessionProvider missing');
-  return state;
-};
-const promptFor = (tab: PromptTab, styleLabel: string): string => {
-  const instruction: Record<PromptTab, string> = {
-    Script: 'Create a structured demo script for project VB-0024.\nPreserve section IDs and return one UTF-8 JSON object only.\nDEMO: no reservation, schema acceptance or backend task exists.',
-    Storyboard: `Create shot briefs for project VB-0024 using the selected ${styleLabel} contract.\nPreserve scene and shot IDs and return one UTF-8 JSON object only.\nDEMO: no image provider or production import is connected.`,
-    Captions: 'Create concise portrait-safe caption cues for project VB-0024.\nPreserve cue ordering and return one UTF-8 JSON object only.\nDEMO: no audio alignment or production import is connected.'
-  };
-  return `# MODE B EXTERNAL AUTHORING — ${tab.toUpperCase()}\n\nProject demo visual style: ${styleLabel}\n\n${instruction[tab]}`;
-};
-export function ExternalWorkspace() {
-  const { tab, setTab, json, setJson, result, setResult } = useExternalSession();
-  const { project, showNotice } = useAppState();
-  const activePrompt = useMemo(() => promptFor(tab, visualStyleLabel(project.style)), [tab, project.style]);
-  const changeText = (text: string) => { setJson(text); setResult('idle'); };
-  const validate = () => {
-    try {
-      const parsed: unknown = JSON.parse(json);
-      setResult(parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? 'valid' : 'invalid');
-    } catch { setResult('invalid'); }
-  };
-  const copyPrompt = () => navigator.clipboard.writeText(activePrompt)
-    .then(() => showNotice(`${tab} demo prompt copied.`)).catch(() => showNotice('Clipboard unavailable.'));
-  const exportPrompt = () => {
-    const blob = new Blob([activePrompt], { type: 'text/markdown;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url; anchor.download = `mode-b-${tab.toLowerCase()}-demo.md`; anchor.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 0);
-    showNotice(`${tab} demo prompt exported.`);
-  };
-  return <div className="grid wide-left">
-    <Card><CardHeader title="External task prompt" hint="Copy to ChatGPT manually · no embedded API" action={<Badge tone="amber">DEMO</Badge>} />
-      <div className="tabs">{tabs.map(item => <button key={item} className={tab === item ? 'active' : ''} onClick={() => setTab(item)}>{item}</button>)}</div>
-      <pre className="prompt" data-active-prompt={tab}>{activePrompt}</pre>
-      <div className="actions"><Button variant="primary" onClick={copyPrompt}>Copy prompt</Button><Button onClick={exportPrompt}>Export .md</Button>
-        <Button onClick={() => window.open('https://chatgpt.com/', '_blank', 'noopener,noreferrer')}>Open ChatGPT</Button></div>
-    </Card>
-    <Card><CardHeader title="Import JSON workspace" hint="Syntax check only · no production import" />
-      <Textarea aria-label="Import JSON" value={json} onChange={e => changeText(e.target.value)} placeholder="Paste the returned JSON here…" />
-      <div className="actions"><Button onClick={() => changeText('{\n  "artifact_id": "demo_script_01",\n  "stage": "script"\n}')}>Use sample</Button>
-        <Button disabled={!json} onClick={() => changeText('')}>Clear</Button><Button variant="primary" onClick={validate}>Validate syntax demo</Button></div>
-      {result === 'valid' && <div className="info success">Valid JSON syntax · DEMO ONLY. No artifact was imported or accepted.</div>}
-      {result === 'invalid' && <div className="info error" role="alert">Invalid JSON. Fix syntax before continuing.</div>}
-      <div className="info">App-session workspace only · closing this app discards imported text.</div>
-      <Button disabled>Production import · Not connected</Button>
-    </Card>
-  </div>;
+import { Badge, Button, Card, CardHeader, Field, Input, Textarea } from '../../components/ui';
+const tabs = ['Script', 'Native'] as const; type PromptTab = (typeof tabs)[number]; type SyntaxResult = 'idle' | 'valid' | 'invalid';
+interface ExternalSession { tab: PromptTab; setTab: Dispatch<SetStateAction<PromptTab>>; json: string; setJson: Dispatch<SetStateAction<string>>; result: SyntaxResult; setResult: Dispatch<SetStateAction<SyntaxResult>> }
+const Context = createContext<ExternalSession | null>(null);
+export function ExternalSessionProvider({ children }: { children: ReactNode }) { const [tab,setTab]=useState<PromptTab>('Script'); const [json,setJson]=useState(''); const [result,setResult]=useState<SyntaxResult>('idle'); return <Context.Provider value={{tab,setTab,json,setJson,result,setResult}}>{children}</Context.Provider>; }
+const useSession=()=>{const value=useContext(Context);if(!value)throw new Error('ExternalSessionProvider missing');return value;};
+const fallbackPrompt=(tab:PromptTab,style:string)=>`# MODE B EXTERNAL CHATGPT — ${tab.toUpperCase()}\n\nManual transport only. Return exactly one UTF-8 JSON object.\n\nStyle contract: ${style}\nDEMO: open a native project to include real source material and the frozen schema.`;
+export function ExternalWorkspace(){
+  const {tab,setTab,json,setJson,result,setResult}=useSession(); const {project,native,setNative,showNotice}=useAppState(); const [prompt,setPrompt]=useState(''); const [pending,setPending]=useState<StudioStagedImport|null>(null); const [error,setError]=useState('');const [previewSeconds,setPreviewSeconds]=useState(20);const [draftConsent,setDraftConsent]=useState(false); const stage=tab.toLowerCase();
+  const demo=useMemo(()=>fallbackPrompt(tab,visualStyleLabel(project.style)),[tab,project.style]);
+  useEffect(()=>{let active=true;if(native&&window.studio)window.studio.freezeTask(native.project.id,stage).then(value=>{if(active)setPrompt(value.prompt)}).catch(reason=>{if(active){setError(String(reason));setPrompt('')}});else setPrompt(demo);return()=>{active=false};},[native,stage,demo]);
+  const change=(value:string)=>{setJson(value);setResult('idle');setPending(null);setDraftConsent(false);setError('');};
+  const refreshPending=async()=>{if(!native||!window.studio||stage!=='native')return;try{const value=await window.studio.pendingMedia(native.project.id);setPending(value);setError('');}catch(reason){setError(String(reason));}};
+  const validate=async()=>{try{if(native&&window.studio){const value=await window.studio.stageImport(native.project.id,stage,json);setPending(value);setResult('valid');}else{const parsed:unknown=JSON.parse(json);setResult(parsed!==null&&typeof parsed==='object'&&!Array.isArray(parsed)?'valid':'invalid');}}catch(reason){setResult('invalid');setError(reason instanceof Error?reason.message:String(reason));}};
+  const copy=()=>navigator.clipboard.writeText(prompt).then(()=>showNotice(`${tab} prompt copied.`)).catch(()=>showNotice('Clipboard unavailable.'));
+  const exportFile=async()=>{if(native&&window.studio){const file=await window.studio.exportPrompt(native.project.id,stage);if(file)showNotice(`Prompt exported: ${file}`);return;}const blob=new Blob([prompt],{type:'text/markdown;charset=utf-8'});const url=URL.createObjectURL(blob);const anchor=document.createElement('a');anchor.href=url;anchor.download=`mode-b-${stage}-demo.md`;anchor.click();setTimeout(()=>URL.revokeObjectURL(url),0);};
+  return <div className="grid wide-left"><Card><CardHeader title="External task prompt" hint="Copy to ChatGPT manually · no embedded API" action={<Badge tone={native?'mint':'amber'}>{native?'FROZEN':'DEMO'}</Badge>}/><div className="tabs">{tabs.map(item=><button key={item} className={tab===item?'active':''} onClick={()=>setTab(item)}>{item}</button>)}</div><pre className="prompt" data-active-prompt={tab}>{prompt}</pre><div className="actions"><Button variant="primary" onClick={copy}>Copy prompt</Button><Button onClick={exportFile}>Export .md</Button><Button onClick={()=>window.open('https://chatgpt.com/','_blank','noopener,noreferrer')}>Open ChatGPT</Button></div></Card>
+    <Card><CardHeader title="Import JSON workspace" hint="Strict schema · diff · explicit confirmation"/><Textarea aria-label="Import JSON" value={json} onChange={event=>change(event.target.value)} placeholder="Paste the returned JSON here…"/><div className="actions"><Button disabled={!json} onClick={()=>change('')}>Clear</Button><Button variant="primary" onClick={validate}>{native?'Validate import':'Validate syntax demo'}</Button></div>
+      {result==='valid'&&<div className="info success">{native?'Schema valid. Review the staged diff before import.':'Valid JSON syntax · DEMO ONLY. No artifact was imported or accepted.'}</div>}{result==='invalid'&&<div className="info error" role="alert">{native?'Invalid import.':'Invalid JSON.'} {error}</div>}
+      {pending&&<><div className="diff-grid"><pre className="prompt">BEFORE{`\n`}{JSON.stringify(pending.before,null,2)}</pre><pre className="prompt">AFTER{`\n`}{JSON.stringify(pending.after,null,2)}</pre></div>
+        {stage==='native'&&<><div className="info">Original Mode B validates the selected sample with --seconds N. FULL_READY requires separate unscoped native validation. Media outside the scoped sample may remain incomplete only for an explicitly approved draft.</div>
+          <Field label="Owner-selected preview seconds (1–60)"><Input type="number" min={1} max={60} value={previewSeconds} onChange={event=>setPreviewSeconds(Number(event.target.value))}/></Field>
+          <label className="check"><input type="checkbox" checked={draftConsent} onChange={event=>setDraftConsent(event.target.checked)}/> I explicitly authorize an incomplete SAMPLE_READY draft, not full-film readiness.</label>
+          <Button onClick={refreshPending}>Refresh missing media after mapping</Button>
+          {pending.missing?.length? <div className="info">Unresolved native targets: {pending.missing.map(item=>item.key+' ('+item.path+')').join(', ')}. Select each precise target in Storyboard; only in-scope missing media blocks the sample.</div>:<div className="info success">No unresolved file targets recorded; the original scoped/full CLI will still verify native integrity.</div>}
+        </>}
+        <Button variant="primary" onClick={async()=>{if(!window.studio||!native)return;try{const state=await window.studio.confirmImport(native.project.id,pending.token,stage==='native'?{previewSeconds,allowSampleDraft:draftConsent}:undefined);setNative(state);setPending(null);showNotice(stage==='native'?(state.nativeReadiness?.fullReady?'FULL_READY · original native validator PASS.':'SAMPLE_READY draft · not full render ready.'):`${tab} revision imported.`);}catch(reason){setError(String(reason));}}}>Confirm reviewed import {stage==='native'?'(original native CLI validation)':''}</Button>
+      </>}
+      {native?.nativeReadiness&&<div className="info">Persisted native readiness: {native.nativeReadiness.fullReady?'FULL_READY':native.nativeReadiness.sampleReady?'SAMPLE_READY draft':'NOT_READY'} · verified range {native.nativeReadiness.checkedSeconds??'unknown'}s · latest requested {native.nativeReadiness.previewSeconds}s.</div>}
+      {!native&&<div className="info">Open a native project to persist revisions under .studio/external.</div>}
+    </Card></div>;
 }

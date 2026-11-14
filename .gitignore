@@ -12,6 +12,9 @@ studio/dist-electron/
 studio/playwright-report/
 studio/test-results/
 studio/.artifacts/
+studio/test-results-electron/
+studio/test-results-native-closure/
 studio/r1-local-results/
 studio/.electron-test*/
 studio/debug.log
+studio/r2-local-results-20261114-192028

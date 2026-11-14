@@ -2,56 +2,8 @@ import type { CSSProperties } from 'react';
 import type { Shot } from '../../types/app';
 import type { SelectedClip, TimelineTrackName } from './types';
 import { TimelineTrack, type TimelineClip } from './TimelineTrack';
-
-import { TIMELINE_SECONDS, PX_PER_SECOND, TRACK_LABEL_PX } from './timelineScale';
+import { PX_PER_SECOND, TRACK_LABEL_PX } from './timelineScale';
 interface TrackDefinition { name: TimelineTrackName; tone: string; clips: TimelineClip[] }
-const clip = (label: string, start: number, duration: number): TimelineClip => ({ label, start, duration });
-export function editorTracks(shots: Shot[]): TrackDefinition[] {
-  let elapsed = 0;
-  const scenes: TimelineClip[] = shots.map(shot => {
-    const current = clip(shot.id, elapsed, shot.duration);
-    elapsed += shot.duration;
-    return current;
-  });
-  return [
-    { name: 'Scenes', tone: 'mint', clips: scenes },
-    { name: 'Layers', tone: 'blue', clips: [clip('Stickman', 0, 4), clip('Clock', 4, 5), clip('Desk', 9, 4), clip('Arrow', 13, 6)] },
-    { name: 'Captions', tone: 'amber', clips: [clip('WHY DO WE WAIT?', 0, 4), clip('ACTION COMES FIRST', 9, 4), clip('START WITH TEN', 19, 5)] },
-    { name: 'Narration', tone: 'purple', clips: [clip('Narration · Section 01', 0, 9), clip('Section 02', 9, 21)] },
-    { name: 'SFX', tone: 'red', clips: [clip('Tick', 1, 1), clip('Whoosh', 9, 2), clip('Tap', 19, 1)] },
-    { name: 'Ambience', tone: 'green', clips: [clip('Room tone · -22 dB', 0, 30)] }
-  ];
-}
-const ticks = [0, 5, 10, 15, 20, 25, 30];
-export function EditorTimeline({ shots, selected, time, height, onSelect, onSeek }: {
-  shots: Shot[]; selected: SelectedClip; time: number; height: number;
-  onSelect: (clip: SelectedClip) => void; onSeek: (seconds: number) => void;
-}) {
-  const tracks = editorTracks(shots);
-  const seekAtX = (x: number, origin: number, width: number) => {
-    const seconds = Math.max(0, Math.min(TIMELINE_SECONDS, (x - origin) / width * TIMELINE_SECONDS));
-    onSeek(Math.round(seconds * 4) / 4);
-  };
-  const style = {
-    '--timeline-label': `${TRACK_LABEL_PX}px`,
-    '--timeline-lane': `${TIMELINE_SECONDS * PX_PER_SECOND}px`,
-    '--playhead-ratio': time / TIMELINE_SECONDS
-  } as CSSProperties;
-  return <section className="editor-timeline" style={{ ...style, height }} aria-label="Editor timeline">
-    <header><div><strong>Timeline</strong><small>6 tracks · 30-second demo fixture</small></div><span>Shared 0–30s scale · {PX_PER_SECOND} px/s minimum</span></header>
-    <div className="timeline-scroll">
-      <div className="ruler">
-        <div className="ruler-label" aria-hidden="true">TIME</div>
-        <div className="ruler-scale" aria-label="Timeline ruler" onClick={event => { const rect=event.currentTarget.getBoundingClientRect(); seekAtX(event.clientX, rect.left, rect.width); }}>
-          {ticks.map(second => <span key={second} data-tick={second} style={{ left: `${second / TIMELINE_SECONDS * 100}%` }}>
-            00:{String(second).padStart(2, '0')}
-          </span>)}
-        </div>
-      </div>
-      <div className="tracks">{tracks.map(track => <TimelineTrack key={track.name} {...track} selected={selected} onSelect={onSelect} />)}
-        <i className="playhead" data-playhead-seconds={time} aria-hidden="true" />
-      </div>
-      <footer className="timeline-footer"><span>Native scene timing · 30 fps</span><span>00:30 demo window</span></footer>
-    </div>
-  </section>;
-}
+const clip=(label:string,start:number,duration:number):TimelineClip=>({label,start,duration});
+export function editorTracks(shots:Shot[],actual?:Record<string,unknown[]>):TrackDefinition[]{const tones:Record<TimelineTrackName,string>={Scenes:'mint',Layers:'blue',Captions:'amber',Narration:'purple',SFX:'red',Ambience:'green'};if(actual)return(Object.keys(tones)as TimelineTrackName[]).map(name=>({name,tone:tones[name],clips:(actual[name]??[])as TimelineClip[]}));let elapsed=0;const scenes=shots.map(shot=>{const value=clip(shot.id,elapsed,shot.duration);elapsed+=shot.duration;return value});return[{name:'Scenes',tone:'mint',clips:scenes},{name:'Layers',tone:'blue',clips:shots.map((shot,index)=>clip(shot.title,scenes[index].start,shot.duration))},{name:'Captions',tone:'amber',clips:shots.map((shot,index)=>clip(shot.caption||shot.id,scenes[index].start,shot.duration))},{name:'Narration',tone:'purple',clips:[]},{name:'SFX',tone:'red',clips:[]},{name:'Ambience',tone:'green',clips:[]}]}
+export function EditorTimeline({shots,actualTracks,selected,time,height,onSelect,onSeek}:{shots:Shot[];actualTracks?:Record<string,unknown[]>;selected:SelectedClip;time:number;height:number;onSelect:(clip:SelectedClip)=>void;onSeek:(seconds:number)=>void}){const projected=Math.max(0,...shots.map(shot=>shot.end??0)),duration=Math.max(.01,projected||shots.reduce((sum,shot)=>sum+shot.duration,0)),tracks=editorTracks(shots,actualTracks),tickStep=duration<=30?5:Math.ceil(duration/6/5)*5,ticks=Array.from({length:Math.floor(duration/tickStep)+1},(_,i)=>i*tickStep);if(ticks.at(-1)!==duration)ticks.push(duration);const seekAtX=(x:number,origin:number,width:number)=>onSeek(Math.round(Math.max(0,Math.min(duration,(x-origin)/width*duration))*4)/4),style={'--timeline-label':`${TRACK_LABEL_PX}px`,'--timeline-lane':`${Math.max(duration*PX_PER_SECOND,720)}px`,'--playhead-ratio':time/duration}as CSSProperties;return <section className="editor-timeline" style={{...style,height}} aria-label="Editor timeline"><header><div><strong>Timeline</strong><small>{actualTracks?'Actual project tracks':'Demo projection'}</small></div><span>0–{duration.toFixed(2)}s · {PX_PER_SECOND} px/s minimum</span></header><div className="timeline-scroll"><div className="ruler"><div className="ruler-label" aria-hidden="true">TIME</div><div className="ruler-scale" aria-label="Timeline ruler" onClick={event=>{const rect=event.currentTarget.getBoundingClientRect();seekAtX(event.clientX,rect.left,rect.width)}}>{ticks.map(second=><span key={second} data-tick={second} style={{left:`${second/duration*100}%`}}>{second.toFixed(1)}s</span>)}</div></div><div className="tracks">{tracks.map(track=><TimelineTrack key={track.name}{...track} duration={duration} selected={selected} onSelect={onSelect}/>)}<i className="playhead" data-playhead-seconds={time} aria-hidden="true"/></div><footer className="timeline-footer"><span>{actualTracks?'Native scene/audio timing':'Demo timing'}</span><span>{duration.toFixed(2)} seconds</span></footer></div></section>}
