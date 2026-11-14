@@ -10,16 +10,17 @@ export interface ProjectSummary { id: string; root: string; title: string; style
 export interface StudioState {
   schema: 'mode-b-studio-state-v1'; project: ProjectSummary; brief: { topic: string; language: string; ratio: '9:16'; targetDuration?: number; audience?: string; purpose?: string };
   external: Partial<Record<Stage, { revision: number; artifact: unknown; importedAt: string }>>;
-  tasks?: Partial<Record<Stage, { id: string; revision: number; inputSha256: string; sourceFingerprint?: string; promptSha256?: string; promptPath: string; status: 'FROZEN' | 'IMPORTED' | 'STALE'; createdAt: string; scope?: string }>>;
+  tasks?: Partial<Record<Stage, { id: string; revision: number; inputSha256: string; sourceFingerprint?: string; promptSha256?: string; promptPath: string; status: 'FROZEN' | 'IMPORTED' | 'STALE'; createdAt: string; scope?: string; assetBaseline?: Array<{path:string;sha256:string}>; mediaBaseline?: Array<{path:string;sha256:string;rights:string;kind:string;shotId?:string;layerId?:string;track?:string;trackIndex?:number}> }>>;
   approvedScript?: { sections: Array<{ id: string; text: string }>; text: string; sha256: string; revision: number; approvedAt: string; authoring?: Record<string, unknown> };
   voice?: { path: string; sha256: string; receipt?: unknown; generatedAt: string; duration?: number; stale?: boolean; profileId?: string; profileVersion?: number; referenceBinding?: string; origin?: 'NANO_GENERATED' | 'NANO_LONGFORM' | 'IMPORTED_WAV' };
-  alignment?: { path: string; captionsPath: string; audioSha256: string; scriptSha256?: string; wordsSha256?: string; cuesSha256?: string; generatedAt: string; origin?: 'ELEVENLABS' | 'IMPORTED_WORDS'; words?: Array<{word:string;start:number;end:number;loss?:number}>; characters?: unknown; loss?: number };
+  alignment?: { path: string; captionsPath: string; audioSha256: string; scriptSha256?: string; wordsSha256?: string; cuesSha256?: string; generatedAt: string; origin?: 'ELEVENLABS' | 'IMPORTED_WORDS'; words?: Array<{word:string;start:number;end:number;loss?:number}>; characters?: unknown; loss?: number; captionReview?: { revision:number; path:string; sha256:string; sourceSha256:string; note:string; approvedAt:string }; captionDraft?: { path:string; sha256:string; sourceSha256:string; boundaries:number[] } };
   approval?: { note: string; previewSha256: string; approvedAt: string };
   preview?: { path: string; sha256: string; reportPath: string; reportSha256: string; sourceFingerprint?: string; verifiedAt: string; reviewedAt?: string };
   render?: { path: string; sha256: string; reportPath: string; reportSha256: string; verifiedAt: string };
   nano?: { endpoint: string; profileId?: string };
   imports?: string[];
-  media?: Array<{ path:string; sha256:string; kind:'image'|'sfx'|'ambience'; shotId?:string; layerId?:string; rights:string; importedAt:string }>;
+  media?: Array<{ path:string; sha256:string; kind:'image'|'sfx'|'ambience'; shotId?:string; layerId?:string; track?:'sfx'|'dialogue'|'ambience'; trackIndex?:number; rights:string; importedAt:string }>;
+  nativeReadiness?: { sampleReady:boolean; fullReady:boolean; previewSeconds:number; checkedSeconds?:number; validationSha256?:string; missingOutsideScope?:string[]; reviewedDraft:boolean; verifiedAt:string };
   longform?: { jobId:string; manifestPath:string; outputPath:string; status:'READY'|'RUNNING'|'UNCERTAIN'|'PASS'|'FAILED'; sourceSha256:string; profileId:string; profileVersion?:number; resume:boolean; updatedAt:string; detail?:string };
 }
 
