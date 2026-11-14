@@ -124,7 +124,18 @@ export async function runNative(appPath: string, root: string, command: NativeCo
 export function resolveProjectFile(root: string, relative: string) {
   const projectRoot = assertLocalRoot(root); if (path.isAbsolute(relative) || relative.includes('\0')) throw new Error('A project-relative path is required.');
   const target = path.resolve(projectRoot, relative); if (!inside(projectRoot, target)) throw new Error('Path escapes the project.'); noExecutable(target);
-  if (fs.existsSync(target)) { const real = fs.realpathSync(target); if (!inside(projectRoot, real) || fs.lstatSync(target).isSymbolicLink()) throw new Error('Symlink/junction media is not accepted.'); return real; }
+  // Inspect every existing ancestor, not only the final leaf: linked asset
+  // directories/junctions must not cause imports or native reads to escape.
+  let cursor=target;
+  while(inside(projectRoot,cursor)&&cursor!==projectRoot){
+    if(fs.existsSync(cursor)){
+      const real=fs.realpathSync(cursor);
+      if(fs.lstatSync(cursor).isSymbolicLink()||real.toLowerCase()!==cursor.toLowerCase())throw new Error('Symlink/junction media ancestor is not accepted.');
+      if(!inside(projectRoot,real))throw new Error('Media escapes its project.');
+    }
+    cursor=path.dirname(cursor);
+  }
+  if(fs.existsSync(target))return fs.realpathSync(target);
   return target;
 }
 export const mediaUrl = (root: string, relative: string) => `studio-media://${projectId(assertLocalRoot(root))}/${encodeURIComponent(relative.replaceAll('\\', '/'))}`;
@@ -145,6 +156,15 @@ export function safeImportedFile(root: string, source: string, kind: 'image' | '
   const projectRoot = assertLocalRoot(root); const real = fs.realpathSync(source); noExecutable(real);
   const allowed = kind === 'image' ? /\.(?:png|jpe?g)$/i : /\.(?:wav|mp3|m4a|aac|ogg|flac)$/i; if (!allowed.test(real) || !fs.statSync(real).isFile() || fs.statSync(real).size > 512 * 1024 * 1024) throw new Error(`Unsupported ${kind} file.`);
   const head=fs.readFileSync(real).subarray(0,12);if(kind==='image'&&!((head[0]===0x89&&head.toString('ascii',1,4)==='PNG')||(head[0]===0xff&&head[1]===0xd8&&head[2]===0xff)))throw new Error('Image extension does not match PNG/JPEG bytes.');if(kind==='sfx'&&!['RIFF','ID3','fLaC','OggS'].includes(head.toString('ascii',0,4))&&!(head[0]===0xff&&(head[1]&0xe0)===0xe0))throw new Error('Audio extension does not match supported audio bytes.');
-  const dir = path.join(projectRoot, 'assets', kind === 'image' ? 'images' : 'sfx'); fs.mkdirSync(dir, { recursive: true });
-  const target = path.join(dir, `${sha(fs.readFileSync(real)).slice(0, 12)}-${path.basename(real)}`); if (!fs.existsSync(target)) fs.copyFileSync(real, target); return path.relative(projectRoot, target).replaceAll('\\', '/');
+  const dir = path.join(projectRoot, 'assets', kind === 'image' ? 'images' : 'sfx');
+  resolveProjectFile(projectRoot,path.relative(projectRoot,dir));
+  fs.mkdirSync(dir,{recursive:true});
+  resolveProjectFile(projectRoot,path.relative(projectRoot,dir));
+  const inputHash=sha(fs.readFileSync(real)),target=path.join(dir,inputHash.slice(0,12)+'-'+path.basename(real));
+  resolveProjectFile(projectRoot,path.relative(projectRoot,target));
+  if(fs.existsSync(target)){
+    if(sha(fs.readFileSync(target))!==inputHash)throw new Error('Content-addressed asset filename collision or modified existing import.');
+  }else fs.copyFileSync(real,target);
+  if(sha(fs.readFileSync(target))!==inputHash)throw new Error('Imported asset changed while copying.');
+  return path.relative(projectRoot,target).replaceAll('\\','/');
 }
