@@ -274,7 +274,7 @@ const validateSeconds=(value:number|undefined)=>{
   if(typeof value!=='number'||!Number.isFinite(value)||value<1||value>60)throw new Error('Owner sample preview length must be 1..60 seconds.');
   return value;
 };
-export async function confirmImport(appPath: string, root: string, token: string, options: ConfirmOptions={}) {
+async function confirmImportOnce(appPath: string, root: string, token: string, options: ConfirmOptions={}) {
   const pending=readPending(root);if(pending.token!==token)throw new Error('Import confirmation token mismatch.');
   const state=readState(root),stage=pending.stage,task=assertTaskCurrent(appPath,root,stage,state);
   if(state.project.id!==pending.projectId||task.id!==pending.taskId||task.revision!==pending.revision||task.inputSha256!==pending.inputSha256)throw new Error('Frozen task/project identity mismatch.');
@@ -310,6 +310,17 @@ export async function confirmImport(appPath: string, root: string, token: string
       if(result.code===0)full=checkedSeconds(result,'full-film');
     }
     if(!full&&!options.allowSampleDraft)throw new Error('Only SAMPLE_READY. Explicitly approve incomplete draft promotion; full-film is not ready.');
+    // CLI validation is async: do not promote a frozen candidate whose project,
+    // approved script, WAV, words, caption revision or approved media changed
+    // while the native process was running.
+    const fresh=readState(root);
+    assertFrozenSource(appPath,root,'native',fresh);
+    if(fresh.project.id!==pending.projectId||fresh.tasks?.native?.id!==pending.taskId||fresh.tasks.native.revision!==pending.revision)throw new Error('Native task was replaced during validation.');
+    const diskPending=readPending(root);
+    if(diskPending.token!==pending.token||diskPending.payloadSha256!==pending.payloadSha256||JSON.stringify(diskPending.fulfillments)!==JSON.stringify(pending.fulfillments))throw new Error('Native candidate fulfillment changed during validation.');
+    const again=resolvePendingCandidate(root,fresh,diskPending);
+    if(JSON.stringify(again.manifest)!==JSON.stringify(resolved.manifest)||JSON.stringify(again.missing)!==JSON.stringify(resolved.missing))throw new Error('Native candidate or missing-media ledger changed during validation.');
+    if(!fs.readFileSync(current).equals(beforeBytes))throw new Error('Last-good native manifest changed during validation; staged confirmation is stale.');
     const readiness={sampleReady:true,fullReady:Boolean(full),previewSeconds:seconds,checkedSeconds:sample.checkedSeconds,
       validationSha256:sample.fingerprint,missingOutsideScope:resolved.missing.map(item=>item.key),
       reviewedDraft:!full&&options.allowSampleDraft===true,verifiedAt:new Date().toISOString()};
@@ -332,4 +343,14 @@ export async function confirmImport(appPath: string, root: string, token: string
     if(fs.existsSync(candidate))fs.unlinkSync(candidate);
     if(tmp&&fs.existsSync(tmp))fs.unlinkSync(tmp);
   }
+}
+
+const activeConfirmations=new Set<string>();
+/** Serialized, per-project confirmation. An interrupted run preserves the frozen pending journal. */
+export async function confirmImport(appPath:string,root:string,token:string,options:ConfirmOptions={}) {
+  const key=path.resolve(root);
+  if(activeConfirmations.has(key))throw new Error('Another project import is already being confirmed; retry after it completes.');
+  activeConfirmations.add(key);
+  try{return await confirmImportOnce(appPath,root,token,options);}
+  finally{activeConfirmations.delete(key);}
 }
