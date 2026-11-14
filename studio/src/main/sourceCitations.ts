@@ -1,13 +1,18 @@
 import path from 'node:path';
 
 const forbiddenKeys = new Set(['__proto__','prototype','constructor']);
-const controls = /[\u0000-\u001f\u007f]/;
-const proseControls = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
+function hasControls(value: string, allowProseWhitespace = false): boolean {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code === 0x7f || (code < 0x20 && (!allowProseWhitespace || (code !== 0x09 && code !== 0x0a && code !== 0x0d)))) return true;
+  }
+  return false;
+}
 const schemes = /(?:javascript|file|data|vbscript):/i;
 const htmlMarkup = /<\/?[a-z][^>]*>/i;
 const urlInText = /https?:\/\/[^\s<>"']+/gi;
 function publicCitationUrl(input: string) {
-  if (input.length > 2048 || controls.test(input) || schemes.test(input) || htmlMarkup.test(input)) throw new Error('Unsafe research citation URL.');
+  if (input.length > 2048 || hasControls(input) || schemes.test(input) || htmlMarkup.test(input)) throw new Error('Unsafe research citation URL.');
   let url:URL;try{url=new URL(input);}catch{throw new Error('Invalid research citation URL.');}
   if (!['http:','https:'].includes(url.protocol)||!url.hostname||url.username||url.password) throw new Error('Only public HTTP(S) citations without credentials are permitted.');
   const host=url.hostname.replace(/^\[|\]$/g,'').toLowerCase().replace(/\.$/,'');
@@ -15,7 +20,7 @@ function publicCitationUrl(input: string) {
   return input;
 }
 function safeText(value: unknown, limit=2048): string {
-  if (typeof value!=='string'||!value.trim()||value.length>limit||controls.test(value)||schemes.test(value)||htmlMarkup.test(value)) throw new Error('Invalid research citation text.');
+  if (typeof value!=='string'||!value.trim()||value.length>limit||hasControls(value)||schemes.test(value)||htmlMarkup.test(value)) throw new Error('Invalid research citation text.');
   for (const match of value.match(urlInText)??[]) publicCitationUrl(match.replace(/[),.;]+$/,''));
   return value;
 }
@@ -24,7 +29,7 @@ export function validateAuthoring(value: unknown): Record<string,unknown> {
   const object=value as Record<string,unknown>;
   function inspect(data:unknown,depth=0):void {
     if(depth>40)throw new Error('Creative authoring nesting too deep.');
-    if(typeof data==='string'){if(data.length>65536||proseControls.test(data))throw new Error('Invalid creative prose.');return;}
+    if(typeof data==='string'){if(data.length>65536||hasControls(data, true))throw new Error('Invalid creative prose.');return;}
     if(Array.isArray(data)){if(data.length>10000)throw new Error('Creative array is too large.');data.forEach(item=>inspect(item,depth+1));return;}
     if(data&&typeof data==='object'){const row=data as Record<string,unknown>;for(const [key,item] of Object.entries(row)){if(forbiddenKeys.has(key))throw new Error('Forbidden authoring key.');inspect(item,depth+1);}}
   }
@@ -51,7 +56,7 @@ export function rejectNativeUnsafePaths(value:unknown):void {
       return;
     }
     if(typeof item!=='string')return;
-    if(controls.test(item)||schemes.test(item))throw new Error('Unsafe native field.');
+    if(hasControls(item)||schemes.test(item))throw new Error('Unsafe native field.');
     if(['path','file','source'].includes(key)){
       if(item.startsWith('@b1/')&&key==='path'&&!item.includes('..'))return;
       const normalized=item.replaceAll('\\','/');
