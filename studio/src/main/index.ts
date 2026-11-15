@@ -7,7 +7,8 @@ import { getCaptionReview, draftCaptionReview, approveCaptionReview } from './ca
 import { discoverNano, generateNano, nanoBase } from './nanoClient.js';
 import { cancelJob, nativeJob, reconcileJob } from './nativeJobs.js';
 import { importAlignedWords, importApprovedWav, longformStatus, runLongform } from './voiceMedia.js';
-import { assertMediaRelative, fileFetchUrl, mediaUrl, nativeSkillRoot, projectId, projectSnapshot, readState, runProcess, strictJson, writeState, type NativeCommand, type Stage, type StudioState } from './services.js';
+import { projectSnapshot } from './projectSnapshot.js';
+import { assertMediaRelative, fileFetchUrl, mediaUrl, nativeSkillRoot, projectId, readState, runProcess, strictJson, writeState, type NativeCommand, type Stage, type StudioState } from './services.js';
 
 if (process.env.MODE_B_STUDIO_DISABLE_GPU === '1') { app.disableHardwareAcceleration(); app.commandLine.appendSwitch('disable-gpu'); app.commandLine.appendSwitch('disable-gpu-compositing'); }
 if(process.env.MODE_B_STUDIO_USER_DATA){const userData=path.resolve(process.env.MODE_B_STUDIO_USER_DATA);if(!path.isAbsolute(process.env.MODE_B_STUDIO_USER_DATA)||userData.startsWith('\\\\'))throw new Error('MODE_B_STUDIO_USER_DATA must be a local absolute path.');fs.mkdirSync(userData,{recursive:true});app.setPath('userData',userData)}

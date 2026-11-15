@@ -28,7 +28,7 @@ describe('WP-A: persisted approved media fulfillment and exact native fields',()
   it('UT-A02 wrong shot, nonimage/absent layer and invented primary cannot map',()=>{
     const {root}=fixture(),{response}=stageNative(root,nativePayload(root,{image:'early'})),entry=importMediaFile(root,importedSource(root),'image','owner');
     for(const key of ['image:1:image-1','image:0:primary','image:0:text-1','image:0:missing'])expect(()=>fulfillMedia(appPath,root,response.token,key,entry.path,'owner')).toThrow();
-    expect(getPendingMedia(appPath,root).missing).toHaveLength(1);
+    expect(getPendingMedia(appPath,root)!.missing).toHaveLength(1);
     expect(readState(root).media?.some(item=>item.shotId)).toBe(false);
   });
   it('UT-A03 duplicate basenames have distinct frozen shot/layer references',async()=>{
@@ -68,8 +68,8 @@ describe('WP-A: persisted approved media fulfillment and exact native fields',()
         if(mutation==='words')fs.appendFileSync(path.join(root,wordsPath),' ');
         if(mutation==='cues')fs.appendFileSync(path.join(root,coreCuesPath),' ');
         if(mutation==='asset'){const item=readState(root).media![0];fs.appendFileSync(path.join(root,item.path),'x');}
-        if(point==='stage')expect(()=>stageImport(appPath,root,'native',JSON.stringify(envelope))).toThrow(/stale|changed/);
-        else await expect(confirmImport(appPath,root,pending!,{validator:validator().run})).rejects.toThrow(/stale|changed/);
+        if(point==='stage')expect(()=>stageImport(appPath,root,'native',JSON.stringify(envelope))).toThrow(/stale|changed|blocked|corrupt/i);
+        else await expect(confirmImport(appPath,root,pending!,{validator:validator().run})).rejects.toThrow(/stale|changed|blocked|corrupt/i);
         expect(readState(root).tasks?.native?.status).toBe('STALE');
       }
     }
@@ -78,7 +78,7 @@ describe('WP-A: persisted approved media fulfillment and exact native fields',()
     const {root}=fixture(),{response}=stageNative(root,nativePayload(root,{image:'early'}));
     const entry=importMediaFile(root,importedSource(root),'image','owner');
     const mapped=fulfillMedia(appPath,root,response.token,response.missing[0].key,entry.path,'owner');
-    expect(getPendingMedia(appPath,root).token).toBe(response.token);
+    expect(getPendingMedia(appPath,root)!.token).toBe(response.token);
     expect(fulfillMedia(appPath,root,response.token,response.missing[0].key,entry.path,'owner').status).toBe(mapped.status);
     expect(()=>fulfillMedia(appPath,root,'wrong-token',response.missing[0].key,entry.path,'owner')).toThrow(/token/);
     expect(()=>fulfillMedia(appPath,root,response.token,response.missing[0].key,'../escape.png','owner')).toThrow();

@@ -16,11 +16,11 @@ export interface StudioState {
   alignment?: { path: string; captionsPath: string; audioSha256: string; scriptSha256?: string; wordsSha256?: string; cuesSha256?: string; generatedAt: string; origin?: 'ELEVENLABS' | 'IMPORTED_WORDS'; words?: Array<{word:string;start:number;end:number;loss?:number}>; characters?: unknown; loss?: number; captionReview?: { revision:number; path:string; sha256:string; sourceSha256:string; note:string; approvedAt:string }; captionDraft?: { path:string; sha256:string; sourceSha256:string; boundaries:number[] } };
   approval?: { note: string; previewSha256: string; approvedAt: string };
   preview?: { path: string; sha256: string; reportPath: string; reportSha256: string; sourceFingerprint?: string; verifiedAt: string; reviewedAt?: string };
-  render?: { path: string; sha256: string; reportPath: string; reportSha256: string; verifiedAt: string };
+  render?: { path: string; sha256: string; reportPath: string; reportSha256: string; sourceFingerprint?: string; verifiedAt: string };
   nano?: { endpoint: string; profileId?: string };
   imports?: string[];
   media?: Array<{ path:string; sha256:string; kind:'image'|'sfx'|'ambience'; shotId?:string; layerId?:string; track?:'sfx'|'dialogue'|'ambience'|'music'; trackIndex?:number; rights:string; importedAt:string }>;
-  nativeReadiness?: { sampleReady:boolean; fullReady:boolean; previewSeconds:number; checkedSeconds?:number; validationSha256?:string; missingOutsideScope?:string[]; reviewedDraft:boolean; verifiedAt:string };
+  nativeReadiness?: { sampleReady:boolean; fullReady:boolean; previewSeconds:number; checkedSeconds?:number; validationSha256?:string; sourceFingerprint?:string; missingOutsideScope?:string[]; reviewedDraft:boolean; verifiedAt:string };
   longform?: { jobId:string; manifestPath:string; outputPath:string; status:'READY'|'RUNNING'|'UNCERTAIN'|'PASS'|'FAILED'; sourceSha256:string; profileId:string; profileVersion?:number; resume:boolean; updatedAt:string; detail?:string };
 }
 
@@ -67,15 +67,40 @@ export function bindAcceptedNarration(root: string, relative: string) {
   resolveProjectFile(root,relative);
   atomicJson(file,{...project,voice:{...voice,path:relative}});
 }
-export function projectSnapshot(root: string) {
-  const state=readState(root),manifest=strictJson(fs.readFileSync(path.join(assertLocalRoot(root),'project.json'),'utf8')) as Record<string,unknown>;
-  const captions=Array.isArray(manifest.captions)?manifest.captions as Array<Record<string,unknown>>:[];
-  const shots=Array.isArray(manifest.shots)?manifest.shots.map((item,index)=>{const shot=item as Record<string,unknown>,start=Number(shot.start),end=Number(shot.end);const cue=captions.find(value=>Number(value.start)<end&&Number(value.end)>start);return{id:String(shot.id||`SHOT-${String(index+1).padStart(2,'0')}`),title:String(shot.title||`Native shot ${index+1}`),duration:Math.max(0,end-start),start,end,caption:String(cue?.text||''),status:'Native manifest',color:'#79dfc6',layers:Array.isArray(shot.layers)?shot.layers:[]}}):[];
-  const duration=shots.reduce((max,item)=>Math.max(max,item.end),0),clip=(label:string,start:number,end:number)=>({label,start,duration:Math.max(0,end-start)});
-  const tracks={Scenes:shots.map(item=>clip(item.id,item.start,item.end)),Layers:shots.flatMap(item=>item.layers.map((layer,index)=>clip(String((layer as Record<string,unknown>).id||`${item.id}-layer-${index+1}`),item.start,item.end))),Captions:captions.map((cue,index)=>clip(String(cue.text||`Caption ${index+1}`),Number(cue.start),Number(cue.end))),Narration:state.voice?[clip(state.voice.origin||'Accepted narration',0,state.voice.duration??duration)]:[],SFX:(Array.isArray(manifest.sfx)?manifest.sfx as Array<Record<string,unknown>>:[]).map((value,index)=>clip(String(value.id||value.kind||`SFX ${index+1}`),Number(value.time),Number(value.time)+Number(value.duration||.25))),Ambience:(Array.isArray(manifest.ambience)?manifest.ambience as Array<Record<string,unknown>>:[]).map((value,index)=>clip(String(value.id||value.path||`Ambience ${index+1}`),Number(value.start),Number(value.end)))};
-  return{...state,manifest,projection:{shots,duration,tracks,demo:false},job:reconcileJobSafe(root)};
+
+export function inspectWavBuffer(data:Buffer){if(data.length<44||data.toString('ascii',0,4)!=='RIFF'||data.toString('ascii',8,12)!=='WAVE')throw new Error('Accepted audio is not WAV.');let offset=12,format=0,channels=0,rate=0,bits=0,dataBytes=-1;while(offset+8<=data.length){const id=data.toString('ascii',offset,offset+4),size=data.readUInt32LE(offset+4),start=offset+8;if(start+size>data.length)throw new Error('Truncated WAV chunk.');if(id==='fmt '){if(size<16)throw new Error('Invalid WAV fmt chunk.');format=data.readUInt16LE(start);channels=data.readUInt16LE(start+2);rate=data.readUInt32LE(start+4);bits=data.readUInt16LE(start+14)}if(id==='data')dataBytes=size;offset=start+size+(size%2)}if(offset!==data.length||format!==1||channels!==1||rate!==24000||bits!==16||dataBytes<2)throw new Error('Expected complete WAV 24 kHz mono PCM16.');const frames=dataBytes/2;if(!Number.isInteger(frames))throw new Error('Invalid WAV frame count.');return{channels,sampleRate:rate,bits,frames,duration:frames/rate,sha256:sha(data),bytes:data.length}}
+
+export interface NarrationAcceptance {
+  wav:Buffer;expectedScriptSha256:string;
+  voice:Omit<NonNullable<StudioState['voice']>,'path'|'sha256'|'duration'|'generatedAt'|'stale'>;
+  nano?:StudioState['nano'];longform?:StudioState['longform'];
+  hooks?:{afterWav?:()=>void;afterManifest?:()=>void;afterState?:()=>void};
 }
-function reconcileJobSafe(root:string){const file=path.join(root,'.studio','jobs','latest.json');if(!fs.existsSync(file))return null;try{return strictJson(fs.readFileSync(file,'utf8'))}catch{return{status:'UNKNOWN'}}}
+const restoreExact=(file:string,bytes:Buffer)=>{const temporary=file+'.'+randomUUID()+'.restore';fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(temporary,bytes,{flag:'wx'});fs.renameSync(temporary,file)};
+/** One rollback-safe publication boundary shared by short, long-form and imported narration. */
+export function acceptNarration(root:string,input:NarrationAcceptance){
+  const projectRoot=assertLocalRoot(root),projectFile=path.join(projectRoot,'project.json'),stateFile=statePath(projectRoot),target=resolveProjectFile(projectRoot,'assets/audio/narration.wav');
+  const projectBytes=fs.readFileSync(projectFile),stateBytes=fs.readFileSync(stateFile),hadWav=fs.existsSync(target),wavBytes=hadWav?fs.readFileSync(target):null;
+  const current=readState(projectRoot),info=inspectWavBuffer(input.wav);
+  if(!current.approvedScript||current.approvedScript.sha256!==input.expectedScriptSha256||sha(current.approvedScript.text)!==current.approvedScript.sha256)throw new Error('Approved script changed before narration publication.');
+  const project=strictJson(projectBytes.toString('utf8')) as Record<string,unknown>,voice=project.voice as Record<string,unknown>|undefined;
+  if(!voice||typeof voice!=='object'||Array.isArray(voice))throw new Error('Native manifest voice is missing.');
+  const staged=path.join(path.dirname(target),`.narration-${randomUUID()}.wav`),backup=path.join(path.dirname(target),`.narration-${randomUUID()}.bak`);fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(staged,input.wav,{flag:'wx'});inspectWavBuffer(fs.readFileSync(staged));
+  const next:StudioState=structuredClone(current);next.voice={path:'assets/audio/narration.wav',sha256:info.sha256,duration:info.duration,generatedAt:new Date().toISOString(),...input.voice,stale:false};
+  if(input.nano)next.nano=input.nano;if(input.longform)next.longform=input.longform;next.alignment=undefined;if(next.tasks)next.tasks.native=undefined;next.nativeReadiness=undefined;next.preview=undefined;next.approval=undefined;next.render=undefined;
+  let movedPrior=false,wavCommitted=false,manifestCommitted=false,stateCommitted=false;
+  try{
+    if(hadWav){fs.renameSync(target,backup);movedPrior=true}fs.renameSync(staged,target);wavCommitted=true;input.hooks?.afterWav?.();
+    atomicJson(projectFile,{...project,voice:{...voice,path:'assets/audio/narration.wav'}});manifestCommitted=true;input.hooks?.afterManifest?.();
+    writeState(projectRoot,next);stateCommitted=true;input.hooks?.afterState?.();
+    if(movedPrior&&fs.existsSync(backup))fs.unlinkSync(backup);return next.voice;
+  }catch(error){
+    if(stateCommitted||!fs.existsSync(stateFile)||!fs.readFileSync(stateFile).equals(stateBytes))restoreExact(stateFile,stateBytes);
+    if(manifestCommitted||!fs.existsSync(projectFile)||!fs.readFileSync(projectFile).equals(projectBytes))restoreExact(projectFile,projectBytes);
+    if(wavCommitted){if(fs.existsSync(target))fs.unlinkSync(target);if(movedPrior&&fs.existsSync(backup))fs.renameSync(backup,target);else if(wavBytes)restoreExact(target,wavBytes)}
+    throw error;
+  }finally{if(fs.existsSync(staged))fs.unlinkSync(staged);if(fs.existsSync(backup)){if(!fs.existsSync(target)&&wavBytes)fs.renameSync(backup,target);else fs.unlinkSync(backup)}}
+}
 
 export function strictJson(text: string): unknown {
   if (Buffer.byteLength(text, 'utf8') > MAX_JSON) throw new Error('JSON exceeds the 4 MiB limit.');

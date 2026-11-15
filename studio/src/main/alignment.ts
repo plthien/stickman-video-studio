@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { atomicJson, nativeSkillRoot, readState, resolveProjectFile, runProcess, sha, writeState } from './services.js';
-import { inspectWavBuffer } from './nanoClient.js';
+import { atomicJson, inspectWavBuffer, nativeSkillRoot, readState, resolveProjectFile, runProcess, sha, writeState } from './services.js';
 
 export const alignmentText = (text: string) => text.replace(/\[pause(?:\s+(?:\d+(?:\.\d+)?(?:ms|s)))?\]/gi, ' ').replace(/\s+/g, ' ').trim();
 const tokens = (text: string) => text.toLocaleLowerCase().match(/[\p{L}\p{N}']+/gu) ?? [];

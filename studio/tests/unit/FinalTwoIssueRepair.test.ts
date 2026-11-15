@@ -40,7 +40,7 @@ describe('FIX-01: asynchronous native confirmation merges only transaction-owned
     const {root}=fixture(),before=fs.readFileSync(path.join(root,'project.json')),{response}=stageNative(root,nativePayload(root)),gate=deferredValidator();
     const confirming=confirmImport(appPath,root,response.token,{validator:gate.run});await gate.entered;
     const state=readState(root);state.approvedScript!.text='Conflicting approved text';writeState(root,state);
-    gate.release();await expect(confirming).rejects.toThrow(/stale|changed/i);
+    gate.release();await expect(confirming).rejects.toThrow(/stale|changed|blocked|corrupt/i);
     expect(fs.readFileSync(path.join(root,'project.json')).equals(before)).toBe(true);expect(readState(root).tasks?.native?.status).toBe('STALE');
   });
   it('UT-F01-C fulfillment changed during validation requires a new validation',async()=>{

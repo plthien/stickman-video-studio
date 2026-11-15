@@ -10,12 +10,18 @@ const COMMON = ['SKILL.md', 'references/autopilot.md', 'references/autopilot-run
 const exactKeys = (object: Record<string, unknown>, allowed: string[]) => { const extra = Object.keys(object).filter(key => !allowed.includes(key)); if (extra.length) throw new Error(`Unknown field: ${extra[0]}`); };
 const readUtf8 = (file: string) => fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
 const readJsonValue = (file: string) => (strictJson(`{"value":${readUtf8(file)}}`) as { value: unknown }).value;
-const projectContext = (state: StudioState, root: string) => {
+const projectContext = (state: StudioState, root: string, stage:Stage) => {
   const manifest = strictJson(readUtf8(path.join(root, 'project.json'))) as Record<string, unknown>;
   const assets = fs.existsSync(path.join(root, 'assets')) ? fs.readdirSync(path.join(root, 'assets'), { recursive: true, withFileTypes: true }).filter(item => item.isFile()).map(item => String(item.parentPath ? path.relative(root, path.join(item.parentPath, item.name)) : item.name).replaceAll('\\', '/')).sort() : [];
-  const words = state.alignment ? readJsonValue(resolveProjectFile(root, state.alignment.path)) : null;
-  const captionCues = state.alignment ? readJsonValue(resolveProjectFile(root, state.alignment.captionsPath)) : null;
-  let approvedCues: unknown = null; try { approvedCues = approvedCaptionCues(root); } catch { /* Unreviewed captions must not masquerade as approved. */ }
+  let words:unknown=null,captionCues:unknown=null,approvedCues:unknown=null;
+  if(stage==='native'){
+    if(!state.approvedScript||sha(state.approvedScript.text)!==state.approvedScript.sha256)throw new Error('Native task BLOCKED: current approved script evidence is missing or corrupt.');
+    if(!state.voice||state.voice.stale)throw new Error('Native task BLOCKED: current accepted narration is missing or stale.');
+    const audio=fs.readFileSync(resolveProjectFile(root,state.voice.path));if(sha(audio)!==state.voice.sha256)throw new Error('Native task BLOCKED: accepted narration bytes changed.');
+    if(!state.alignment)throw new Error('Native task BLOCKED: real word alignment is missing.');
+    words=readJsonValue(resolveProjectFile(root,state.alignment.path));captionCues=readJsonValue(resolveProjectFile(root,state.alignment.captionsPath));
+    approvedCues=approvedCaptionCues(root);
+  }
   return { project_id: state.project.id, title: state.project.title, topic: state.brief.topic, audience: state.brief.audience ?? '', purpose: state.brief.purpose ?? '', language: state.brief.language, ratio: state.brief.ratio, target_duration_seconds: state.brief.targetDuration ?? null, style: state.project.style, approved_script: state.approvedScript ?? null, voice: state.voice ? { path: state.voice.path, sha256: state.voice.sha256, duration: state.voice.duration, stale: state.voice.stale, origin: state.voice.origin, profile_id: state.voice.profileId, profile_version: state.voice.profileVersion } : null, alignment: state.alignment ? { provenance: state.alignment.origin, audio_sha256: state.alignment.audioSha256, script_sha256: state.alignment.scriptSha256, words_sha256: state.alignment.wordsSha256, cues_sha256: state.alignment.cuesSha256, words, caption_cues: captionCues, approved_caption_cues: approvedCues, caption_review: state.alignment.captionReview ?? null } : null, media_ledger: state.media ?? [], assets, native_manifest: manifest };
 };
 const sourceBundle = (appPath: string, style: string) => {
@@ -24,7 +30,7 @@ const sourceBundle = (appPath: string, style: string) => {
   return files.map(relative => { const text = readUtf8(path.join(root, relative)); return { relative, sha256: sha(text), text }; });
 };
 export function sourceFingerprint(appPath: string, root: string, stage: Stage) {
-  const state = readState(root), context = projectContext(state, root), sources = sourceBundle(appPath, state.project.style);
+  const state = readState(root), context = projectContext(state, root, stage), sources = sourceBundle(appPath, state.project.style);
   // New unassigned media files never change creative authority. Existing assets are
   // separately snapshotted with their exact bytes at freeze and checked at both gates.
   const creative = Object.fromEntries(Object.entries(context).filter(([key]) => key !== 'assets' && key !== 'media_ledger'));
@@ -56,14 +62,13 @@ function assertFrozenSource(appPath:string,root:string,stage:Stage,state:StudioS
   return task;
 }
 export function freezeTask(appPath: string, root: string, stage: Stage, rebuild = false) {
-  const state = readState(root); const context = projectContext(state, root); const sources = sourceBundle(appPath, state.project.style);
-  if (stage === 'native' && (!state.approvedScript || !state.voice || state.voice.stale || !state.alignment)) throw new Error('Approved script, current verified narration and real word alignment are required before native authoring.');
+  const state = readState(root); const context = projectContext(state, root, stage); const sources = sourceBundle(appPath, state.project.style);
   const inputSha256 = sourceFingerprint(appPath, root, stage); const prior = state.tasks?.[stage];
   if (!rebuild && prior && prior.inputSha256 === inputSha256 && fs.existsSync(resolveProjectFile(root, prior.promptPath))) return { ...prior, prompt: readUtf8(resolveProjectFile(root, prior.promptPath)) };
   if (prior) prior.status = 'STALE'; const revision = (prior?.revision ?? 0) + 1; const id = randomUUID();
   const response = stage === 'script'
-    ? { schema: 'mode-b-external-result-v1', project_id: state.project.id, task_id: id, revision, input_sha256: inputSha256, stage, payload: { schema: 'mode-b-script-v1', sections: [{ id: 'section-01', text: 'Exact approved wording' }], authoring: { creative_direction: {}, characters: [], style_decisions: {}, source_references: [], voice_intentions: {}, sound_intentions: {} } } }
-    : { schema: 'mode-b-external-result-v1', project_id: state.project.id, task_id: id, revision, input_sha256: inputSha256, stage, payload: { manifest: { version: 1, style: state.project.style, width: 1080, height: 1920, fps: 30, voice: { path: state.voice?.path }, captions: [], shots: [], sfx: [] }, shot_ledger: [], sound_script: [], asset_needs: [] } };
+    ? { schema: 'mode-b-external-result-v1', project_id: state.project.id, task_id: id, revision, input_sha256: inputSha256, stage, payload: { schema: 'mode-b-script-v1', sections: 'REQUIRED_NONEMPTY_ARRAY_OF_UNIQUE_ID_AND_ACTUAL_TEXT', authoring: 'REQUIRED_ACTUAL_CREATIVE_AUTHORING_OBJECT' } }
+    : { schema: 'mode-b-external-result-v1', project_id: state.project.id, task_id: id, revision, input_sha256: inputSha256, stage, payload: { manifest: 'REQUIRED_COMPLETE_ORIGINAL_PROJECT_JSON_V1_USING_ACTUAL_CONTEXT', shot_ledger: 'REQUIRED_ACTUAL_SHOT_LEDGER_ARRAY', sound_script: 'REQUIRED_ACTUAL_SOUND_SCRIPT_ARRAY', asset_needs: 'REQUIRED_ACTUAL_ASSET_NEEDS_ARRAY' } };
   const prompt = `# ORIGINAL MODE B MANUAL CHATGPT HANDOFF — ${stage === 'script' ? 'SCRIPT & CREATIVE DIRECTION' : 'VISUAL / SHOT / SOUND / NATIVE MANIFEST'}\n\nThis is a manual transport boundary in the original Mode B workflow. Do not invent a parallel engine. Do not call tools, return Markdown, executable code or local absolute paths. Public HTTP(S) research citation URLs are permitted ONLY inside script payload.authoring.source_references as inert metadata; never use remote URLs as native assets or executable paths. Return exactly one JSON object matching the frozen envelope below.\n\n## ACTUAL PROJECT CONTEXT\n${JSON.stringify(context, null, 2)}\n\n## REQUIRED RESPONSE ENVELOPE\n${JSON.stringify(response, null, 2)}\n\nThe outer identity fields must be returned byte-for-value. For native authoring, payload.manifest is the original B1–B4 project.json v1 and must contain no Studio/task metadata. Ground every shot in the approved script and actual word/caption timing. List missing media honestly; never fabricate an existing asset path.\n\n## AUTHORITATIVE INSTALLED MODE B SOURCES\n${sources.map(item => `\n--- BEGIN ${item.relative} [sha256 ${item.sha256}] ---\n${item.text}\n--- END ${item.relative} ---`).join('\n')}\n`;
   const relative = `.studio/external/tasks/${stage}-${revision}-${id}.md`; const target = resolveProjectFile(root, relative); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, prompt, { encoding: 'utf8', flag: 'wx' });
   state.tasks ??= {}; state.tasks[stage] = { id, revision, inputSha256, sourceFingerprint: inputSha256, assetBaseline: assetSnapshot(root), mediaBaseline: mediaSnapshot(state), promptSha256: sha(prompt), promptPath: relative, status: 'FROZEN', createdAt: new Date().toISOString() }; writeState(root, state); return { ...state.tasks[stage], prompt };
@@ -76,7 +81,7 @@ function validateEnvelope(state: StudioState, stage: Stage, value: unknown): Env
   if (object.schema !== 'mode-b-external-result-v1' || object.project_id !== state.project.id || object.task_id !== task.id || object.revision !== task.revision || object.input_sha256 !== task.inputSha256 || object.stage !== stage) throw new Error('Project/task/revision/input binding mismatch.');
   if (!object.payload || typeof object.payload !== 'object' || Array.isArray(object.payload)) throw new Error('Invalid payload.'); return object as unknown as Envelope;
 }
-function validateScript(payload: Record<string, unknown>) { exactKeys(payload, ['schema','sections','authoring']); if (payload.schema !== 'mode-b-script-v1' || !Array.isArray(payload.sections) || !payload.sections.length || !payload.authoring || typeof payload.authoring !== 'object' || Array.isArray(payload.authoring)) throw new Error('Invalid script payload.'); const ids = new Set<string>(); const sections = payload.sections.map(item => { const value = item as Record<string, unknown>; exactKeys(value, ['id','text']); if (typeof value.id !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(value.id) || ids.has(value.id) || typeof value.text !== 'string' || !value.text.trim()) throw new Error('Invalid or duplicate script section.'); ids.add(value.id); return { id: value.id, text: value.text.trim() }; }); return { schema: 'mode-b-script-v1', sections, authoring: validateAuthoring(payload.authoring) }; }
+function validateScript(payload: Record<string, unknown>) { exactKeys(payload, ['schema','sections','authoring']); if (payload.schema !== 'mode-b-script-v1' || !Array.isArray(payload.sections) || !payload.sections.length || !payload.authoring || typeof payload.authoring !== 'object' || Array.isArray(payload.authoring)) throw new Error('Invalid script payload.'); const ids = new Set<string>(),retiredPlaceholder=['exact','approved','wording'].join(' '); const sections = payload.sections.map(item => { const value = item as Record<string, unknown>; exactKeys(value, ['id','text']); if (typeof value.id !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(value.id) || ids.has(value.id) || typeof value.text !== 'string' || !value.text.trim() || value.text.trim().replace(/[.!]$/,'').toLowerCase()===retiredPlaceholder || value.text.includes('REQUIRED_')) throw new Error('Invalid, duplicate or structural-placeholder script section.'); ids.add(value.id); return { id: value.id, text: value.text.trim() }; }); return { schema: 'mode-b-script-v1', sections, authoring: validateAuthoring(payload.authoring) }; }
 export interface MissingNativeReference {
   key:string; kind:'image'|'sfx'; path:string; shotId?:string; shotIndex?:number; layerId?:string;
   track?:'sfx'|'dialogue'|'ambience'|'music'; trackIndex?:number; scopeStart:number;
@@ -211,10 +216,8 @@ export function stageImport(appPath: string, root: string, stage: Stage, text: s
   const payload=stage==='script'?validateScript(envelope.payload):validateManifest(state,root,envelope.payload);
   const responseSha256=sha(text);
   if(fs.existsSync(pendingPath(root))){
-    try{
-      const prior=readPending(root);
-      if(prior.projectId===state.project.id&&prior.taskId===task.id&&prior.revision===task.revision&&prior.stage===stage&&prior.responseSha256===responseSha256)return pendingResult(root,prior);
-    }catch{ /* Nonmatching/corrupted pending must never be reused. */ }
+    const prior=readPending(root);
+    if(prior.projectId===state.project.id&&prior.taskId===task.id&&prior.revision===task.revision&&prior.stage===stage&&prior.responseSha256===responseSha256)return pendingResult(root,prior);
   }
   const responsePath='.studio/external/responses/'+stage+'-'+task.id+'-'+task.revision+'-'+responseSha256+'.json';
   const responseFile=resolveProjectFile(root,responsePath);fs.mkdirSync(path.dirname(responseFile),{recursive:true});
@@ -228,6 +231,7 @@ export function stageImport(appPath: string, root: string, stage: Stage, text: s
   return pendingResult(root,pending);
 }
 export function getPendingMedia(appPath:string,root:string) {
+  if(!fs.existsSync(pendingPath(root)))return null;
   const pending=readPending(root);if(pending.stage!=='native')throw new Error('No pending native media request.');
   const state=readState(root);if(pending.projectId!==state.project.id||pending.taskId!==assertTaskCurrent(appPath,root,'native',state).id)throw new Error('Pending native media task is stale.');
   return pendingResult(root,pending);
@@ -326,12 +330,13 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
     const again=resolvePendingCandidate(root,fresh,diskPending);
     if(JSON.stringify(again.manifest)!==JSON.stringify(resolved.manifest)||JSON.stringify(again.missing)!==JSON.stringify(resolved.missing))throw new Error('Native candidate or missing-media ledger changed during validation.');
     if(!fs.readFileSync(current).equals(beforeBytes))throw new Error('Last-good native manifest changed during validation; staged confirmation is stale.');
-    const readiness={sampleReady:true,fullReady:Boolean(full),previewSeconds:seconds,checkedSeconds:sample.checkedSeconds,
+    const readiness:NonNullable<StudioState['nativeReadiness']>={sampleReady:true,fullReady:Boolean(full),previewSeconds:seconds,checkedSeconds:sample.checkedSeconds,
       validationSha256:sample.fingerprint,missingOutsideScope:resolved.missing.map(item=>item.key),
       reviewedDraft:!full&&options.allowSampleDraft===true,verifiedAt:new Date().toISOString()};
     const backup=path.join(root,'.studio','revisions','project-before-'+revision+'.json');
     fs.mkdirSync(path.dirname(backup),{recursive:true});fs.copyFileSync(current,backup);
     tmp=current+'.'+randomUUID()+'.tmp';fs.copyFileSync(candidate,tmp);fs.renameSync(tmp,current);promoted=true;
+    readiness.sourceFingerprint=sha(fs.readFileSync(current));
     // Apply only native-confirmation-owned fields to the freshly re-read state.
     // Unassigned imports and any other independent state written while the CLI
     // was running remain intact.

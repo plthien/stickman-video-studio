@@ -12,7 +12,7 @@ export function StoryboardWorkspace(){
   const {native,setNative,showNotice}=useAppState(),id=native?.project.id;
   const active=native?.projection?.shots??[];
   const index=Math.min(selected,Math.max(0,active.length-1)),shot=active[index];
-  useEffect(()=>{let mounted=true;if(!id||!window.studio){setPending(null);return;}void window.studio.pendingMedia(id).then(value=>{if(mounted)setPending(value as PendingTargets)}).catch(()=>{if(mounted)setPending(null)});return()=>{mounted=false};},[id,native?.external?.native?.revision]);
+  useEffect(()=>{let mounted=true;setPending(null);setError('');if(!id||!window.studio)return()=>{mounted=false};void window.studio.pendingMedia(id).then(value=>{if(mounted)setPending(value as PendingTargets|null)}).catch(reason=>{if(mounted){setPending(null);setError('Pending media ERROR: '+(reason instanceof Error?reason.message:String(reason)))}});return()=>{mounted=false};},[id,native?.external?.native?.revision]);
   const available=pending?.missing??[];
   const target=available.find(item=>item.key===targetKey);
   const mapping=(native?.media??[]).filter(item=>{
@@ -48,7 +48,7 @@ export function StoryboardWorkspace(){
     {native&&<><Field label="Exact missing candidate image layer or original audio track">
       <Select value={targetKey} onChange={event=>setTargetKey(event.target.value)}><option value="">Choose a real pending reference</option>{available.map(item=><option key={item.key} value={item.key}>{item.kind.toUpperCase()} · {item.shotId||item.track} / {item.layerId||item.trackIndex} · {item.path}</option>)}</Select>
     </Field><Field label="Owner-confirmed rights/source"><Input value={rights} onChange={event=>setRights(event.target.value)} placeholder="Owned or licensed source and rights"/></Field>
-    <div className="actions"><Button variant="primary" disabled={!target||!rights.trim()} onClick={importAndBind}>Import and bind target</Button><Button onClick={async()=>{if(!window.studio||!id)return;try{setPending(await window.studio.pendingMedia(id) as PendingTargets);setError('')}catch(e){setError(String(e))}}}>Refresh missing references</Button></div>
+    <div className="actions"><Button variant="primary" disabled={!target||!rights.trim()} onClick={importAndBind}>Import and bind target</Button><Button onClick={async()=>{if(!window.studio||!id)return;try{setPending(await window.studio.pendingMedia(id) as PendingTargets|null);setError('')}catch(e){setPending(null);setError('Pending media ERROR: '+String(e))}}}>Refresh missing references</Button></div>
     {pending&&<div className="info">Pending candidate: {pending.status}. A file is not committed until the reviewed native candidate is confirmed in External ChatGPT.</div>}
     {error&&<div className="info error" role="alert">{error}</div>}
     </>}

@@ -9,7 +9,7 @@ export function OverviewDashboard() {
   const gates=[
     {title:'Script',ready:Boolean(native?.approvedScript),href:'/script',detail:native?.approvedScript?`${native.approvedScript.sections.length} approved sections`:'No approved script'},
     {title:'Voice & Captions',ready:Boolean(native?.voice&&!native.voice.stale&&native.alignment?.captionReview),href:'/voice',detail:native?.voice&&!native.voice.stale?'Narration recorded; caption review required until approved':'Narration and reviewed captions required'},
-    {title:'Storyboard',ready:shots.length>0,href:'/storyboard',detail:shots.length?`${shots.length} native shots`:'No authored native shots'},
+    {title:'Storyboard',ready:shots.length>0,href:'/storyboard',detail:shots.length?`${shots.length} native shots`:'No native storyboard shots'},
     {title:'Video Editor',ready:Boolean(native?.preview),href:'/editor',detail:native?.preview?'Native encoded sample exists':'Native preview NOT_RUN'}
   ];
   const completed=gates.filter(g=>g.ready).length;

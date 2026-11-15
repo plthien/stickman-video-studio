@@ -13,6 +13,6 @@ export function QADetailsDialog({ open, onClose }: { open:boolean; onClose:()=>v
   return <dialog ref={ref} onClose={onClose} onCancel={onClose} aria-labelledby="qa-title"><header><div><small>NATIVE EVIDENCE</small><h2 id="qa-title">QA Details</h2></div><Button aria-label="Close QA Details" onClick={onClose}>×</Button></header>
     {!native&&<p>No native project is open. All evidence is NOT_READY.</p>}
     {gates.map(gate=><div className="qa-row" key={gate.name}><strong>{gate.name}</strong><Badge tone={gate.pass?'mint':'amber'}>{gate.pass?'RECORDED':'NOT_READY'}</Badge></div>)}
-    <div className="info">These labels reflect saved project state only. Run original native QA and review the actual output report before accepting a render.</div><Button variant="primary" onClick={onClose}>Close details</Button>
+    <div className="info">These labels are exposed only after main-process verification against current project bytes, native reports and output hashes.</div><Button variant="primary" onClick={onClose}>Close details</Button>
   </dialog>;
 }

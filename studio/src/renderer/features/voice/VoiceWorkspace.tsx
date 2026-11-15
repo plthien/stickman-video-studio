@@ -5,7 +5,7 @@ import { Badge, Button, Card, CardHeader, Field, Input, Select, Textarea } from 
 export function VoiceWorkspace() {
   const { native, setNative, showNotice, nanoEndpoint, setNanoEndpoint } = useAppState();
   const [profiles, setProfiles] = useState<Array<Record<string, unknown>>>([]), [voice, setVoice] = useState(native?.nano?.profileId ?? '');
-  const [status, setStatus] = useState<'idle'|'ready'|'busy'|'error'>('idle'), [message, setMessage] = useState(''), [authorized, setAuthorized] = useState(false);
+  const [status, setStatus] = useState<'idle'|'ready'|'busy'|'error'|'cancelled'>('idle'), [message, setMessage] = useState(''), [authorized, setAuthorized] = useState(false);
   const id = native?.project.id, script = native?.approvedScript?.text ?? '';
   const hasAlignment = Boolean(native?.alignment);
   const wordsSha256 = native?.alignment?.wordsSha256;
@@ -13,12 +13,12 @@ export function VoiceWorkspace() {
   const [review,setReview]=useState<null|{words:Array<{word:string;start:number;end:number}>;original:Array<{start:number;end:number;text:string}>;originalBoundaries:number[];draft:null|{boundaries:number[];cues:Array<{start:number;end:number;text:string}>};approved:null|{revision:number;cues:Array<{start:number;end:number;text:string}>}}>(null);
   const [boundaries,setBoundaries]=useState<number[]>([]),[selectedBoundary,setSelectedBoundary]=useState(1),[reviewNote,setReviewNote]=useState('');
   const refreshCaptionReview=async()=>{if(!id||!window.studio)return;const value=await window.studio.captionReview(id);setReview(value);setBoundaries(value.draft?.boundaries??value.originalBoundaries);};
-  useEffect(()=>{let active=true;if(!id||!hasAlignment||!window.studio){setReview(null);return;}void window.studio.captionReview(id).then(value=>{if(active){setReview(value);setBoundaries(value.draft?.boundaries??value.originalBoundaries);}}).catch(()=>{if(active)setReview(null)});return()=>{active=false};},[id,hasAlignment,wordsSha256,captionRevision]);
+  useEffect(()=>{setMessage('');setStatus('idle');setReview(null);setBoundaries([]);let active=true;if(!id||!hasAlignment||!window.studio)return()=>{active=false};void window.studio.captionReview(id).then(value=>{if(active){setReview(value);setBoundaries(value.draft?.boundaries??value.originalBoundaries);}}).catch(reason=>{if(active){setStatus('error');setMessage('Caption review ERROR: '+(reason instanceof Error?reason.message:String(reason)))}});return()=>{active=false};},[id,hasAlignment,wordsSha256,captionRevision]);
   const runReview=async(work:()=>Promise<unknown>,success:string)=>{setStatus('busy');try{await work();if(id&&window.studio)setNative(await window.studio.projectState(id));await refreshCaptionReview();setStatus('ready');showNotice(success);}catch(reason){fail(reason)}};
   const splitAtWord=()=>{const number=selectedBoundary;if(!review||number<1||number>=review.words.length)return;setBoundaries(value=>[...new Set([...value,number])].sort((a,b)=>a-b));};
   const mergeAtWord=()=>{if(!review)return;setBoundaries(value=>value.filter(number=>number!==selectedBoundary));};
   const fail = (reason: unknown) => { setStatus('error'); setMessage(reason instanceof Error ? reason.message : String(reason)); };
-  const act = async (work: () => Promise<unknown>, notice: string) => { setStatus('busy'); try { await work(); if (id && window.studio) setNative(await window.studio.projectState(id)); setStatus('ready'); showNotice(notice); } catch (reason) { fail(reason); } };
+  const act = async (work: () => Promise<unknown>, notice: string) => { setStatus('busy');setMessage(''); try { const result=await work();if(result===null){setStatus('cancelled');setMessage('CANCELLED — no project data changed.');return;} if (id && window.studio) setNative(await window.studio.projectState(id)); setStatus('ready'); showNotice(notice); } catch (reason) { fail(reason); } };
   return <div className="grid wide-left"><div className="stack"><Card>
     <CardHeader title="VoiceStudio Chatterbox Nano" hint="Direct owner API · localhost:3901" action={<Badge tone={status==='ready'?'mint':status==='error'?'amber':'neutral'}>{status.toUpperCase()}</Badge>}/>
     <Field label="Local endpoint"><Input value={nanoEndpoint} onChange={event=>setNanoEndpoint(event.target.value)}/></Field>
@@ -30,7 +30,7 @@ export function VoiceWorkspace() {
       <Button disabled={!id||!voice||status==='busy'} onClick={()=>act(()=>window.studio!.longformRun(id!,{voice,resume:true}),'Owner assembler resumed.')}>Resume</Button>
       <Button disabled={!id||!voice||status==='busy'} onClick={()=>act(()=>window.studio!.longformRun(id!,{voice,resume:true,retryUncertain:true}),'Explicit uncertain retry completed.')}>Explicit retry</Button>
       <Button disabled={!id||status==='busy'} onClick={()=>act(()=>window.studio!.importWav(id!),'Approved WAV imported.')}>Import WAV</Button></div>
-    {message&&<div className={`info ${status==='error'?'error':'success'}`}>{message}</div>}<div className="info">Exact text and language come from approved main-process project state. Uncertain requests are never auto-replayed.</div>
+    {message&&<div className={`info ${status==='error'?'error':''}`} role={status==='error'?'alert':undefined}>{message}</div>}<div className="info">Exact text and language come from approved main-process project state. Uncertain requests are never auto-replayed.</div>
   </Card><Card><CardHeader title="Narration evidence"/><dl className="kvs"><dt>Audio</dt><dd>{native?.voice?.path??'Not generated'}</dd><dt>Origin</dt><dd>{native?.voice?.origin??'Missing'}</dd><dt>SHA-256</dt><dd><code>{native?.voice?.sha256??'Missing'}</code></dd><dt>Long-form</dt><dd>{native?.longform?.status??'Not run'}</dd></dl></Card></div>
   <Card><CardHeader title="ElevenLabs forced alignment" hint="Exact approved script + exact accepted WAV" action={<Badge tone="amber">USER AUTHORIZED ONLY</Badge>}/><Field label="Exact transcript uploaded"><Textarea readOnly value={script}/></Field>
     <label className="check"><input type="checkbox" checked={authorized} onChange={event=>setAuthorized(event.target.checked)}/> I authorize this upload and possible paid usage now.</label>
