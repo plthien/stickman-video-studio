@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { atomicJson, nativeSkillRoot, readState, resolveProjectFile, runProcess, safeImportedFile, sha, strictJson, writeState, type Stage, type StudioState } from './services.js';
-import { approvedCaptionCues } from './captionReview.js';
+import { approvedCaptionCues, nativeVoiceTiming } from './captionReview.js';
 import { rejectNativeUnsafePaths, validateAuthoring } from './sourceCitations.js';
 
 const STYLE: Record<string, string> = { B1: 'b1-minimal-handdrawn.md', B2: 'b2-colorful-handdrawn.md', B3: 'b3-television.md', B4: 'b4-survival-storytelling.md' };
@@ -154,7 +154,10 @@ function validateManifest(state: StudioState, root: string, payload: Record<stri
   if(!state.voice||state.voice.stale||(manifest.voice as Record<string,unknown>).path!==state.voice.path||!fs.existsSync(resolveProjectFile(root,state.voice.path))||sha(fs.readFileSync(resolveProjectFile(root,state.voice.path)))!==state.voice.sha256)throw new Error('Manifest voice does not bind actual current accepted WAV bytes.');
   const approved=approvedCaptionCues(root);
   if(JSON.stringify(manifest.captions)!==JSON.stringify(approved))throw new Error('Native captions must exactly match current owner-approved word-grounded revision; rebuild task after approved regroup.');
-  const duration=state.voice.duration??0;let captionEnd=0;
+  const timing=nativeVoiceTiming(root,state), candidateVoice=manifest.voice as Record<string,unknown>;
+  const candidateLead=candidateVoice.lead??0,candidateTail=candidateVoice.tail??0,candidateTrim=candidateVoice.trim_start??0;
+  if(candidateLead!==timing.lead||candidateTail!==timing.tail||candidateTrim!==timing.trimStart)throw new Error('Native voice timing must match the currently reviewed lead/tail/trim_start configuration.');
+  const duration=timing.timelineDuration;let captionEnd=0;
   for(const item of manifest.captions as unknown[]){const cue=item as Record<string,unknown>,start=Number(cue.start),end=Number(cue.end);if(!Number.isFinite(start)||!Number.isFinite(end)||start<captionEnd||end<=start||end>duration+.05||typeof cue.text!=='string'||!cue.text.trim())throw new Error('Native captions must be finite, monotone and within accepted narration.');captionEnd=end}
   let shotEnd=0;for(const item of manifest.shots as unknown[]){const shot=item as Record<string,unknown>,start=Number(shot.start),end=Number(shot.end);if(!Number.isFinite(start)||!Number.isFinite(end)||start<shotEnd||end<=start||end>duration+.05)throw new Error('Native shots must be finite, non-overlapping and within accepted narration.');shotEnd=end}
   return {manifest,shotLedger:payload.shot_ledger??[],soundScript:payload.sound_script??[],assetNeeds:payload.asset_needs??[],missing:collectMissing(root,state,manifest)};
@@ -298,8 +301,10 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
   if(missingInside.length)throw new Error('Missing media inside the selected sample: '+missingInside.map(item=>item.key).join(', '));
   // The unmodified original native CLI decides whether the candidate is valid.
   const candidate=path.join(root,'.project-candidate-'+randomUUID()+'.json');
-  const current=path.join(root,'project.json'),beforeBytes=fs.readFileSync(current),stateFile=path.join(root,'.studio','state.json'),beforeStateBytes=fs.readFileSync(stateFile),runner=options.validator??runProcess;
-  let promoted=false;let tmp='';
+  const current=path.join(root,'project.json'),beforeBytes=fs.readFileSync(current),runner=options.validator??runProcess;
+  let promoted=false;let stateCommitted=false;let tmp='';let committedState:StudioState|undefined;
+  let externalNativeBefore:StudioState['external']['native'];let ownedBefore:Pick<StudioState,'nativeReadiness'|'preview'|'approval'|'render'>|undefined;
+  let oldTaskStatus:'FROZEN'|'IMPORTED'|'STALE'|undefined;
   atomicJson(candidate,resolved.manifest);
   try{
     const {cli}=nativeSkillRoot(appPath),cwd=path.dirname(cli);
@@ -314,7 +319,7 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
     // approved script, WAV, words, caption revision or approved media changed
     // while the native process was running.
     const fresh=readState(root);
-    assertFrozenSource(appPath,root,'native',fresh);
+    assertTaskCurrent(appPath,root,'native',fresh);
     if(fresh.project.id!==pending.projectId||fresh.tasks?.native?.id!==pending.taskId||fresh.tasks.native.revision!==pending.revision)throw new Error('Native task was replaced during validation.');
     const diskPending=readPending(root);
     if(diskPending.token!==pending.token||diskPending.payloadSha256!==pending.payloadSha256||JSON.stringify(diskPending.fulfillments)!==JSON.stringify(pending.fulfillments))throw new Error('Native candidate fulfillment changed during validation.');
@@ -327,16 +332,27 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
     const backup=path.join(root,'.studio','revisions','project-before-'+revision+'.json');
     fs.mkdirSync(path.dirname(backup),{recursive:true});fs.copyFileSync(current,backup);
     tmp=current+'.'+randomUUID()+'.tmp';fs.copyFileSync(candidate,tmp);fs.renameSync(tmp,current);promoted=true;
-    state.external.native={revision,artifact:{...resolved,missing:resolved.missing},importedAt:new Date().toISOString()};
-    state.nativeReadiness=readiness;state.preview=undefined;state.approval=undefined;state.render=undefined;task.status='IMPORTED';
-    writeState(root,state);
-    atomicJson(path.join(root,'.studio','revisions','native-'+revision+'.json'),resolved.manifest);
-    atomicJson(path.join(root,'.studio','revisions','native-authoring-'+revision+'.json'),{shot_ledger:resolved.shotLedger,sound_script:resolved.soundScript,asset_needs:resolved.assetNeeds,fulfillments:pending.fulfillments,missing:resolved.missing});
-    fs.unlinkSync(pendingPath(root));return state;
+    // Apply only native-confirmation-owned fields to the freshly re-read state.
+    // Unassigned imports and any other independent state written while the CLI
+    // was running remain intact.
+    externalNativeBefore=fresh.external.native?structuredClone(fresh.external.native):undefined;
+    ownedBefore={nativeReadiness:fresh.nativeReadiness,preview:fresh.preview,approval:fresh.approval,render:fresh.render};
+    oldTaskStatus=fresh.tasks!.native!.status;
+    fresh.external.native={revision,artifact:{...again,missing:again.missing},importedAt:new Date().toISOString()};
+    fresh.nativeReadiness=readiness;fresh.preview=undefined;fresh.approval=undefined;fresh.render=undefined;fresh.tasks!.native!.status='IMPORTED';
+    committedState=fresh;writeState(root,fresh);stateCommitted=true;
+    atomicJson(path.join(root,'.studio','revisions','native-'+revision+'.json'),again.manifest);
+    atomicJson(path.join(root,'.studio','revisions','native-authoring-'+revision+'.json'),{shot_ledger:again.shotLedger,sound_script:again.soundScript,asset_needs:again.assetNeeds,fulfillments:diskPending.fulfillments,missing:again.missing});
+    fs.unlinkSync(pendingPath(root));return fresh;
   }catch(error){
     if(promoted){
       const restore=current+'.'+randomUUID()+'.restore';fs.writeFileSync(restore,beforeBytes);fs.renameSync(restore,current);
-      const stateRestore=stateFile+'.'+randomUUID()+'.restore';fs.writeFileSync(stateRestore,beforeStateBytes);fs.renameSync(stateRestore,stateFile);
+    }
+    if(stateCommitted&&committedState&&ownedBefore){
+      const rollback=readState(root);
+      rollback.external.native=externalNativeBefore;rollback.nativeReadiness=ownedBefore.nativeReadiness;rollback.preview=ownedBefore.preview;rollback.approval=ownedBefore.approval;rollback.render=ownedBefore.render;
+      if(rollback.tasks?.native&&rollback.tasks.native.id===committedState.tasks?.native?.id&&oldTaskStatus)rollback.tasks.native.status=oldTaskStatus;
+      writeState(root,rollback);
     }
     throw error;
   }finally{
