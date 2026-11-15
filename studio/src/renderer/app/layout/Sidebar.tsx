@@ -1,7 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import { visualStyleLabel } from '../../features/project/styles';
 import { useAppState } from '../AppState';
-
 const workspaceNavigation = [
   ['01', 'Thiết lập project', '/'],
   ['02', 'Tổng quan', '/overview'],
@@ -13,30 +12,22 @@ const workspaceNavigation = [
   ['08', 'Render & Export', '/render'],
 ];
 const systemNavigation = [['09', 'Cài đặt & chẩn đoán', '/settings']];
-
 function Navigation({ items }: { items: string[][] }) {
-  return <nav aria-label="Main navigation">{items.map(([number, label, path]) => (
-    <NavLink key={path} end={path === '/'} to={path} className={({ isActive }) => isActive ? 'active' : ''}>
-      <span>{number}</span>{label}
-    </NavLink>
+  return <nav aria-label="Main navigation">{items.map(([number,label,path])=>(
+    <NavLink key={path} end={path === '/'} to={path} className={({isActive})=>isActive?'active':''}><span>{number}</span>{label}</NavLink>
   ))}</nav>;
 }
-
 export function Sidebar() {
-  const { project } = useAppState();
+  const {native}=useAppState();
   return <aside className="sidebar">
-    <div className="brand">
-      <span className="brand-mark">MB</span>
-      <div><strong>Mode B Studio</strong><small>External Creative · Native Render</small></div>
-    </div>
-    <section className="project-context" aria-label="Current project">
-      <strong>{project.title}</strong>
-      <small>VB-0024 · {visualStyleLabel(project.style)} · 03:42</small>
+    <div className="brand"><span className="brand-mark">MB</span><div><strong>Mode B Studio</strong><small>External Creative · Native Render</small></div></div>
+    <section className="project-context" aria-label="Current project"><strong>{native?.project.title||'No project open'}</strong>
+      <small>{native?native.project.id.slice(0,8)+' · '+visualStyleLabel(native.project.style):'NOT_READY — Create or open project'}</small>
     </section>
     <div className="sidebar-section-label">Workspace</div>
-    <Navigation items={workspaceNavigation} />
+    <Navigation items={workspaceNavigation}/>
     <div className="sidebar-section-label system">Hệ thống</div>
-    <Navigation items={systemNavigation} />
-    <div className="sidebar-foot"><span className="signal" /> UI DEMO · NOT CONNECTED</div>
+    <Navigation items={systemNavigation}/>
+    <div className="sidebar-foot"><span className="signal"/>{native?'Project state loaded':'No project loaded'}</div>
   </aside>;
 }
