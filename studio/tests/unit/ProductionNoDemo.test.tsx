@@ -7,7 +7,16 @@ import {ScriptSessionProvider,ScriptWorkspace} from '../../src/renderer/features
 import {StoryboardWorkspace} from '../../src/renderer/features/storyboard/StoryboardWorkspace';
 import {EditorSessionProvider} from '../../src/renderer/features/editor/useEditorState';
 import {VideoEditorPage} from '../../src/renderer/pages/VideoEditorPage';
+import {Topbar} from '../../src/renderer/app/layout/Topbar';
+import {Sidebar} from '../../src/renderer/app/layout/Sidebar';
 describe('production UI has no fabricated project or demo fallback',()=>{
+  it('top bar and sidebar show no invented project number, status, or duration',()=>{
+    render(<AppStateProvider><MemoryRouter><Topbar/><Sidebar/></MemoryRouter></AppStateProvider>);
+    expect(screen.getAllByText('No project open').length).toBeGreaterThan(0);
+    expect(screen.queryByText(/VB-0024/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/03:42/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/UI DEMO/)).not.toBeInTheDocument();
+  });
   it('Dashboard is EMPTY until a real project is opened',()=>{
     render(<AppStateProvider><MemoryRouter><OverviewDashboard/></MemoryRouter></AppStateProvider>);
     expect(screen.getByText(/No project, script, voice, scene/)).toBeInTheDocument();
