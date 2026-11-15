@@ -56,6 +56,17 @@ export const readState = (root: string): StudioState => {
 };
 export const writeState = (root: string, state: StudioState) => atomicJson(statePath(assertLocalRoot(root)), state);
 export const projectId = (root: string) => sha(fs.realpathSync(root).toLowerCase()).slice(0, 24);
+// Update only the original native voice path after a WAV was accepted. Preserve
+// B4 narrator identity, lead, tail, trim_start and all other native fields.
+export function bindAcceptedNarration(root: string, relative: string) {
+  const file=path.join(assertLocalRoot(root),'project.json');
+  const project=strictJson(fs.readFileSync(file,'utf8')) as Record<string,unknown>;
+  const voice=project.voice as Record<string,unknown>|undefined;
+  if(!voice||typeof voice!=='object'||Array.isArray(voice))throw new Error('Native manifest voice is missing.');
+  if(voice.path===relative)return;
+  resolveProjectFile(root,relative);
+  atomicJson(file,{...project,voice:{...voice,path:relative}});
+}
 export function projectSnapshot(root: string) {
   const state=readState(root),manifest=strictJson(fs.readFileSync(path.join(assertLocalRoot(root),'project.json'),'utf8')) as Record<string,unknown>;
   const captions=Array.isArray(manifest.captions)?manifest.captions as Array<Record<string,unknown>>:[];
