@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/exhaustive-deps -- session scopes are ref-backed; project/revision scalars define invalidation */
 import {useEffect,useState} from 'react';
 import {useAppState} from '../../app/AppState';
 import {Badge,Button,Card,CardHeader,Field,Input,Select} from '../../components/ui';
@@ -9,10 +10,10 @@ const layerPath=(layers:unknown[],id:string):string|null=>{
 };
 export function StoryboardWorkspace(){
   const [selected,setSelected]=useState(0),[targetKey,setTargetKey]=useState(''),[rights,setRights]=useState(''),[pending,setPending]=useState<PendingTargets|null>(null),[error,setError]=useState('');
-  const {native,setNative,showNotice}=useAppState(),id=native?.project.id;
+  const {native,captureProjectSession,isCurrentProjectSession,setNativeIfSessionCurrent,showNotice}=useAppState(),id=native?.project.id;
   const active=native?.projection?.shots??[];
   const index=Math.min(selected,Math.max(0,active.length-1)),shot=active[index];
-  useEffect(()=>{let mounted=true;setPending(null);setError('');if(!id||!window.studio)return()=>{mounted=false};void window.studio.pendingMedia(id).then(value=>{if(mounted)setPending(value as PendingTargets|null)}).catch(reason=>{if(mounted){setPending(null);setError('Pending media ERROR: '+(reason instanceof Error?reason.message:String(reason)))}});return()=>{mounted=false};},[id,native?.external?.native?.revision]);
+  useEffect(()=>{const scope=captureProjectSession();let mounted=true;setPending(null);setTargetKey('');setRights('');setError('');if(!id||!scope||!window.studio)return()=>{mounted=false};void window.studio.pendingMedia(id).then(value=>{if(mounted&&isCurrentProjectSession(scope))setPending(value as PendingTargets|null)}).catch(reason=>{if(mounted&&isCurrentProjectSession(scope)){setPending(null);setError('Pending media ERROR: '+(reason instanceof Error?reason.message:String(reason)))}});return()=>{mounted=false};},[id,native?.external?.native?.revision]);
   const available=pending?.missing??[];
   const target=available.find(item=>item.key===targetKey);
   const mapping=(native?.media??[]).filter(item=>{
@@ -31,13 +32,17 @@ export function StoryboardWorkspace(){
   const importAndBind=async()=>{
     if(!native||!window.studio||!pending||!target){setError('Choose an exact frozen native target before importing.');return;}
     if(!rights.trim()){setError('Enter explicit rights/source attestation.');return;}
+    const scope=captureProjectSession();if(!scope)return;
     try{
-      const file=await window.studio.importMedia(native.project.id,{kind:target.kind,rights:rights.trim()});
-      if(!file)return;
-      const result=await window.studio.fulfillMedia(native.project.id,pending.token,target.key,file.path,rights.trim()) as PendingTargets;
-      setPending(result);setTargetKey('');setNative(await window.studio.projectState(native.project.id));
+      const file=await window.studio.importMedia(scope.projectId,{kind:target.kind,rights:rights.trim()});
+      if(!file||!isCurrentProjectSession(scope))return;
+      const result=await window.studio.fulfillMedia(scope.projectId,pending.token,target.key,file.path,rights.trim()) as PendingTargets;
+      if(!isCurrentProjectSession(scope))return;
+      const state=await window.studio.projectState(scope.projectId);
+      if(!setNativeIfSessionCurrent(scope,state))return;
+      setPending(result);setTargetKey('');
       setError('');showNotice('File bound to the selected pending native target; confirm the candidate to commit.');
-    }catch(reason){setError(reason instanceof Error?reason.message:String(reason));}
+    }catch(reason){if(isCurrentProjectSession(scope))setError(reason instanceof Error?reason.message:String(reason));}
   };
   return <div className="storyboard-layout"><Card>
     <CardHeader title="Storyboard shots" hint={native?'Only shots actually present in original project.json':'No project open'} action={<Badge tone={active.length?'mint':'amber'}>{active.length?'NATIVE DATA':'EMPTY'}</Badge>}/>
@@ -48,7 +53,7 @@ export function StoryboardWorkspace(){
     {native&&<><Field label="Exact missing candidate image layer or original audio track">
       <Select value={targetKey} onChange={event=>setTargetKey(event.target.value)}><option value="">Choose a real pending reference</option>{available.map(item=><option key={item.key} value={item.key}>{item.kind.toUpperCase()} · {item.shotId||item.track} / {item.layerId||item.trackIndex} · {item.path}</option>)}</Select>
     </Field><Field label="Owner-confirmed rights/source"><Input value={rights} onChange={event=>setRights(event.target.value)} placeholder="Owned or licensed source and rights"/></Field>
-    <div className="actions"><Button variant="primary" disabled={!target||!rights.trim()} onClick={importAndBind}>Import and bind target</Button><Button onClick={async()=>{if(!window.studio||!id)return;try{setPending(await window.studio.pendingMedia(id) as PendingTargets|null);setError('')}catch(e){setPending(null);setError('Pending media ERROR: '+String(e))}}}>Refresh missing references</Button></div>
+    <div className="actions"><Button variant="primary" disabled={!target||!rights.trim()} onClick={importAndBind}>Import and bind target</Button><Button onClick={async()=>{if(!window.studio||!id)return;const scope=captureProjectSession();if(!scope)return;try{const value=await window.studio.pendingMedia(id) as PendingTargets|null;if(!isCurrentProjectSession(scope))return;setPending(value);setError('')}catch(e){if(!isCurrentProjectSession(scope))return;setPending(null);setError('Pending media ERROR: '+String(e))}}}>Refresh missing references</Button></div>
     {pending&&<div className="info">Pending candidate: {pending.status}. A file is not committed until the reviewed native candidate is confirmed in External ChatGPT.</div>}
     {error&&<div className="info error" role="alert">{error}</div>}
     </>}
