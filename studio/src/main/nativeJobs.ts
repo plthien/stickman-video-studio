@@ -6,7 +6,7 @@ import {atomicJson,nativeSkillRoot,readState,resolveProjectFile,runProcess,sha,s
 
 const active=new Map<string,{id:string;controller:AbortController}>(),mutating=new Set<NativeCommand>(['validate','preview','approve','render','captions']);
 const lockKey=(root:string)=>fs.realpathSync(root);
-const jobFile=(root:string)=>path.join(root,'.studio','jobs','latest.json'),saveJob=(root:string,value:unknown)=>atomicJson(jobFile(root),value);
+const jobFile=(root:string)=>path.join(root,'.studio','jobs','latest.json'),saveJob=(root:string,value:unknown)=>atomicJson(jobFile(root),value),saveDiagnostic=(root:string,value:unknown)=>atomicJson(path.join(root,'.studio','jobs','diagnostic-latest.json'),value);
 export function reconcileJob(root:string){if(!fs.existsSync(jobFile(root)))return null;const value=strictJson(fs.readFileSync(jobFile(root),'utf8')) as Record<string,unknown>;if(['STARTED','RUNNING'].includes(String(value.status))){value.status='INTERRUPTED';value.updatedAt=new Date().toISOString();atomicJson(jobFile(root),value)}return value}
 export function cancelJob(root:string,id:string){const job=active.get(lockKey(root));if(!job||job.id!==id)throw new Error('No matching active native job.');job.controller.abort();return{cancelled:true,id}}
 
@@ -27,7 +27,7 @@ export async function nativeJob(appPath:string,root:string,command:NativeCommand
   if(locked&&active.has(key))throw new Error('BUSY: a native mutating job is already active for this project.');
   if(locked)active.set(key,{id,controller});
   let state:StudioState|undefined,evidence:ReturnType<typeof currentNativeEvidence>|null=null,previewEvidence:ReturnType<typeof currentNativeEvidence>|null=null,identity:ReturnType<typeof taskIdentity>=null,previewScope:number|undefined;
-  const requiresEvidence=['validate','preview','approve','render'].includes(command),verifier=options.verifier??productionNativeVerifier(appPath),runner=options.runner??runProcess,journal=options.saveJournal??saveJob;
+  const requiresEvidence=['validate','preview','approve','render'].includes(command),verifier=options.verifier??productionNativeVerifier(appPath),runner=options.runner??runProcess,journal=options.saveJournal??(locked?saveJob:saveDiagnostic);
   const job={schema:'mode-b-native-job-v1',id,command,status:'STARTED',sourceFingerprint:null as string|null,startedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
   let finishArtifacts=(_commit:boolean)=>{};let committed=false,stateCommitted=false;let ownedBefore:Pick<StudioState,'preview'|'approval'|'render'>|undefined,ownedWritten:Pick<StudioState,'preview'|'approval'|'render'>|undefined;
   try{

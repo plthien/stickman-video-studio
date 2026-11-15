@@ -3,7 +3,7 @@ import { useAppState } from '../../app/AppState';
 import { Badge, Button, Card, CardHeader, Field, Input, Select, Textarea } from '../../components/ui';
 
 export function VoiceWorkspace() {
-  const { native, setNative, showNotice, nanoEndpoint, setNanoEndpoint } = useAppState();
+  const { native, setNativeIfCurrent,isCurrentProject, showNotice, nanoEndpoint, setNanoEndpoint } = useAppState();
   const [profiles, setProfiles] = useState<Array<Record<string, unknown>>>([]), [voice, setVoice] = useState(native?.nano?.profileId ?? '');
   const [status, setStatus] = useState<'idle'|'ready'|'busy'|'error'|'cancelled'>('idle'), [message, setMessage] = useState(''), [authorized, setAuthorized] = useState(false);
   const id = native?.project.id, script = native?.approvedScript?.text ?? '';
@@ -15,11 +15,11 @@ export function VoiceWorkspace() {
   const [boundaries,setBoundaries]=useState<number[]>([]),[selectedBoundary,setSelectedBoundary]=useState(1),[reviewNote,setReviewNote]=useState('');
   const refreshCaptionReview=async()=>{if(!id||!window.studio)return;const value=await window.studio.captionReview(id);setReview(value);setBoundaries(value.draft?.boundaries??value.originalBoundaries);};
   useEffect(()=>{setMessage('');setStatus('idle');setReview(null);setBoundaries([]);let active=true;if(!id||!hasAlignment||!window.studio)return()=>{active=false};void window.studio.captionReview(id).then(value=>{if(active){setReview(value);setBoundaries(value.draft?.boundaries??value.originalBoundaries);}}).catch(reason=>{if(active){setStatus('error');setMessage('Caption review ERROR: '+(reason instanceof Error?reason.message:String(reason)))}});return()=>{active=false};},[id,hasAlignment,wordsSha256,captionRevision]);
-  const runReview=async(work:()=>Promise<unknown>,success:string)=>{setStatus('busy');try{await work();if(id&&window.studio)setNative(await window.studio.projectState(id));await refreshCaptionReview();setStatus('ready');showNotice(success);}catch(reason){fail(reason)}};
+  const runReview=async(work:()=>Promise<unknown>,success:string)=>{if(!id)return;const operationId=id;setStatus('busy');try{await work();if(!isCurrentProject(operationId))return;if(window.studio){const next=await window.studio.projectState(operationId);if(!setNativeIfCurrent(operationId,next))return;}await refreshCaptionReview();if(!isCurrentProject(operationId))return;setStatus('ready');showNotice(success);}catch(reason){if(isCurrentProject(operationId))fail(reason)}};
   const splitAtWord=()=>{const number=selectedBoundary;if(!review||number<1||number>=review.words.length)return;setBoundaries(value=>[...new Set([...value,number])].sort((a,b)=>a-b));};
   const mergeAtWord=()=>{if(!review)return;setBoundaries(value=>value.filter(number=>number!==selectedBoundary));};
   const fail = (reason: unknown) => { setStatus('error'); setMessage(reason instanceof Error ? reason.message : String(reason)); };
-  const act = async (work: () => Promise<unknown>, notice: string) => { setStatus('busy');setMessage(''); try { const result=await work();if(result===null){setStatus('cancelled');setMessage('CANCELLED — no project data changed.');return;} if (id && window.studio) setNative(await window.studio.projectState(id)); setStatus('ready'); showNotice(notice); } catch (reason) { fail(reason); } };
+  const act = async (work: () => Promise<unknown>, notice: string) => { if(!id)return;const operationId=id;setStatus('busy');setMessage(''); try { const result=await work();if(!isCurrentProject(operationId))return;if(result===null){setStatus('cancelled');setMessage('CANCELLED — no project data changed.');return;} if (window.studio){const next=await window.studio.projectState(operationId);if(!setNativeIfCurrent(operationId,next))return;} setStatus('ready'); showNotice(notice); } catch (reason) { if(isCurrentProject(operationId))fail(reason); } };
   return <div className="grid wide-left"><div className="stack"><Card>
     <CardHeader title="VoiceStudio Chatterbox Nano" hint="Direct owner API · localhost:3901" action={<Badge tone={status==='ready'?'mint':status==='error'?'amber':'neutral'}>{status.toUpperCase()}</Badge>}/>
     <Field label="Local endpoint"><Input value={nanoEndpoint} onChange={event=>setNanoEndpoint(event.target.value)}/></Field>
