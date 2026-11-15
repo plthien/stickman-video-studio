@@ -1,5 +1,8 @@
 # R2 PR #2 — SIX-ISSUE MAIN FLOW REPAIR PLAN V4 (UT ONLY)
 
+> **SUPERSEDED FOR THE NEXT IMPLEMENTATION ROUND:** [V5 No-Sample / No-Fallback Main Flow Repair](R2_PR2_NO_SAMPLE_NO_FALLBACK_MAIN_FLOW_REPAIR_PLAN_V5.md). V4 is preserved as historical six-issue regression scope. V5 controls remaining defects, runtime demo removal, fail-closed semantics and UT acceptance; owner continues to run E2E.
+
+
 STATUS: OWNER-AUTHORIZED IMPLEMENTATION SCOPE. This is a plan, not implemented code.
 REPO: plthien/stickman-video-studio
 BRANCH: feat/r2-external-native-workflow
