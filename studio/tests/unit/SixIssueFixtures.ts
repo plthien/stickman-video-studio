@@ -14,12 +14,12 @@ const mkdir=(file:string)=>fs.mkdirSync(path.dirname(file),{recursive:true});
 export const wav=(seconds=30)=>{const bytes=Buffer.alloc(44+seconds*48000);bytes.write('RIFF');bytes.writeUInt32LE(bytes.length-8,4);bytes.write('WAVEfmt ',8);bytes.writeUInt32LE(16,16);bytes.writeUInt16LE(1,20);bytes.writeUInt16LE(1,22);bytes.writeUInt32LE(24000,24);bytes.writeUInt32LE(48000,28);bytes.writeUInt16LE(2,32);bytes.writeUInt16LE(16,34);bytes.write('data',36);bytes.writeUInt32LE(bytes.length-44,40);return bytes};
 export const png=()=>Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLytQAAAABJRU5ErkJggg==','base64');
 export interface Fixture { root:string;state:StudioState;audio:Buffer;voicePath:string;wordsPath:string;coreCuesPath:string }
-export function fixture(options:{approve?:boolean;style?:'B1'|'B2'|'B3'|'B4'}={}):Fixture{
+export function fixture(options:{approve?:boolean;style?:'B1'|'B2'|'B3'|'B4';seconds?:number}={}):Fixture{
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'r2-six-ut-'));tmpRoots.push(root);
-  const voicePath='assets/audio/narration.wav',wordsPath='.studio/alignment/words.json',coreCuesPath='.studio/alignment/core-cues.json',audio=wav();
+  const duration=options.seconds??30,voicePath='assets/audio/narration.wav',wordsPath='.studio/alignment/words.json',coreCuesPath='.studio/alignment/core-cues.json',audio=wav(duration);
   const words={schema:'mode-b-word-alignment-v1',words:[{word:'One',start:.1,end:.3},{word:'two',start:.35,end:.6},{word:'three',start:.65,end:.9}]};
   const cues=[{start:.1,end:.9,text:'One two three'}];
-  const manifest={version:1,style:options.style??'B1',width:1080,height:1920,fps:30,voice:{path:voicePath},captions:cues,shots:[{id:'old-shot',start:0,end:30,layers:[{id:'old-text',type:'text',text:'Last-good original shot'}]}],sfx:[]};
+  const manifest={version:1,style:options.style??'B1',width:1080,height:1920,fps:30,voice:{path:voicePath},captions:cues,shots:[{id:'old-shot',start:0,end:duration,layers:[{id:'old-text',type:'text',text:'Last-good original shot'}]}],sfx:[]};
   for(const [relative,bytes] of [[voicePath,audio],[wordsPath,Buffer.from(JSON.stringify(words))],[coreCuesPath,Buffer.from(JSON.stringify(cues))]] as Array<[string,Buffer]>){const file=path.join(root,relative);mkdir(file);fs.writeFileSync(file,bytes)}
   fs.writeFileSync(path.join(root,'project.json'),JSON.stringify(manifest));
   const script='One two three',style=options.style??'B1';
@@ -27,7 +27,7 @@ export function fixture(options:{approve?:boolean;style?:'B1'|'B2'|'B3'|'B4'}={}
     schema:'mode-b-studio-state-v1',project:{id:projectId(root),root,title:'Six issue UT',style,updatedAt:new Date().toISOString(),projectFile:path.join(root,'project.json')},
     brief:{topic:'Real persisted media and caption integration',language:'en',ratio:'9:16'},external:{},tasks:{},nano:{endpoint:'http://127.0.0.1:3901'},
     approvedScript:{sections:[{id:'opening',text:script}],text:script,sha256:sha(script),revision:1,approvedAt:new Date().toISOString(),authoring:{source_references:[]}},
-    voice:{path:voicePath,sha256:sha(audio),generatedAt:new Date().toISOString(),duration:30,stale:false,origin:'IMPORTED_WAV'},
+    voice:{path:voicePath,sha256:sha(audio),generatedAt:new Date().toISOString(),duration,stale:false,origin:'IMPORTED_WAV'},
     alignment:{path:wordsPath,captionsPath:coreCuesPath,audioSha256:sha(audio),scriptSha256:sha(alignmentText(script)),wordsSha256:sha(fs.readFileSync(path.join(root,wordsPath))),cuesSha256:sha(fs.readFileSync(path.join(root,coreCuesPath))),generatedAt:new Date().toISOString(),origin:'IMPORTED_WORDS'}
   };
   writeState(root,state);
