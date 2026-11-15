@@ -3,7 +3,8 @@ import type { NativeStudioState, ProjectState } from '../types/app';
 
 interface AppContextValue { project: ProjectState; setProject: (next: ProjectState) => void; native: NativeStudioState | null; setNative: (next: NativeStudioState | null) => void; nanoEndpoint:string;setNanoEndpoint:(value:string)=>void; notice: string; showNotice: (message: string) => void; requireNative: () => NonNullable<Window['studio']> }
 const AppContext = createContext<AppContextValue | null>(null);
-const initialProject: ProjectState = { title: 'Why We Procrastinate', topic: 'Why waiting for motivation keeps us stuck', style: 'B2', duration: 222, language: 'English', ratio: '9:16' };
+// Empty creation form. Never synthesize a project, narration, shots or readiness.
+const initialProject: ProjectState = { title: '', topic: '', style: 'B1', duration: 0, language: 'English', ratio: '9:16' };
 export function AppStateProvider({ children }: { children: ReactNode }) {
   const [project, setProject] = useState(initialProject); const [notice, setNotice] = useState('');
   const [native, setNativeRaw] = useState<NativeStudioState | null>(null); const [nanoEndpoint,setNanoEndpointRaw]=useState('http://127.0.0.1:3901');
