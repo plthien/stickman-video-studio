@@ -1,5 +1,8 @@
 # R2 PR #2 — FINAL NO-SAMPLE / NO-FALLBACK REPAIR PLAN V5
 
+> **SUPERSEDED FOR THE NEXT IMPLEMENTATION ROUND:** [Comprehensive Main Flow Audit & One-Round Repair](R2_PR2_COMPREHENSIVE_MAIN_FLOW_AUDIT_AND_ONE_ROUND_REPAIR.md). V5 remains historical regression context. The comprehensive plan is the single implementation and acceptance scope; owner still runs E2E.
+
+
 **OWNER DIRECTIVE: ONE IMPLEMENTATION ROUND, CODE + FOCUSED UNIT TESTS.**
 Repo: plthien/stickman-video-studio. PR: #2, branch: feat/r2-external-native-workflow; keep DRAFT, no merge.
 Audited HEAD: ecd22c801e1e7ac141885749e7b2fd870d91c19d (refresh before editing).
