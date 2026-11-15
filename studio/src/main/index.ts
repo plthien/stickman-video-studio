@@ -25,7 +25,7 @@ function registerIpc() {
     if (!/^[\p{L}\p{N}][\p{L}\p{N}._ -]{0,79}$/u.test(input.folder)) throw new Error('Choose a simple project folder name.');
     const target = path.resolve(input.parent, input.folder); if (fs.existsSync(target)) throw new Error('Project folder already exists.');
     const { cli } = nativeSkillRoot(app.getAppPath()); const result = await runProcess(process.execPath, [cli, 'init', target, '--style', input.style], { cwd: path.dirname(cli), timeout: 60_000 }); if (result.code !== 0) throw new Error(result.stderr || result.stdout || 'Native project initialization failed.');
-    const projectFile = path.join(target, 'project.json'); const manifest = strictJson(fs.readFileSync(projectFile, 'utf8')) as Record<string, unknown>; manifest.width = 1080; manifest.height = 1920; fs.writeFileSync(projectFile, `${JSON.stringify(manifest, null, 2)}\n`);
+    const projectFile = path.join(target, 'project.json'); const manifest = strictJson(fs.readFileSync(projectFile, 'utf8')) as Record<string, unknown>; manifest.width = 1080; manifest.height = 1920; (manifest.voice as Record<string,unknown>).path = 'assets/audio/narration.wav'; fs.writeFileSync(projectFile, `${JSON.stringify(manifest, null, 2)}\n`);
     const summary = { id: registerRoot(target), root: fs.realpathSync(target), title: input.title.trim(), style: input.style, updatedAt: new Date().toISOString(), projectFile };
     const state: StudioState = { schema: 'mode-b-studio-state-v1', project: summary, brief: { topic: input.topic, language: input.language, ratio: '9:16', targetDuration: input.targetDuration }, external: {}, tasks: {}, nano: { endpoint: 'http://127.0.0.1:3901' }, imports: [] };
     writeState(target, state); saveRecent(summary); return projectSnapshot(target);
