@@ -7,6 +7,7 @@ export function VoiceWorkspace() {
   const [profiles, setProfiles] = useState<Array<Record<string, unknown>>>([]), [voice, setVoice] = useState(native?.nano?.profileId ?? '');
   const [status, setStatus] = useState<'idle'|'ready'|'busy'|'error'|'cancelled'>('idle'), [message, setMessage] = useState(''), [authorized, setAuthorized] = useState(false);
   const id = native?.project.id, script = native?.approvedScript?.text ?? '';
+  useEffect(()=>{setVoice(native?.nano?.profileId??'');setProfiles([]);setAuthorized(false);},[id,native?.nano?.profileId]);
   const hasAlignment = Boolean(native?.alignment);
   const wordsSha256 = native?.alignment?.wordsSha256;
   const captionRevision = native?.alignment?.captionReview?.revision;

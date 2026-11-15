@@ -175,7 +175,10 @@ interface PendingImport {
   createdAt:string;
 }
 const pendingPath=(root:string)=>path.join(root,'.studio','external','pending.json');
+const fulfillmentTxnPath=(root:string)=>path.join(root,'.studio','external','fulfillment-transaction.json');
+function recoverFulfillment(root:string){const file=fulfillmentTxnPath(root);if(!fs.existsSync(file))return false;const txn=strictJson(readUtf8(file))as{pendingBefore?:PendingImport;mediaBefore?:StudioState['media']};if(!txn.pendingBefore||txn.pendingBefore.schema!=='mode-b-pending-import-v2'||!Array.isArray(txn.mediaBefore))throw new Error('RECOVERY_REQUIRED: media fulfillment journal is corrupt; rebuild/review the frozen task.');atomicJson(pendingPath(root),txn.pendingBefore);const state=readState(root);state.media=txn.mediaBefore;writeState(root,state);fs.unlinkSync(file);return true}
 const readPending=(root:string):PendingImport=>{
+  if(recoverFulfillment(root))throw new Error('RECOVERY_REQUIRED: interrupted media fulfillment was safely rolled back; review and retry the exact binding.');
   const file=pendingPath(root);if(!fs.existsSync(file))throw new Error('No staged import exists.');
   const pending=strictJson(readUtf8(file)) as unknown as PendingImport;
   if(pending.schema!=='mode-b-pending-import-v2'||!pending.projectId||!pending.payloadSha256||!pending.responsePath||!Array.isArray(pending.references)||!pending.fulfillments)throw new Error('REBUILD_REQUIRED: pending record has no verifiable source/asset bindings.');
@@ -246,7 +249,7 @@ export function importMediaFile(root:string,source:string,kind:'image'|'sfx',rig
   // File import alone never claims native mapping and never corrupts a frozen task.
   writeState(root,state);return{...entry,status:'IMPORTED_UNASSIGNED'};
 }
-export function fulfillMedia(appPath:string,root:string,token:string,key:string,relative:string,rights:string){
+export function fulfillMedia(appPath:string,root:string,token:string,key:string,relative:string,rights:string,hooks:{afterPending?:()=>void;afterState?:()=>void}={}){
   const pending=readPending(root),state=readState(root);
   if(pending.stage!=='native'||pending.projectId!==state.project.id||pending.token!==token)throw new Error('Project/pending token mismatch.');
   if(pending.taskId!==assertTaskCurrent(appPath,root,'native',state).id||pending.revision!==state.tasks?.native?.revision)throw new Error('Frozen task binding mismatch.');
@@ -261,11 +264,10 @@ export function fulfillMedia(appPath:string,root:string,token:string,key:string,
   const previous=pending.fulfillments[key];
   if(previous){if(JSON.stringify(previous)!==JSON.stringify(binding))throw new Error('A frozen target cannot be silently remapped; rebuild/review the task.');return pendingResult(root,pending);}
   const mapped={...original,...(ref.kind==='image'?{shotId:ref.shotId,layerId:ref.layerId}:{track:ref.track,trackIndex:ref.trackIndex})};
-  state.media=[...(state.media??[]).filter(item=>!(item.path===relative&&item.shotId===ref.shotId&&item.layerId===ref.layerId&&item.track===ref.track&&item.trackIndex===ref.trackIndex)),mapped];
+  const pendingBefore=structuredClone(pending),mediaBefore=structuredClone(state.media??[]);state.media=[...(state.media??[]).filter(item=>!(item.path===relative&&item.shotId===ref.shotId&&item.layerId===ref.layerId&&item.track===ref.track&&item.trackIndex===ref.trackIndex)),mapped];
   pending.fulfillments[key]=binding;
-  atomicJson(pendingPath(root),pending);
-  writeState(root,state);
-  return pendingResult(root,pending);
+  atomicJson(fulfillmentTxnPath(root),{schema:'media-fulfillment-transaction-v1',pendingBefore,mediaBefore,createdAt:new Date().toISOString()});
+  try{atomicJson(pendingPath(root),pending);hooks.afterPending?.();writeState(root,state);hooks.afterState?.();fs.unlinkSync(fulfillmentTxnPath(root));return pendingResult(root,pending)}catch(error){atomicJson(pendingPath(root),pendingBefore);const rollback=readState(root);rollback.media=mediaBefore;writeState(root,rollback);if(fs.existsSync(fulfillmentTxnPath(root)))fs.unlinkSync(fulfillmentTxnPath(root));throw error}
 }
 type Validator=(exe:string,args:string[],options:{cwd:string})=>Promise<{code:number;stdout:string;stderr:string}>;
 export interface ConfirmOptions { previewSeconds?:number; allowSampleDraft?:boolean; validator?:Validator }

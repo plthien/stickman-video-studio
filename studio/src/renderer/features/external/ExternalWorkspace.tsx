@@ -8,6 +8,7 @@ export function ExternalSessionProvider({ children }: { children: ReactNode }) {
 const useSession=()=>{const value=useContext(Context);if(!value)throw new Error('ExternalSessionProvider missing');return value;};
 export function ExternalWorkspace(){
   const {tab,setTab,json,setJson,result,setResult}=useSession(); const {native,setNative,showNotice}=useAppState(); const [prompt,setPrompt]=useState(''); const [pending,setPending]=useState<StudioStagedImport|null>(null); const [error,setError]=useState('');const [previewSeconds,setPreviewSeconds]=useState(20);const [draftConsent,setDraftConsent]=useState(false); const stage=tab.toLowerCase();
+  const projectId=native?.project.id;useEffect(()=>{setJson('');setResult('idle');setPending(null);setPrompt('');setError('');setDraftConsent(false);},[projectId,setJson,setResult]);
   useEffect(()=>{let active=true;if(native&&window.studio)window.studio.freezeTask(native.project.id,stage).then(value=>{if(active)setPrompt(value.prompt)}).catch(reason=>{if(active){setError(String(reason));setPrompt('')}});else setPrompt('');return()=>{active=false};},[native,stage]);
   const change=(value:string)=>{setJson(value);setResult('idle');setPending(null);setDraftConsent(false);setError('');};
   const refreshPending=async()=>{if(!native||!window.studio||stage!=='native')return;try{const value=await window.studio.pendingMedia(native.project.id);setPending(value);setError('');}catch(reason){setError(String(reason));}};

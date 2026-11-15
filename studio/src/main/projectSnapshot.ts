@@ -17,7 +17,7 @@ export async function projectSnapshot(root:string,appPath:string,verifier?:Nativ
   if(state.approvedScript&&sha(state.approvedScript.text)!==state.approvedScript.sha256)throw new Error('ERROR: registered approved script is corrupt.');
   if(state.voice){const file=resolveProjectFile(projectRoot,state.voice.path);if(state.voice.stale||!fs.existsSync(file)||sha(fs.readFileSync(file))!==state.voice.sha256||typeof state.voice.duration!=='number'||!Number.isFinite(state.voice.duration)||state.voice.duration<=0)throw new Error('ERROR: registered narration evidence is stale or corrupt.')}
   if(state.alignment){for(const [relative,expected,label] of [[state.alignment.path,state.alignment.wordsSha256,'WORDS'],[state.alignment.captionsPath,state.alignment.cuesSha256,'captions']] as const){const file=resolveProjectFile(projectRoot,relative);if(!expected||!fs.existsSync(file)||sha(fs.readFileSync(file))!==expected)throw new Error(`ERROR: registered ${label} evidence is stale or corrupt.`)}}
-  let captionReady=false;if(state.alignment?.captionReview){const review=getCaptionReview(projectRoot);if(!review.approved)throw new Error('BLOCKED: registered caption approval is missing, stale or corrupt.');captionReady=true}
+  let captionStatus:'NEVER_CREATED'|'REVIEW_REQUIRED'|'STALE_REVIEW'|'CORRUPT_REGISTERED_REVIEW'|'VERIFIED'=state.alignment?'REVIEW_REQUIRED':'NEVER_CREATED';if(state.alignment)captionStatus=getCaptionReview(projectRoot).status;const captionReady=captionStatus==='VERIFIED';
   for(const item of state.media??[]){const file=resolveProjectFile(projectRoot,item.path);if(!item.rights.trim()||!fs.existsSync(file)||sha(fs.readFileSync(file))!==item.sha256)throw new Error(`ERROR: registered media evidence is stale or corrupt: ${item.path}`)}
   if(state.nativeReadiness&&(!state.nativeReadiness.sourceFingerprint||state.nativeReadiness.sourceFingerprint!==sha(fs.readFileSync(path.join(projectRoot,'project.json')))))throw new Error('BLOCKED: saved native readiness does not bind current native manifest bytes.');
   await verifyPersistedNativeEvidence(appPath,projectRoot,state,verifier);
@@ -27,5 +27,5 @@ export async function projectSnapshot(root:string,appPath:string,verifier?:Nativ
   const ambience=(Array.isArray(manifest.ambience)?manifest.ambience as Array<Record<string,unknown>>:[]).map((value,index)=>clip(typeof value.id==='string'&&value.id.trim()?value.id:text(value.path,`ambience ${index+1} path`),finite(value.start,`ambience ${index+1} start`),finite(value.end,`ambience ${index+1} end`)));
   const tracks={Scenes:shots.map(item=>clip(item.id,item.start,item.end)),Layers:layers,Captions:captions.map(item=>clip(item.text,item.start,item.end)),Narration:state.voice?[clip(state.voice.origin??state.voice.path,0,state.voice.duration!)]:[],SFX:sfx,Ambience:ambience};
   const jobPath=path.join(projectRoot,'.studio','jobs','latest.json'),job=fs.existsSync(jobPath)?strictJson(fs.readFileSync(jobPath,'utf8')):null;
-  return{...state,manifest,projection:{shots,duration,tracks,captionReady,demo:false as const},job};
+  return{...state,manifest,projection:{shots,duration,tracks,captionReady,captionStatus,demo:false as const},job};
 }

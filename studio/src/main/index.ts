@@ -8,7 +8,8 @@ import { discoverNano, generateNano, nanoBase } from './nanoClient.js';
 import { cancelJob, nativeJob, reconcileJob } from './nativeJobs.js';
 import { importAlignedWords, importApprovedWav, longformStatus, runLongform } from './voiceMedia.js';
 import { projectSnapshot } from './projectSnapshot.js';
-import { assertMediaRelative, fileFetchUrl, mediaUrl, nativeSkillRoot, projectId, readState, runProcess, strictJson, writeState, type NativeCommand, type Stage, type StudioState } from './services.js';
+import {createProjectStaged} from './projectCreation.js';
+import { assertMediaRelative, fileFetchUrl, mediaUrl, projectId, readState, strictJson, writeState, type NativeCommand, type Stage, type StudioState } from './services.js';
 
 if (process.env.MODE_B_STUDIO_DISABLE_GPU === '1') { app.disableHardwareAcceleration(); app.commandLine.appendSwitch('disable-gpu'); app.commandLine.appendSwitch('disable-gpu-compositing'); }
 if(process.env.MODE_B_STUDIO_USER_DATA){const userData=path.resolve(process.env.MODE_B_STUDIO_USER_DATA);if(!path.isAbsolute(process.env.MODE_B_STUDIO_USER_DATA)||userData.startsWith('\\\\'))throw new Error('MODE_B_STUDIO_USER_DATA must be a local absolute path.');fs.mkdirSync(userData,{recursive:true});app.setPath('userData',userData)}
@@ -20,16 +21,10 @@ const rootFor = (id: string) => { const root = roots.get(id); if (!root || proje
 function registerIpc() {
   const recentPath = path.join(app.getPath('userData'), 'recent-projects.json');
   const recent = () => fs.existsSync(recentPath) ? strictJson(fs.readFileSync(recentPath, 'utf8')) as { projects?: StudioState['project'][] } : { projects: [] };
-  const saveRecent = (project: StudioState['project']) => { const projects = [project, ...(recent().projects ?? []).filter(item => item.id !== project.id)].slice(0, 12); fs.mkdirSync(path.dirname(recentPath), { recursive: true }); fs.writeFileSync(recentPath, JSON.stringify({ projects }, null, 2)); roots.set(project.id, project.root); };
+  const saveRecent = (project: StudioState['project']) => { const projects = [project, ...(recent().projects ?? []).filter(item => item.id !== project.id)].slice(0, 12); fs.mkdirSync(path.dirname(recentPath), { recursive: true }); fs.writeFileSync(recentPath, JSON.stringify({ projects }, null, 2)); roots.set(project.id, project.root); const pending=path.join(project.root,'.studio','recent-registration-pending.json');if(fs.existsSync(pending))fs.unlinkSync(pending); };
   ipcMain.handle('project:listRecent', () => { const projects = recent().projects ?? []; for (const project of projects) if (fs.existsSync(project.root)) registerRoot(project.root); return projects; });
   ipcMain.handle('project:create', async (_event, input: { parent: string; folder: string; title: string; topic: string; style: string; language: string; targetDuration?: number }) => {
-    if (!/^[\p{L}\p{N}][\p{L}\p{N}._ -]{0,79}$/u.test(input.folder)) throw new Error('Choose a simple project folder name.');
-    const target = path.resolve(input.parent, input.folder); if (fs.existsSync(target)) throw new Error('Project folder already exists.');
-    const { cli } = nativeSkillRoot(app.getAppPath()); const result = await runProcess(process.execPath, [cli, 'init', target, '--style', input.style], { cwd: path.dirname(cli), timeout: 60_000 }); if (result.code !== 0) throw new Error(result.stderr || result.stdout || 'Native project initialization failed.');
-    const projectFile = path.join(target, 'project.json'); const manifest = strictJson(fs.readFileSync(projectFile, 'utf8')) as Record<string, unknown>; manifest.width = 1080; manifest.height = 1920; (manifest.voice as Record<string,unknown>).path = 'assets/audio/narration.wav'; fs.writeFileSync(projectFile, `${JSON.stringify(manifest, null, 2)}\n`);
-    const summary = { id: registerRoot(target), root: fs.realpathSync(target), title: input.title.trim(), style: input.style, updatedAt: new Date().toISOString(), projectFile };
-    const state: StudioState = { schema: 'mode-b-studio-state-v1', project: summary, brief: { topic: input.topic, language: input.language, ratio: '9:16', targetDuration: input.targetDuration }, external: {}, tasks: {}, nano: { endpoint: 'http://127.0.0.1:3901' }, imports: [] };
-    writeState(target, state); saveRecent(summary); return projectSnapshot(target,app.getAppPath());
+    const created=await createProjectStaged(app.getAppPath(),input,{publishRecent:saveRecent});registerRoot(created.root);return{...(await projectSnapshot(created.root,app.getAppPath())),registrationWarning:created.registrationWarning};
   });
   ipcMain.handle('project:openDialog', async () => { const result = await dialog.showOpenDialog({ properties: ['openDirectory'] }); return result.canceled ? null : result.filePaths[0]; });
   ipcMain.handle('project:open', (_event, root: string) => { const state = readState(root); registerRoot(root); saveRecent(state.project); reconcileJob(root); return projectSnapshot(root,app.getAppPath()); });

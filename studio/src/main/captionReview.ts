@@ -90,11 +90,11 @@ function buildCues(words: Array<{word:string;start:number;end:number}>, ends: nu
 export function getCaptionReview(root: string) {
   const {state,words,original,originalBoundaries,offset,sourceSha256}=inputs(root);
   const review=state.alignment?.captionReview;
-  invalidateTimingDependents(root,state,review?.sourceSha256,sourceSha256);
-  const validReview=review && review.sourceSha256===sourceSha256 && fs.existsSync(resolveProjectFile(root,review.path)) && sha(fs.readFileSync(resolveProjectFile(root,review.path)))===review.sha256;
+  let status:'REVIEW_REQUIRED'|'STALE_REVIEW'|'CORRUPT_REGISTERED_REVIEW'|'VERIFIED'='REVIEW_REQUIRED',approved:({cues:CaptionCue[]}&CaptionReviewRecord)|null=null;
+  if(review){if(review.sourceSha256!==sourceSha256)status='STALE_REVIEW';else{try{const bytes=fs.readFileSync(resolveProjectFile(root,review.path));if(sha(bytes)!==review.sha256)throw new Error('hash');const cues=readCues(root,review.path),boundaries=boundariesFromCues(words,cues);if(!same(cues,buildCues(words,boundaries,offset,nativeVoiceTiming(root,state).timelineDuration)))throw new Error('content');approved={...review,cues};status='VERIFIED'}catch{status='CORRUPT_REGISTERED_REVIEW'}}}
   const draft=state.alignment?.captionDraft;
   const validDraft=draft && draft.sourceSha256===sourceSha256 && fs.existsSync(resolveProjectFile(root,draft.path)) && sha(fs.readFileSync(resolveProjectFile(root,draft.path)))===draft.sha256;
-  return {words,original,sourceSha256,approved: validReview ? { ...review, cues: readCues(root, review!.path) } : null,
+  return {words,original,sourceSha256,status,approved,
     draft: validDraft ? { ...draft, cues: readCues(root,draft!.path) } : null,
     originalBoundaries,shift:offset};
 }

@@ -108,6 +108,6 @@ describe('FIX-02: captions follow original Core lead/tail/B4 trim semantics',()=
     state.preview={path:'output/preview.mp4',sha256:'a'.repeat(64),reportPath:'output/report.json',reportSha256:'b'.repeat(64),verifiedAt:new Date().toISOString(),sourceFingerprint:'old'};
     state.approval={note:'Old timing approval',previewSha256:'a'.repeat(64),approvedAt:new Date().toISOString()};writeState(root,state);
     setVoice(root,{lead:.5});const review=getCaptionReview(root),fresh=readState(root);
-    expect(review.approved).toBeNull();expect(fresh.alignment?.captionReview).toBeDefined();expect(fresh.tasks?.native?.status).toBe('STALE');expect(fresh.preview).toBeUndefined();expect(fresh.approval).toBeUndefined();
+    expect(review.approved).toBeNull();expect(review.status).toBe('STALE_REVIEW');expect(fresh.alignment?.captionReview).toBeDefined();expect(fresh.tasks?.native?.status).toBe('FROZEN');expect(fresh.preview).toBeDefined();expect(fresh.approval).toBeDefined();
   });
 });
