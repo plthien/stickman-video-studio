@@ -341,7 +341,7 @@ export function stageLifecycleResult(appPath:string,root:string,stage:Stage,oper
   return{token,before:current.value,after:payload,status:'STAGED'};
 }
 
-export interface LifecyclePublicationOptions { validator?:ConfirmOptions['validator'];hooks?:{afterJournal?:()=>void;afterStaging?:()=>void;afterNativeCommit?:()=>void} }
+export interface LifecyclePublicationOptions { validator?:ConfirmOptions['validator'];previewSeconds?:number;allowSampleDraft?:boolean;hooks?:{afterJournal?:()=>void;afterStaging?:()=>void;afterNativeCommit?:()=>void} }
 const nativeCorrectionJournal=(root:string)=>path.join(lifecycleDir(root),'native-publication.json');
 const manifestSemanticHash=(file:string)=>sha(JSON.stringify(strictJson(fs.readFileSync(file,'utf8'))));
 function finalizeLifecycle(root:string,pending:Record<string,unknown>,task:NonNullable<StudioState['lifecycle']>['tasks'][string]){
@@ -393,7 +393,7 @@ async function publishNativeCorrection(appPath:string,root:string,pending:Record
   const pendingImport=stageImport(appPath,root,'native',JSON.stringify(result));
   options.hooks?.afterStaging?.();
   try{
-    await confirmImport(appPath,root,pendingImport.token,{validator:options.validator});
+    await confirmImport(appPath,root,pendingImport.token,{validator:options.validator,previewSeconds:options.previewSeconds,allowSampleDraft:options.allowSampleDraft});
     options.hooks?.afterNativeCommit?.();
   }catch(error){
     journal.status='PENDING_RETRY';journal.detail=String(error);atomicJson(journalFile,journal);
