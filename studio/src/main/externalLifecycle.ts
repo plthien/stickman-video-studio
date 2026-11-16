@@ -123,10 +123,12 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   if(editableIds.some(id=>!allTargetIds.includes(id)))throw new Error('Editable target does not exist in frozen artifact.');
   const relevantPrior=Object.values(state.lifecycle?.artifacts??{}).filter(item=>item.stage===stage&&['review','recheck','media-review'].includes(item.operation))
     .sort((x,y)=>y.createdAt.localeCompare(x.createdAt)).slice(0,3).map(item=>({taskId:item.taskId,operation:item.operation,value:item.value}));
-  const reviewFindings=relevantPrior.flatMap(item=>{
+  const latestFindingStatus=new Map<string,string>();
+  for(const item of [...relevantPrior].reverse()){
     const p=item.value as {findings?:Array<{id:string;status?:string}>};
-    return (p.findings??[]).filter(f=>f.status!=='resolved').map(f=>f.id);
-  });
+    for(const finding of p.findings??[])latestFindingStatus.set(finding.id,finding.status??'uncertain');
+  }
+  const reviewFindings=[...latestFindingStatus].filter(([,status])=>status!=='resolved').map(([id])=>id);
   const findingIds=scope.findingIds??((operation==='correct'||operation==='recheck')?[...new Set(reviewFindings)]:[]);
   if(new Set(findingIds).size!==findingIds.length||findingIds.some(id=>typeof id!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(id)))
     throw new Error('Invalid finding scope.');
