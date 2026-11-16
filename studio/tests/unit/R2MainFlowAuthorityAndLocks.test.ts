@@ -67,6 +67,23 @@ describe('R2 original-artifact scoped correction regression',()=>{
   });
 });
 
+describe('R2 all four creative style selectors',()=>{
+  it('fails closed on missing source, and extracts original text for B1/B2/B3/B4 script and native',()=>{
+    const appPath=path.resolve('.');
+    for(const style of ['B1','B2','B3','B4']){
+      const author=compileAuthority(appPath,style,'script','author');
+      const native=compileAuthority(appPath,style,'native','author');
+      expect(author.sources.length).toBeGreaterThanOrEqual(5);
+      expect(native.sources.length).toBeGreaterThanOrEqual(6);
+      expect(author.sources.some(item=>item.path==='references/autopilot-runtime.md')).toBe(false);
+      expect(native.sources.some(item=>item.path==='references/autopilot-runtime.md')).toBe(true);
+      for(const item of [...author.sources,...native.sources]){
+        expect(sha(fs.readFileSync(path.join(nativeSkillRoot(appPath).root,item.path)))).toBe(item.sha256);
+        expect(sha(item.text)).toBe(item.extractionSha256);
+      }
+    }
+  });
+});
 describe('R2 source-exact creative authority',()=>{
   it('preserves B4 creative and opening/audio text from installed original sources',()=>{
     const appPath=path.resolve('.');
