@@ -34,20 +34,23 @@ STUDIO_ONLY and AGENT_ONLY never authorize the external model to simulate actual
 ## Source extraction and fail-closed operation
 
 Implementation: studio/src/main/externalAuthority.ts.
-Extraction revisions: `script-author-source-exact-v3` for Script → Author; `stage-exact-v2` remains unchanged for Native Author and Script/Native Review, Correct, Recheck and Media Review.
+Extraction revisions: `script-author-complete-blocks-v4` for Script → Author; `stage-exact-v2` remains unchanged for Native Author and Script/Native Review, Correct, Recheck and Media Review.
 
-- Script → Author uses version-controlled, fail-closed selectors for literal complete source
-  requirement lines at exact original line locations (L-number), grouped under their
-  original headings. It retains the selected B1–B4 creative rules, narrative/continuity,
-  planned visual feasibility, story-led sound and applicable opening rules while deferring
-  native execution, media timing, provider, CLI and encoded QA operations.
+- Script → Author uses source-byte-pinned, version-controlled, inclusive original line
+  ranges to extract complete continuous normative blocks (including sub-bullets, numeric
+  conditions and style-specific exceptions), grouped under original headings. Five
+  mixed-stage cases use exact complete contiguous original sentences, never rewrites,
+  with verified line/column bounds. Source hash changes or invalid ranges fail closed.
+  It retains the B1–B4 creative/continuity rules while deferring provider, CLI,
+  actual media timing, Native execution and encoded QA to their existing owners.
 - Native and all other operations retain their existing section-level or full-file
   authority extraction and original task contract.
 - Native receives the full installed B style, autopilot, runtime, QA and sound
   references, plus the complete B4 opening/audio/repeatability references if selected.
 - Every source records installed relative path, original SHA-256, extraction SHA-256,
   extraction revision, applicability and selected heading inventory. Script Author additionally
-  records exact original line locations and provides all extracted text inline.
+  records exact original line/column ranges, each contiguous block's literal text,
+  and provides all extracted text inline.
 - Missing, renamed or empty mandatory selectors fail closed. Frozen original author
   tasks and lifecycle review prompts bind to current source/brief/artifact identity.
 - The original skills/directing-stickman-videos/** tree is never modified.
@@ -83,7 +86,7 @@ a claim of actual encoded video creative acceptance.
 
 Script Author now exposes an explicit four-way requirement inventory in
 `compileAuthority().scriptAuthorClassification`: `KEEP_SCRIPT` is a source-path
-and exact L-number list; `DEFER_NATIVE` identifies original runtime, render
+and exact L-range or L/column-range list; `DEFER_NATIVE` identifies original runtime, render
 and final QA boundaries; `STUDIO_ONLY` covers provider/media execution and
 owner approval; `AGENT_ONLY` covers automatic tool orchestration. This metadata
 does not change Native Author or the other lifecycle contracts.
@@ -99,3 +102,13 @@ Source-exact extracts remain visible inside the exported prompt; Native's full
 `project.json` and CLI/QA contracts remain unchanged. Any original creative
 rule requiring actual footage, sound, asset bytes or validation is deferred to
 its appropriate Native/Studio execution gate.
+
+## Script Author JSON handoff example (v4)
+
+The exported frozen envelope contains real project/task/revision/input SHA identity
+and a small, schema-valid **fictional kite narration example** under
+`mode-b-script-v1`. It is explicitly not content to reuse. The exported task
+contains neither `REQUIRED_NONEMPTY_ARRAY` nor `REPLACE_WITH_ACTUAL_SECTION_ID`.
+Existing Script import validation still rejects those structural placeholders,
+invalid section IDs and duplicate section IDs. Native Author's example and all
+review/correction task schemas are unchanged.
