@@ -78,6 +78,16 @@ describe('R2 focused source-exact Script Author handoff',()=>{
     expect(sha(fs.readFileSync(path.join(root,task.promptPath)))).toBe(task.promptSha256);
     expect(task.inputSha256).toBe(sourceFingerprint(appPath,root,'script'));
   });
+  it('preserves the existing Native Author prompt and complete original manifest contract',()=>{
+    const {root}=fixture({style:'B1'});
+    const native=freezeTask(appPath,root,'native');
+    expect(native.prompt).toContain('## REQUIRED RESPONSE ENVELOPE');
+    expect(native.prompt).toContain('For native authoring, payload.manifest is the original B1–B4 project.json v1');
+    expect(native.prompt).toContain('Fill every required shot, ledger and actual field');
+    expect(native.prompt).toContain('references/autopilot-runtime.md');
+    expect(native.prompt).not.toContain('## 1. Mission and deliverable');
+    expect(sha(native.prompt)).toBe(native.promptSha256);
+  });
   it('valid complete narration imports; invalid section IDs, duplicates and placeholders fail',()=>{
     const root=sample(),task=freezeTask(appPath,root,'script');
     const state=readState(root);
