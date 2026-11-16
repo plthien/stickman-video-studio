@@ -38,9 +38,9 @@ Extraction revisions: `script-author-complete-blocks-v4` for Script → Author; 
 
 - Script → Author uses source-byte-pinned, version-controlled, inclusive original line
   ranges to extract complete continuous normative blocks (including sub-bullets, numeric
-  conditions and style-specific exceptions), grouped under original headings. Five
+  conditions and style-specific exceptions), grouped under original headings. Six
   mixed-stage cases use exact complete contiguous original sentences, never rewrites,
-  with verified line/column bounds. Source hash changes or invalid ranges fail closed.
+  with verified line/column bounds. Source hash changes (after normalizing Windows CRLF to original Git line endings), invalid ranges or incomplete sentence boundaries fail closed.
   It retains the B1–B4 creative/continuity rules while deferring provider, CLI,
   actual media timing, Native execution and encoded QA to their existing owners.
 - Native and all other operations retain their existing section-level or full-file
