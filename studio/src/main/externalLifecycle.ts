@@ -110,7 +110,8 @@ export function readFrozenExternalTask(appPath:string,root:string,stage:Stage,op
   const target=resolveProjectFile(root,task.promptPath);
   if(!fs.existsSync(target)||sha(fs.readFileSync(target))!==task.promptSha256)
     throw new Error('REBUILD_REQUIRED: saved frozen task prompt is missing or modified.');
-  if(operation==='author'&&(!task.sourceFingerprint||sourceFingerprint(appPath,root,stage)!==task.sourceFingerprint))
+  if(operation==='author'&&(!state.tasks?.[stage]?.sourceFingerprint||
+    sourceFingerprint(appPath,root,stage)!==state.tasks[stage]!.sourceFingerprint))
     throw new Error('STALE: saved author task has a changed creative source; explicitly rebuild it.');
   if(operation!=='author'){
     const life=task as NonNullable<StudioState['lifecycle']>['tasks'][string];
