@@ -392,6 +392,17 @@ export function approveScriptCandidate(root:string,note:string){
   const state=readState(root),candidate=state.scriptCandidate;
   if(!candidate||sha(candidate.text)!==candidate.sha256)throw new Error('No current verified Script candidate is available.');
   if(typeof note!=='string'||!note.trim())throw new Error('Owner approval note is required.');
+  if(state.lifecycle?.tasks['script:correct']?.id===candidate.taskId){
+    const candidateHash=sha(JSON.stringify(candidate));
+    const rechecks=Object.values(state.lifecycle.artifacts).filter(item=>
+      item.stage==='script'&&item.operation==='recheck'&&
+      (item.value as {artifact_sha256?:string}).artifact_sha256===candidateHash)
+      .sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+    const latest=rechecks[0]?.value as {status?:string;findings?:Array<{status?:string}>}|undefined;
+    if(!latest||latest.status!=='REVIEWED_NO_FINDINGS'||latest.findings?.some(item=>item.status!=='resolved'))
+      throw new Error('RECHECK_REQUIRED: current corrected Script candidate needs a complete independent recheck before owner approval.');
+  }
+
   if(state.approvedScript?.sha256===candidate.sha256&&JSON.stringify(state.approvedScript.authoring??null)===JSON.stringify(candidate.authoring??null))return state;
   const changed=state.approvedScript?.sha256!==candidate.sha256,creativeChanged=JSON.stringify(state.approvedScript?.authoring??null)!==JSON.stringify(candidate.authoring??null);
   state.approvedScript={sections:candidate.sections,text:candidate.text,sha256:candidate.sha256,revision:candidate.revision,approvedAt:new Date().toISOString(),approvedBy:'OWNER',approvalNote:note.trim(),authoring:candidate.authoring};
