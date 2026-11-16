@@ -43,6 +43,17 @@ describe('R2 Native correction transaction failure and retry',()=>{
     expect(readState(root).lifecycle?.artifacts[task.id].taskId).toBe(task.id);
     expect(JSON.parse(fs.readFileSync(path.join(root,'project.json'),'utf8'))).toEqual(corrected.manifest);
   });
+  it('retains last-good and pending lifecycle task when original Native validation fails, then retries',async()=>{
+    const {root,task,staged,before,cli,corrected}=await baseline();
+    const failing=validator({sampleFail:true});
+    await expect(Promise.resolve(confirmLifecycleResult(appPath,root,staged.token,{validator:failing.run})))
+      .rejects.toThrow(/Injected original CLI validation failure/);
+    expect(fs.readFileSync(path.join(root,'project.json'))).toEqual(before);
+    expect(readState(root).lifecycle?.tasks['native:correct'].status).toBe('FROZEN');
+    await confirmLifecycleResult(appPath,root,staged.token,{validator:cli.run});
+    expect(readState(root).lifecycle?.artifacts[task.id].taskId).toBe(task.id);
+    expect(JSON.parse(fs.readFileSync(path.join(root,'project.json'),'utf8'))).toEqual(corrected.manifest);
+  });
   it('recovers after Native staging without consuming a task or overwriting last-good',async()=>{
     const {root,task,staged,before,cli,corrected}=await baseline();
     await expect(Promise.resolve(confirmLifecycleResult(appPath,root,staged.token,{validator:cli.run,
