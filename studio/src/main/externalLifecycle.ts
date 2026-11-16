@@ -74,7 +74,7 @@ function attestLocalTransfer(root:string,kind:'preview'|'film'|'voice'|'captions
     if(!Array.isArray(items)||!files.every(item=>items.some(ref=>ref.sha256===item.sha256)))continue;
     let valid=true;
     for(const item of items){
-      if(typeof item.path!=='string'||!/^media\/[A-Za-z0-9._-]+$/.test(item.path)||
+      if(typeof item.path!=='string'||!item.path.startsWith('media/')||path.posix.normalize(item.path)!==item.path||item.path.split('/').includes('..')||
         typeof item.sha256!=='string'||!(/^[a-f0-9]{64}$/.test(item.sha256))){valid=false;break;}
       const physical=path.join(directory,item.path);
       if(!fs.existsSync(physical)||sha(fs.readFileSync(physical))!==item.sha256){valid=false;break;}
