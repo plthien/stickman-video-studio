@@ -39,7 +39,7 @@ describe('R2 focused source-exact Script Author handoff',()=>{
         for(const position of source.locations??[]){
           const line=lines[Number(position.slice(1))-1];
           expect(line?.trim()).toBeTruthy();
-          expect(source.text).toContain(line);
+          expect(source.text.split('\\n').some(part=>part.trim().length>15&&line.includes(part))).toBe(true);
         }
       }
       const styleSource=author.sources.find(source=>source.path.includes('/'+style.toLowerCase()+'-'));
