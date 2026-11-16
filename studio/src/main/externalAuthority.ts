@@ -7,7 +7,7 @@ export type ExternalOperation = 'author'|'review'|'correct'|'recheck'|'media-rev
 export type Disposition = 'KEEP'|'MOVE_TO_NATIVE'|'STUDIO_ONLY'|'AGENT_ONLY';
 export interface AuthoritySource {
   path:string; sha256:string; extractionSha256:string; extractionRevision:string;
-  applicability:string[]; disposition:Disposition; headings:string[]; text:string; locations?:string[];
+  applicability:string[]; disposition:Disposition; headings:string[]; text:string; locations?:string[]; blocks?:Array<{location:string;text:string}>;
 }
 export const AUTHORITY_EXTRACTION_REVISION = 'stage-exact-v2';
 
@@ -74,19 +74,20 @@ const SCRIPT_AUTHOR_MIXED_SENTENCES:Record<string,readonly [string,string]>={
   'references/b4-audio-direction.md:L9-L9':['Brian remains the narrator across scenes,','not a new actor.']
 };
 export const SCRIPT_AUTHOR_EXTRACTION_REVISION='script-author-complete-blocks-v4';
-function extractScriptAuthor(full:string,relative:string){
+export function extractScriptAuthor(full:string,relative:string){
   const spans=SCRIPT_AUTHOR_BLOCKS[relative],expectedBlob=SCRIPT_AUTHOR_BLOB_SHA1[relative];
   if(!spans?.length||!expectedBlob)throw new Error('REBUILD_REQUIRED: missing Script Author requirement inventory: '+relative);
   const actualBlob=createHash('sha1').update('blob '+Buffer.byteLength(full,'utf8') +String.fromCharCode(0)).update(full,'utf8').digest('hex');
   if(actualBlob!==expectedBlob)throw new Error('REBUILD_REQUIRED: Script Author original authority changed: '+relative);
-  const lines=full.replace(/\r\n/g,'\n').split('\n'),locations:string[]=[],sections=new Map<string,string[]>();
+  const lines=full.replace(/\r\n/g,'\n').split('\n'),locations:string[]=[],blocks:Array<{location:string;text:string}>=[],sections=new Map<string,string[]>();
   let lastEnd=0;
   for(const [start,end] of spans){
     if(!Number.isInteger(start)||!Number.isInteger(end)||start<1||end<start||end>lines.length||start<=lastEnd)
       throw new Error('REBUILD_REQUIRED: invalid or overlapping Script Author source range: '+relative+' L'+start+'-L'+end);
     lastEnd=end;
-    const location='L'+start+'-L'+end;
-    const mixed=SCRIPT_AUTHOR_MIXED_SENTENCES[relative+':'+location];
+    let location='L'+start+'-L'+end;
+    const selectorLocation=location;
+    const mixed=SCRIPT_AUTHOR_MIXED_SENTENCES[relative+':'+selectorLocation];
     let excerpt=lines.slice(start-1,end).join('\n');
     if(mixed){
       const [from,to]=mixed,fromIndex=excerpt.indexOf(from),toIndex=excerpt.indexOf(to,fromIndex);
@@ -94,14 +95,15 @@ function extractScriptAuthor(full:string,relative:string){
         excerpt.indexOf(to,toIndex+1)!==-1)
         throw new Error('REBUILD_REQUIRED: ambiguous mixed-stage sentence boundary: '+relative+' '+location);
       excerpt=excerpt.slice(fromIndex,toIndex+to.length);
+      location='L'+start+':C'+(fromIndex+1)+'-C'+(toIndex+to.length);
     }
     if(!excerpt.trim())throw new Error('REBUILD_REQUIRED: empty Script Author source block: '+relative);
     const heading=lines.slice(0,start).reverse().find(row=>/^#{2,5} /.test(row))??'# '+relative;
     const grouped=sections.get(heading)??[];grouped.push(excerpt);sections.set(heading,grouped);
-    locations.push('L'+start+'-L'+end);
+    locations.push(location);blocks.push({location,text:excerpt});
   }
   const text=[...sections].map(([heading,blocks])=>heading+'\n'+blocks.join('\n\n')).join('\n\n');
-  return{text,headings:[...sections.keys()],locations};
+  return{text,headings:[...sections.keys()],locations,blocks};
 }
 
 function selectSections(full:string,headings:string[],relative:string){
@@ -131,7 +133,7 @@ function source(appPath:string,relative:string,style:string,stage:Stage,operatio
   return {path:relative,sha256:sha(bytes),extractionSha256:sha(text),
     extractionRevision:focused?SCRIPT_AUTHOR_EXTRACTION_REVISION:AUTHORITY_EXTRACTION_REVISION,
     applicability:[style,stage,operation],disposition,
-    headings:focused?.headings??headings,...(focused?{locations:focused.locations}:{}),text};
+    headings:focused?.headings??headings,...(focused?{locations:focused.locations,blocks:focused.blocks}:{}),text};
 }
 export function compileAuthority(appPath:string,style:string,stage:Stage,operation:ExternalOperation){
   const selected=STYLE[style];
