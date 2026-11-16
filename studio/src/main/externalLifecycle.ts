@@ -288,7 +288,9 @@ export function confirmLifecycleResult(appPathOrRoot:string,rootOrToken:string,m
   const pending=strictJson(fs.readFileSync(file,'utf8')) as Record<string,unknown>,state=readState(root);
   if(pending.token!==token||pending.projectId!==state.project.id)throw new Error('Lifecycle confirmation token/project mismatch.');
   const key=String(pending.stage)+':'+String(pending.operation),task=state.lifecycle?.tasks[key];
-  if(!task||task.id!==pending.taskId||task.status!=='FROZEN')throw new Error('Lifecycle task is stale or replayed.');
+  if(!task||task.id!==pending.taskId)throw new Error('Lifecycle task is stale or replayed.');
+  if(task.status==='IMPORTED'&&state.lifecycle?.artifacts[task.id]?.taskId===task.id){fs.unlinkSync(file);if(fs.existsSync(nativeCorrectionJournal(root)))fs.unlinkSync(nativeCorrectionJournal(root));return state;}
+  if(task.status!=='FROZEN')throw new Error('Lifecycle task is stale or replayed.');
   const frozenFile=resultPath(root,task.id);
   if(!fs.existsSync(frozenFile)||sha(fs.readFileSync(frozenFile))!==pending.responseSha256)
     throw new Error('Frozen lifecycle response bytes changed before publication.');
@@ -299,7 +301,7 @@ export function confirmLifecycleResult(appPathOrRoot:string,rootOrToken:string,m
     const journal=nativeCorrectionJournal(root);
     const saved=fs.existsSync(journal)?strictJson(fs.readFileSync(journal,'utf8')) as Record<string,unknown>:null;
     if(!(pending.operation==='correct'&&pending.stage==='native'&&saved?.token===token&&
-      saved?.status==='VALIDATED'&&manifestSemanticHash(path.join(root,'project.json'))===saved.desiredSha256))
+      manifestSemanticHash(path.join(root,'project.json'))===saved.desiredSha256&&state.nativeReadiness?.sampleReady&&state.nativeReadiness.sourceFingerprint===sha(fs.readFileSync(path.join(root,'project.json')))))
       throw new Error('STALE: original lifecycle artifact changed before confirmation.');
   }
   if(pending.operation==='correct'&&pending.stage==='native')
@@ -312,7 +314,11 @@ export function confirmLifecycleResult(appPathOrRoot:string,rootOrToken:string,m
     state.scriptCandidate={sections:checked.sections,text:candidateText,sha256:sha(candidateText),revision,importedAt:new Date().toISOString(),taskId:task.id,authoring:checked.authoring};
     state.external.script={revision,artifact:checked,importedAt:new Date().toISOString()};
     atomicJson(path.join(root,'.studio','revisions','script-'+revision+'.json'),checked);
+    state.lifecycle!.artifacts[task.id]={taskId:task.id,stage:task.stage,operation:task.operation,artifactSha256:sha(JSON.stringify(pending.payload)),value:pending.payload,status:'CORRECTION_STAGED',createdAt:new Date().toISOString()};
+    task.status='IMPORTED';
     writeState(root,state);
+    if(fs.existsSync(file))fs.unlinkSync(file);
+    return state;
   }
   return finalizeLifecycle(root,pending,task);
 }
