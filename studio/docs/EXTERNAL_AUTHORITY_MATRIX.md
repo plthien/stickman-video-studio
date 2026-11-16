@@ -34,14 +34,20 @@ STUDIO_ONLY and AGENT_ONLY never authorize the external model to simulate actual
 ## Source extraction and fail-closed operation
 
 Implementation: studio/src/main/externalAuthority.ts.
-Extraction revision: stage-exact-v2.
+Extraction revisions: `script-author-source-exact-v3` for Script → Author; `stage-exact-v2` remains unchanged for Native Author and Script/Native Review, Correct, Recheck and Media Review.
 
-- The selected B style, SKILL B mode clauses, narrative settings, story-led sound,
-  planned motion, caption and opening creative QA are extracted via exact headings.
+- Script → Author uses version-controlled, fail-closed selectors for literal complete source
+  requirement lines at exact original line locations (L-number), grouped under their
+  original headings. It retains the selected B1–B4 creative rules, narrative/continuity,
+  planned visual feasibility, story-led sound and applicable opening rules while deferring
+  native execution, media timing, provider, CLI and encoded QA operations.
+- Native and all other operations retain their existing section-level or full-file
+  authority extraction and original task contract.
 - Native receives the full installed B style, autopilot, runtime, QA and sound
   references, plus the complete B4 opening/audio/repeatability references if selected.
 - Every source records installed relative path, original SHA-256, extraction SHA-256,
-  extraction revision, applicability and selected heading inventory.
+  extraction revision, applicability and selected heading inventory. Script Author additionally
+  records exact original line locations and provides all extracted text inline.
 - Missing, renamed or empty mandatory selectors fail closed. Frozen original author
   tasks and lifecycle review prompts bind to current source/brief/artifact identity.
 - The original skills/directing-stickman-videos/** tree is never modified.
@@ -74,3 +80,15 @@ lint, integration/UT, production build, original Native Core preservation/CLI an
 Windows acceptance against final HEAD. Mark NOT_RUN/BLOCKED when the runner or real
 voice/media/provider is unavailable. Neither this file nor offline fixtures are
 a claim of actual encoded video creative acceptance.
+
+## Script Author mission and import contract
+
+Script Author produces only ordered spoken narration `sections[].text` plus flexible
+`authoring` decisions about premise, characters/identity, continuity, style and
+sound/voice intent. It uses the existing `mode-b-script-v1` schema and outer
+frozen task identity. Empty audience/purpose permits reasonable creative choices.
+Duration is a target, not a fabricated WPM or accepted WAV measurement.
+Source-exact extracts remain visible inside the exported prompt; Native's full
+`project.json` and CLI/QA contracts remain unchanged. Any original creative
+rule requiring actual footage, sound, asset bytes or validation is deferred to
+its appropriate Native/Studio execution gate.
