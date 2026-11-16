@@ -122,8 +122,7 @@ const SCRIPT_AUTHOR_REQUIREMENTS:Record<string,string[]>={
     '- **Make the threat visible, not merely described.',
     '- **Well-drawn held poses are a valid B4 baseline.',
     "- B4's deliberate-hold exception takes precedence",
-    '- Read and execute the required [B4 audio contract]',
-    "B4's deliberate-hold exception takes precedence"
+    '- Read and execute the required [B4 audio contract]'
   ],
   'references/b4-opening-direction.md':[
     '- **Earn attention with the story.',
