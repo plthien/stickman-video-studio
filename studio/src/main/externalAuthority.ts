@@ -78,7 +78,11 @@ export const SCRIPT_AUTHOR_EXTRACTION_REVISION='script-author-complete-blocks-v4
 export function extractScriptAuthor(full:string,relative:string){
   const spans=SCRIPT_AUTHOR_BLOCKS[relative],expectedBlob=SCRIPT_AUTHOR_BLOB_SHA1[relative];
   if(!spans?.length||!expectedBlob)throw new Error('REBUILD_REQUIRED: missing Script Author requirement inventory: '+relative);
-  const actualBlob=createHash('sha1').update('blob '+Buffer.byteLength(full,'utf8') +String.fromCharCode(0)).update(full,'utf8').digest('hex');
+  // Git may check out source files as CRLF on Windows. Pin the original Git
+  // blob content after newline normalization while hashing actual file bytes
+  // separately in source.sha256 for immutable frozen-task provenance.
+  const canonicalFull=full.replace(/\r\n/g,'\n');
+  const actualBlob=createHash('sha1').update('blob '+Buffer.byteLength(canonicalFull,'utf8')+String.fromCharCode(0)).update(canonicalFull,'utf8').digest('hex');
   if(actualBlob!==expectedBlob)throw new Error('REBUILD_REQUIRED: Script Author original authority changed: '+relative);
   const lines=full.replace(/\r\n/g,'\n').split('\n'),locations:string[]=[],blocks:Array<{location:string;text:string}>=[],sections=new Map<string,string[]>();
   let lastEnd=0;
