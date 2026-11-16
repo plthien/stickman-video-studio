@@ -1,5 +1,9 @@
 // @vitest-environment node
 import {describe,it,expect} from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import {compileAuthority} from '../../src/main/externalAuthority';
+import {nativeSkillRoot,sha} from '../../src/main/services';
 import {validateLocks} from '../../src/main/externalLifecycle';
 
 describe('R2 original-artifact scoped correction regression',()=>{
@@ -60,5 +64,32 @@ describe('R2 original-artifact scoped correction regression',()=>{
     expect(()=>validateLocks('native',before,after,['shot_001','shot_002'],[])).toThrow(/ordering/);
     after.manifest.shots.pop();
     expect(()=>validateLocks('native',before,after,['shot_001','shot_002'],[])).toThrow(/structural/);
+  });
+});
+
+describe('R2 source-exact creative authority',()=>{
+  it('preserves B4 creative and opening/audio text from installed original sources',()=>{
+    const appPath=path.resolve('.');
+    const pack=compileAuthority(appPath,'B4','script','author');
+    const names=pack.sources.map(source=>source.path);
+    expect(names).toContain('references/b4-survival-storytelling.md');
+    expect(names).toContain('references/b4-opening-direction.md');
+    expect(names).toContain('references/b4-audio-direction.md');
+    expect(names).not.toContain('references/autopilot-runtime.md');
+    for(const source of pack.sources){
+      const original=fs.readFileSync(path.join(nativeSkillRoot(appPath).root,source.path));
+      expect(source.sha256).toBe(sha(original));
+      expect(source.extractionSha256).toBe(sha(source.text));
+      expect(source.text).not.toContain('Applicable compact normative rules:');
+      expect(source.text.length).toBeGreaterThan(50);
+    }
+    expect(pack.sources.find(source=>source.path.includes('b4-opening-direction'))?.text).toContain('First-three-second visual escalation gate');
+    expect(pack.sources.find(source=>source.path.includes('b4-audio-direction'))?.text).toContain('First-frame audio gate');
+  });
+  it('retains original native runtime and QA contracts without copying a generic summary',()=>{
+    const pack=compileAuthority(path.resolve('.'),'B4','native','correct');
+    for(const needed of ['references/autopilot-runtime.md','references/autopilot-production-qa.md','references/autopilot-sound-system.md']){
+      expect(pack.sources.find(source=>source.path===needed)?.text.length).toBeGreaterThan(1000);
+    }
   });
 });
