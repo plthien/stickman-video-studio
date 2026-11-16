@@ -95,7 +95,7 @@ const SCRIPT_AUTHOR_REQUIREMENTS:Record<string,string[]>={
     '- Ordinary round-headed stickmen',
     '- Handwritten scene headings',
     '- Original restrained action SFX',
-    'Favor specific everyday action',
+    'Plan from the complete voice recording and actual pauses.',
     'Keep the drawing language consistent, not the set.',
     'Before drawing a new story, record a short scene map',
     'Maintain physical contact and object ownership'
@@ -124,7 +124,7 @@ const SCRIPT_AUTHOR_REQUIREMENTS:Record<string,string[]>={
     '- **Name the visible evidence before generation.',
     '- **Separate cast identity from menace.',
     '- **Make the threat visible, not merely described.',
-    '**Well-drawn held poses are a valid B4 baseline.',
+    '- **Well-drawn held poses are a valid B4 baseline.',
     "B4's deliberate-hold exception takes precedence"
   ],
   'references/b4-opening-direction.md':[
