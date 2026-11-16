@@ -70,7 +70,7 @@ function scriptAuthorPrompt(
   response:Record<string,unknown>,
   sources:ReturnType<typeof sourceBundle>
 ){
-  const brief=context as Record<string,unknown>,duration=brief.target_duration_seconds;
+  const duration=context.target_duration_seconds;
   const durationText=typeof duration==='number'&&duration>0?
     'Aim for the requested '+duration+' seconds of natural spoken narration, including meaningful pauses. No approved WPM target is provided in this task: do not invent an authoritative speaking rate or force a word count. The accepted WAV later determines actual duration.':
     'No target duration was supplied. Choose a natural structure suited to this brief without inventing a precise length or speech rate; actual duration is measured from the accepted WAV later.';
