@@ -4,7 +4,7 @@ import {randomUUID} from 'node:crypto';
 import {atomicJson,readState,resolveProjectFile,sha,strictJson,writeState,type ExternalOperation,type Stage,type StudioState} from './services.js';
 import {compileAuthority} from './externalAuthority.js';
 import {rejectNativeUnsafePaths,validateAuthoring} from './sourceCitations.js';
-import {freezeTask,stageImport,confirmImport,validateScript,validateManifest} from './externalTasks.js';
+import {freezeTask,stageImport,confirmImport,validateScript,validateManifest,type ConfirmOptions} from './externalTasks.js';
 
 type Scope={editableIds?:string[];editablePaths?:string[];findingIds?:string[];media?:'preview'|'film'|'voice'|'captions'};
 type Artifact={value:unknown;sha256:string;id:string};
@@ -217,6 +217,7 @@ export function stageLifecycleResult(appPath:string,root:string,stage:Stage,oper
   const responseSha256=sha(text),token=randomUUID();fs.mkdirSync(path.dirname(resultPath(root,task.id)),{recursive:true});fs.writeFileSync(resultPath(root,task.id),text,{encoding:'utf8',flag:'wx'});atomicJson(pendingPath(root),{token,projectId:state.project.id,taskId:task.id,stage,operation,responseSha256,payload,createdAt:new Date().toISOString()});return{token,before:current.value,after:payload,status:'STAGED'};
 }
 
+export interface LifecyclePublicationOptions { validator?:ConfirmOptions['validator'];hooks?:{afterJournal?:()=>void;afterStaging?:()=>void;afterNativeCommit?:()=>void} }
 const nativeCorrectionJournal=(root:string)=>path.join(lifecycleDir(root),'native-publication.json');
 const manifestSemanticHash=(file:string)=>sha(JSON.stringify(strictJson(fs.readFileSync(file,'utf8'))));
 function finalizeLifecycle(root:string,pending:Record<string,unknown>,task:NonNullable<StudioState['lifecycle']>['tasks'][string]){
@@ -232,7 +233,7 @@ function finalizeLifecycle(root:string,pending:Record<string,unknown>,task:NonNu
   if(fs.existsSync(nativeCorrectionJournal(root)))fs.unlinkSync(nativeCorrectionJournal(root));
   return state;
 }
-async function publishNativeCorrection(appPath:string,root:string,pending:Record<string,unknown>,task:NonNullable<StudioState['lifecycle']>['tasks'][string]){
+async function publishNativeCorrection(appPath:string,root:string,pending:Record<string,unknown>,task:NonNullable<StudioState['lifecycle']>['tasks'][string],options:LifecyclePublicationOptions={}){
   const payload=pending.payload as {artifact:{manifest:Record<string,unknown>;shot_ledger:unknown[];sound_script:unknown[];asset_needs:unknown[]}};
   const desiredSha256=sha(JSON.stringify(payload.artifact.manifest));
   const manifestPath=path.join(root,'project.json');
@@ -244,11 +245,14 @@ async function publishNativeCorrection(appPath:string,root:string,pending:Record
   const journal=saved??{token:pending.token,taskId:task.id,baselineSha256,desiredSha256,authorTaskId:null,status:'PENDING'};
   if(saved&&baselineSha256!==journal.baselineSha256&&baselineSha256!==desiredSha256)
     throw new Error('STALE: independent native manifest change prevents correction retry.');
-  if(!saved)atomicJson(journalFile,journal);
+  if(!saved){atomicJson(journalFile,journal);options.hooks?.afterJournal?.();}
   if(baselineSha256===desiredSha256){
     const finished=readState(root);
-    if(!finished.external.native||!saved||saved.status!=='VALIDATED')
-      throw new Error('RECOVERY_REQUIRED: matching bytes alone do not establish a committed correction.');
+    if(!saved||!finished.external.native||!finished.nativeReadiness?.sampleReady||
+      finished.nativeReadiness.sourceFingerprint!==sha(fs.readFileSync(manifestPath))||
+      finished.tasks?.native?.status!=='IMPORTED')
+      throw new Error('RECOVERY_REQUIRED: matching bytes alone do not establish a validated correction.');
+    journal.status='VALIDATED';journal.publishedRevision=finished.external.native.revision;atomicJson(journalFile,journal);
     return finalizeLifecycle(root,pending,task);
   }
   let authorTask;
@@ -263,8 +267,10 @@ async function publishNativeCorrection(appPath:string,root:string,pending:Record
   const result={schema:'mode-b-external-result-v1',project_id:newState.project.id,task_id:authorTask.id,
     revision:authorTask.revision,input_sha256:authorTask.inputSha256,stage:'native',payload:payload.artifact};
   const pendingImport=stageImport(appPath,root,'native',JSON.stringify(result));
+  options.hooks?.afterStaging?.();
   try{
-    await confirmImport(appPath,root,pendingImport.token);
+    await confirmImport(appPath,root,pendingImport.token,{validator:options.validator});
+    options.hooks?.afterNativeCommit?.();
   }catch(error){
     journal.status='PENDING_RETRY';journal.detail=String(error);atomicJson(journalFile,journal);
     throw error;
@@ -275,7 +281,7 @@ async function publishNativeCorrection(appPath:string,root:string,pending:Record
   journal.status='VALIDATED';journal.publishedRevision=current.external.native.revision;atomicJson(journalFile,journal);
   return finalizeLifecycle(root,pending,task);
 }
-export function confirmLifecycleResult(appPathOrRoot:string,rootOrToken:string,maybeToken?:string):StudioState|Promise<StudioState>{
+export function confirmLifecycleResult(appPathOrRoot:string,rootOrToken:string,maybeToken?:string,options:LifecyclePublicationOptions={}):StudioState|Promise<StudioState>{
   const appPath=maybeToken?appPathOrRoot:path.resolve('.'),root=maybeToken?rootOrToken:appPathOrRoot,token=maybeToken??rootOrToken;
   const file=pendingPath(root);
   if(!fs.existsSync(file))throw new Error('No pending lifecycle result.');
@@ -297,7 +303,7 @@ export function confirmLifecycleResult(appPathOrRoot:string,rootOrToken:string,m
       throw new Error('STALE: original lifecycle artifact changed before confirmation.');
   }
   if(pending.operation==='correct'&&pending.stage==='native')
-    return publishNativeCorrection(appPath,root,pending,task);
+    return publishNativeCorrection(appPath,root,pending,task,options);
   if(pending.operation==='correct'&&pending.stage==='script'){
     const payload=pending.payload as {artifact:{sections:Array<{id:string;text:string}>;authoring:Record<string,unknown>}};
     const checked=validateScript(payload.artifact as unknown as Record<string,unknown>);
