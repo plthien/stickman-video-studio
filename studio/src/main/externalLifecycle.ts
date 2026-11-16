@@ -427,9 +427,19 @@ async function publishNativeCorrection(appPath:string,root:string,pending:Record
       return finalizeLifecycle(root,pending,task);
     }
     if(alreadyPublished){
+      // The original CLI may have successfully published project.json before
+      // lifecycle finalization was interrupted. The journal then still says
+      // PENDING_RETRY, so verify its exact author task and native readiness
+      // rather than misclassifying the completed manifest as auxiliary-only.
+      const validatedManifestResume=Boolean(saved?.authorTaskId&&
+        initial.tasks?.native?.id===saved.authorTaskId&&
+        initial.tasks.native.status==='IMPORTED'&&initial.nativeReadiness?.sampleReady&&
+        initial.nativeReadiness.sourceFingerprint===sha(fs.readFileSync(manifestPath)));
+      const publishedAuxiliary=journal.status==='AUX_PUBLISHED'||journal.status==='AUX_PENDING';
       if(!saved||!initial.external.native||
-        (journal.status!=='AUX_PUBLISHED'&&journal.status!=='AUX_PENDING'&&journal.status!=='VALIDATED'&&journal.status!=='NO_OP'))
-        throw new Error('RECOVERY_REQUIRED: matching creative data without a publication journal is not sufficient.');
+        !(validatedManifestResume||publishedAuxiliary||journal.status==='VALIDATED'))
+        throw new Error('RECOVERY_REQUIRED: matching creative data without verified publication evidence is insufficient.');
+      if(validatedManifestResume){journal.status='VALIDATED';atomicJson(journalFile,journal);}
       return finalizeLifecycle(root,pending,task);
     }
     if(initialArtifact.sha256!==task.artifactSha256)
