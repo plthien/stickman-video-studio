@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {afterEach,describe,expect,it} from 'vitest';
-import {compileAuthority} from '../../src/main/externalAuthority';
+import {compileAuthority,extractScriptAuthor,SCRIPT_AUTHOR_EXTRACTION_REVISION} from '../../src/main/externalAuthority';
 import {freezeTask,sourceFingerprint,stageImport,validateScript} from '../../src/main/externalTasks';
 import {nativeSkillRoot,readState,sha,writeState} from '../../src/main/services';
 import {appPath,cleanup,fixture} from './SixIssueFixtures';
@@ -13,7 +13,9 @@ const sample=()=>{
   const state=readState(root);
   state.project.title='What If Time Froze for One Minute?';
   state.brief.topic='What If Time Froze for One Minute?';
-  state.brief.targetDuration=180;
+  state.brief.targetDuration=60;
+  state.brief.language='English';
+  state.brief.ratio='9:16';
   state.brief.audience=undefined;
   state.brief.purpose=undefined;
   writeState(root,state);
@@ -24,9 +26,9 @@ describe('R2 focused source-exact Script Author handoff',()=>{
     for(const style of ['B1','B2','B3','B4']){
       const author=compileAuthority(appPath,style,'script','author');
       const native=compileAuthority(appPath,style,'native','author');
-      expect(author.version).toBe('script-author-source-exact-v3');
+      expect(author.version).toBe(SCRIPT_AUTHOR_EXTRACTION_REVISION);
       expect(author.scriptAuthorClassification?.KEEP_SCRIPT.length).toBeGreaterThan(20);
-      expect(author.scriptAuthorClassification?.KEEP_SCRIPT.every(entry=>/L\d+$/.test(entry))).toBe(true);
+      expect(author.scriptAuthorClassification?.KEEP_SCRIPT.every(entry=>/L\d+(?:-L\d+|:C\d+-C\d+)$/.test(entry))).toBe(true);
       expect(author.scriptAuthorClassification?.DEFER_NATIVE.some(entry=>entry.includes('autopilot-runtime.md'))).toBe(true);
       expect(author.scriptAuthorClassification?.STUDIO_ONLY).toContain('provider HTTP/cost/credentials');
       expect(author.scriptAuthorClassification?.AGENT_ONLY.length).toBeGreaterThan(0);
@@ -36,16 +38,28 @@ describe('R2 focused source-exact Script Author handoff',()=>{
       expect(native.sources.some(source=>source.path==='references/autopilot-runtime.md')).toBe(true);
       for(const source of author.sources){
         const original=fs.readFileSync(path.join(nativeSkillRoot(appPath).root,source.path));
-        const lines=original.toString('utf8').replace(/\r\n/g,'\n').split('\n');
+        const originalText=original.toString('utf8');
+        const lines=originalText.replace(/\r\n/g,'\n').split('\n');
         expect(sha(original)).toBe(source.sha256);
         expect(sha(source.text)).toBe(source.extractionSha256);
         expect(source.locations?.length).toBeGreaterThan(0);
-        expect(source.extractionRevision).toBe('script-author-source-exact-v3');
-        for(const position of source.locations??[]){
-          const line=lines[Number(position.slice(1))-1];
-          expect(line?.trim()).toBeTruthy();
-          expect(source.text.split('\n').some(part=>part.trim().length>15&&line.includes(part))).toBe(true);
+        expect(source.blocks?.length).toBe(source.locations?.length);
+        expect(source.extractionRevision).toBe(SCRIPT_AUTHOR_EXTRACTION_REVISION);
+        for(const block of source.blocks??[]){
+          expect(source.text).toContain(block.text);
+          expect(originalText).toContain(block.text);
+          const full=block.location.match(/^L(\d+)-L(\d+)$/);
+          const partial=block.location.match(/^L(\d+):C(\d+)-C(\d+)$/);
+          expect(Boolean(full||partial)).toBe(true);
+          if(full){
+            const start=Number(full[1]),end=Number(full[2]);
+            expect(block.text).toBe(lines.slice(start-1,end).join('\n'));
+          }else if(partial){
+            const row=lines[Number(partial[1])-1];
+            expect(block.text).toBe(row.slice(Number(partial[2])-1,Number(partial[3])));
+          }
         }
+        expect((source.blocks??[]).some(b=>b.text.includes('\n'))).toBe(true);
       }
       const styleSource=author.sources.find(source=>source.path.includes('/'+style.toLowerCase()+'-'));
       expect(styleSource).toBeDefined();
@@ -71,18 +85,59 @@ describe('R2 focused source-exact Script Author handoff',()=>{
     expect(task.prompt.indexOf('## 2. Actual project brief')).toBeLessThan(task.prompt.indexOf('## 4. Applicable original Mode B authority'));
     expect(task.prompt.indexOf('## 4. Applicable original Mode B authority')).toBeLessThan(task.prompt.indexOf('## 5. Exact JSON output contract'));
     expect(task.prompt).toContain('What If Time Froze for One Minute?');
-    expect(task.prompt).toContain('180 seconds');
+    expect(task.prompt).toContain('60 seconds');
     expect(task.prompt).toContain('No approved WPM target');
     expect(task.prompt).not.toContain('Fill every required shot, ledger');
     expect(task.prompt).not.toContain('For native authoring, payload.manifest');
     expect(task.prompt).not.toContain('Ground every shot in the approved script and actual word/caption timing');
     expect(task.prompt).not.toContain('## REQUIRED RESPONSE ENVELOPE');
     expect(task.prompt).toContain('mode-b-script-v1');
-    expect(task.prompt).toContain('REQUIRED_NONEMPTY_ARRAY');
+    expect(task.prompt).not.toContain('REQUIRED_NONEMPTY_ARRAY');
+    expect(task.prompt).not.toContain('REPLACE_WITH_ACTUAL_SECTION_ID');
     expect(task.prompt).toContain('source SHA256');
+    expect(task.prompt).toContain('Never copy the kite example');
+    expect(task.prompt).toContain('"language": "English"');
+    expect(task.prompt).toContain('"ratio": "9:16"');
+    const contractStart=task.prompt.indexOf('{\\n',task.prompt.indexOf('## 5. Exact JSON output contract'));
+    const contractEnd=task.prompt.indexOf('\\n\\nRequired payload:',contractStart);
+    expect(contractStart).toBeGreaterThan(0);
+    expect(contractEnd).toBeGreaterThan(contractStart);
+    const example=JSON.parse(task.prompt.slice(contractStart,contractEnd)) as {
+      schema:string;project_id:string;task_id:string;revision:number;
+      input_sha256:string;stage:string;payload:Record<string,unknown>
+    };
+    expect(example).toMatchObject({
+      schema:'mode-b-external-result-v1',project_id:readState(root).project.id,
+      task_id:task.id,revision:task.revision,input_sha256:task.inputSha256,stage:'script'
+    });
+    expect(validateScript(example.payload).sections.map(s=>s.id)).toEqual(['opening','resolution']);
     expect(sha(task.prompt)).toBe(task.promptSha256);
     expect(sha(fs.readFileSync(path.join(root,task.promptPath)))).toBe(task.promptSha256);
     expect(task.inputSha256).toBe(sourceFingerprint(appPath,root,'script'));
+  });
+  it('fails closed if original source contents or a required source path changes',()=>{
+    const file=path.join(nativeSkillRoot(appPath).root,'references/b2-colorful-handdrawn.md');
+    const original=fs.readFileSync(file,'utf8');
+    expect(()=>extractScriptAuthor(original,'references/b2-colorful-handdrawn.md')).not.toThrow();
+    expect(()=>extractScriptAuthor(original.replace('Warm paper','Cold paper'),
+      'references/b2-colorful-handdrawn.md')).toThrow(/original authority changed/);
+    expect(()=>extractScriptAuthor(original,'references/nonexistent-style.md'))
+      .toThrow(/missing Script Author requirement inventory/);
+  });
+  it('keeps style-specific conditions and source-exact multi-line requirements',()=>{
+    const originals=['b1-minimal-handdrawn.md','b2-colorful-handdrawn.md',
+      'b3-television.md','b4-survival-storytelling.md'];
+    const expected=[
+      ['Slender proportions','Act with the whole body','not a hard requirement for every possible story'],
+      ['Maintain physical contact and object ownership','Reusing a setting within one story','not a location quota'],
+      ['If narration names a behavior','same frozen pose','When an animal carries the story'],
+      ['Scripted abnormal anatomy','deliberate-hold exception','This exception does not change A or B1–B3']
+    ];
+    for(let i=0;i<originals.length;i++){
+      const source=compileAuthority(appPath,'B'+(i+1),'script','author').sources
+        .find(s=>s.path.endsWith(originals[i]))!;
+      for(const rule of expected[i])expect(source.text).toContain(rule);
+    }
   });
   it('preserves the existing Native Author prompt and complete original manifest contract',()=>{
     const {root}=fixture({style:'B1'});
