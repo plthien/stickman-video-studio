@@ -186,6 +186,20 @@ function validateReview(payload:Record<string,unknown>,task:NonNullable<StudioSt
     (covered.length!==task.targetIds?.length||task.targetIds?.some(id=>!covered.includes(id))))
     throw new Error('Unsupported review coverage: every requested target must be accounted for.');
   if(!Array.isArray(coverage.modalities)||!Array.isArray(coverage.ranges))throw new Error('Review coverage modalities and ranges must be arrays.');
+  if(coverage.modalities.some(modality=>!['picture','motion','sound','captions','script','manifest'].includes(String(modality)))||
+    new Set(coverage.modalities).size!==coverage.modalities.length)
+    throw new Error('Review coverage claims unknown or duplicate evidence modalities.');
+  for(const range of coverage.ranges){
+    if(!range||typeof range!=='object'||Array.isArray(range))throw new Error('Invalid review time range.');
+    const value=range as Record<string,unknown>;
+    exact(value,['start','end']);
+    if(typeof value.start!=='number'||!Number.isFinite(value.start)||value.start<0||
+      typeof value.end!=='number'||!Number.isFinite(value.end)||value.end<=value.start)
+      throw new Error('Review time ranges require real finite increasing bounds.');
+  }
+  if(operation==='media-review'&&coverage.modalities.some(modality=>['picture','motion','sound'].includes(String(modality))))
+    throw new Error('NOT_VERIFIED: locally packaged media does not establish transferred or inspected audiovisual modalities.');
+
   const findings=payload.findings as unknown[],ids=new Set<string>();
   for(const item of findings){
     if(!item||typeof item!=='object'||Array.isArray(item))throw new Error('Invalid review finding.');
@@ -201,6 +215,9 @@ function validateReview(payload:Record<string,unknown>,task:NonNullable<StudioSt
     const ev=f.evidence as Record<string,unknown>;
     if(!ev||typeof ev!=='object'||Array.isArray(ev)||!['manifest','inferred','unverified','observed'].includes(String(ev.kind))||
        typeof ev.detail!=='string'||!ev.detail.trim())throw new Error('Finding lacks verifiable evidence description.');
+    exact(ev,['kind','detail','source_sha256','time_range']);
+    if(ev.source_sha256!==undefined&&(typeof ev.source_sha256!=='string'||!/^[a-f0-9]{64}$/.test(ev.source_sha256)))throw new Error('Malformed cited evidence SHA.');
+    if(ev.time_range!==undefined){const t=ev.time_range as Record<string,unknown>;if(!t||typeof t!=='object'||Array.isArray(t)||typeof t.start!=='number'||typeof t.end!=='number'||!Number.isFinite(t.start)||!Number.isFinite(t.end)||t.start<0||t.end<=t.start)throw new Error('Invalid observed evidence time range.');}
     if(ev.kind==='observed'&&operation==='media-review')throw new Error('NOT_VERIFIED: local media path/hash is not proof of transferred audiovisual observation.');
   }
   if(operation==='recheck'&&task.findingIds?.some(id=>!ids.has(id)))throw new Error('Recheck omitted a previously unresolved finding.');
