@@ -43,7 +43,7 @@ function registerIpc() {
   ipcMain.handle('external:approveScript',(_event,id:string,note:string)=>{const root=rootFor(id);approveScriptCandidate(root,note);return projectSnapshot(root,app.getAppPath())});
   ipcMain.handle('external:freezeLifecycle',(_event,id:string,stage:Stage,operation:'review'|'correct'|'recheck'|'media-review',scope:Record<string,unknown>,rebuild=false)=>freezeLifecycleTask(app.getAppPath(),rootFor(id),stage,operation,scope,rebuild));
   ipcMain.handle('external:stageLifecycle',(_event,id:string,stage:Stage,operation:'review'|'correct'|'recheck'|'media-review',text:string)=>stageLifecycleResult(app.getAppPath(),rootFor(id),stage,operation,text));
-  ipcMain.handle('external:confirmLifecycle',async(_event,id:string,token:string)=>{const root=rootFor(id);await confirmLifecycleResult(app.getAppPath(),root,token);return projectSnapshot(root,app.getAppPath())});
+  ipcMain.handle('external:confirmLifecycle',async(_event,id:string,token:string,options?:{previewSeconds?:number;allowSampleDraft?:boolean})=>{const root=rootFor(id);await confirmLifecycleResult(app.getAppPath(),root,token,options);return projectSnapshot(root,app.getAppPath())});
   ipcMain.handle('external:reviewPack',(_event,id:string,kind:'preview'|'film'|'voice'|'captions')=>exportReviewPack(rootFor(id),kind));
   ipcMain.handle('external:pendingMedia', (_event, id: string) => getPendingMedia(app.getAppPath(), rootFor(id)));
   ipcMain.handle('external:fulfillMedia', (_event, id: string, token:string, key:string, relative:string, rights:string) => fulfillMedia(app.getAppPath(), rootFor(id), token, key, relative, rights));
