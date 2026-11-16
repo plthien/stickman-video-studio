@@ -242,7 +242,7 @@ async function publishNativeCorrection(appPath:string,root:string,pending:Record
   const saved=fs.existsSync(journalFile)?strictJson(fs.readFileSync(journalFile,'utf8')) as Record<string,unknown>:null;
   if(saved&&(saved.token!==pending.token||saved.taskId!==task.id||saved.desiredSha256!==desiredSha256))
     throw new Error('RECOVERY_REQUIRED: another native correction publication is pending.');
-  const journal=saved??{token:pending.token,taskId:task.id,baselineSha256,desiredSha256,authorTaskId:null,status:'PENDING'};
+  const journal:Record<string,unknown>=saved??{token:pending.token,taskId:task.id,baselineSha256,desiredSha256,authorTaskId:null,status:'PENDING'};
   if(saved&&baselineSha256!==journal.baselineSha256&&baselineSha256!==desiredSha256)
     throw new Error('STALE: independent native manifest change prevents correction retry.');
   if(!saved){atomicJson(journalFile,journal);options.hooks?.afterJournal?.();}
