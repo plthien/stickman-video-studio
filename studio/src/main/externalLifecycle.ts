@@ -400,6 +400,24 @@ export function exportReviewPack(root:string,kind:'preview'|'film'|'voice'|'capt
   };
   for(const file of available.files as Array<{path:string;sha256:string}>)attach(file.path,file.sha256,kind);
   if((kind==='preview'||kind==='film')&&state.voice&&!state.voice.stale)attach(state.voice.path,state.voice.sha256,'voice');
+  const report=kind==='preview'?state.preview:kind==='film'?state.render:null;
+  if(report)attach(report.reportPath,report.reportSha256,'original_native_QA_report');
+  const outputBase=kind==='preview'?'preview':'film';
+  for(const extension of ['srt','vtt']){
+    const subtitlePath='output/'+outputBase+'.'+extension;
+    const filename=resolveProjectFile(root,subtitlePath);
+    if(fs.existsSync(filename))attach(subtitlePath,sha(fs.readFileSync(filename)),'encoded_'+extension);
+  }
+  const sheetPath='output/'+outputBase+'-contact-sheet.png';
+  const sheetFile=resolveProjectFile(root,sheetPath);
+  if(fs.existsSync(sheetFile))attach(sheetPath,sha(fs.readFileSync(sheetFile)),'contact_sheet_stills_not_motion_proof');
+  const promptTask=state.tasks?.native;
+  if(promptTask){
+    const pathToPrompt=resolveProjectFile(root,promptTask.promptPath);
+    if(!fs.existsSync(pathToPrompt)||sha(fs.readFileSync(pathToPrompt))!==promptTask.promptSha256)
+      throw new Error('REBUILD_REQUIRED: original frozen Native authority/task changed before review export.');
+    attach(promptTask.promptPath,promptTask.promptSha256!,'original_frozen_Native_task_authority');
+  }
   const native=strictJson(fs.readFileSync(path.join(root,'project.json'),'utf8')) as Record<string,unknown>;
   const originalTask=state.tasks?.native??null;
   const originalPrompt=originalTask&&fs.existsSync(resolveProjectFile(root,originalTask.promptPath))?
@@ -412,7 +430,7 @@ export function exportReviewPack(root:string,kind:'preview'|'film'|'voice'|'capt
   }
   const pack={schema:'mode-b-review-pack-v2',project_id:state.project.id,kind,created_at:new Date().toISOString(),
     transfer_status:'LOCAL_PACKAGE_CREATED_NOT_PROOF_OF_CHATGPT_TRANSFER',attachments,
-    coverage:available,script:state.approvedScript??null,original_native_task:originalPrompt,
+    coverage:available,script:state.approvedScript??null,original_native_task:originalPrompt,source_requirements:'See attached hash-verified original frozen Native task and the manual media-review prompt; no automatic evidence observation.',
     manifest_sha256:sha(fs.readFileSync(path.join(root,'project.json'))),shots:native.shots??[],
     captions:native.captions??[],actual_word_alignment:words,media_ledger:state.media??[],
     native_qa_report:kind==='preview'?state.preview?.reportPath:kind==='film'?state.render?.reportPath:null,
