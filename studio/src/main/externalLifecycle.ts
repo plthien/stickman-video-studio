@@ -41,7 +41,6 @@ function lifecycleSourceContext(state:StudioState,stage:Stage,operation:External
     scriptCandidate:stage==='script'?state.scriptCandidate??null:null,
     voice:stage==='native'?state.voice??null:null,
     alignment:stage==='native'?state.alignment??null:null,
-    registeredMedia:stage==='native'?state.media??[]:null,
     reviewMedia:operation==='media-review'?{preview:state.preview??null,render:state.render??null}:null
   }));
 }
@@ -53,6 +52,13 @@ function assertLifecycleFresh(appPath:string,root:string,state:StudioState,task:
   const authority=compileAuthority(appPath,state.project.style,task.stage,task.operation);
   if(!task.authorityFingerprint||task.authorityFingerprint!==authorityIdentity(authority))
     throw new Error('REBUILD_REQUIRED: installed Mode B creative authority changed.');
+  for(const item of task.mediaBaseline??[]){
+    const live=(state.media??[]).find(row=>JSON.stringify(row)===JSON.stringify(item));
+    if(!live)throw new Error('STALE: accepted media ledger entry changed or was removed.');
+    const file=resolveProjectFile(root,item.path);
+    if(!fs.existsSync(file)||sha(fs.readFileSync(file))!==item.sha256)
+      throw new Error('STALE: accepted media bytes changed outside an authorized correction.');
+  }
   const source=state.tasks?.[task.stage];
   if(!journalResume&&(!source||!task.originalTaskSha256||source.promptSha256!==task.originalTaskSha256))
     throw new Error('REBUILD_REQUIRED: original frozen author task changed.');
@@ -172,7 +178,7 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   const relative='.studio/external/lifecycle/tasks/'+stage+'-'+operation+'-'+revision+'-'+id+'.md',target=resolveProjectFile(root,relative);
   fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,prompt,{encoding:'utf8',flag:'wx'});
   state.lifecycle??={tasks:{},artifacts:{}};
-  state.lifecycle.tasks[key]={id,stage,operation,revision,inputSha256,artifactSha256:artifact.sha256,promptPath:relative,promptSha256:sha(prompt),status:'FROZEN',createdAt:new Date().toISOString(),editableIds,editablePaths,targetIds,findingIds,originalTaskSha256:sha(originalTask),sourceContextSha256,authorityFingerprint,mediaTransferAttested,mediaSha256s,mediaDuration};
+  state.lifecycle.tasks[key]={id,stage,operation,revision,inputSha256,artifactSha256:artifact.sha256,promptPath:relative,promptSha256:sha(prompt),status:'FROZEN',createdAt:new Date().toISOString(),editableIds,editablePaths,targetIds,findingIds,originalTaskSha256:sha(originalTask),sourceContextSha256,authorityFingerprint,mediaTransferAttested,mediaSha256s,mediaDuration,mediaBaseline:structuredClone(state.media??[])};
   writeState(root,state);
   return{...state.lifecycle.tasks[key],prompt};
 }
