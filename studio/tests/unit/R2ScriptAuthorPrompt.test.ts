@@ -79,6 +79,7 @@ describe('R2 focused source-exact Script Author handoff',()=>{
   it('Script prompt is mission-first, duration-aware and has no Native delivery directives',()=>{
     const root=sample(),task=freezeTask(appPath,root,'script');
     const bytes=Buffer.byteLength(task.prompt,'utf8');
+    console.info('B1_SCRIPT_AUTHOR_60S_MEASURED',JSON.stringify({bytes,lines:task.prompt.split('\n').length,approxTokensByChars:Math.ceil(task.prompt.length/4)}));
     expect(bytes).toBeGreaterThan(1000);
     expect(task.prompt.split('\n').length).toBeGreaterThan(30);
     expect(task.prompt.indexOf('## 1. Mission and deliverable')).toBeLessThan(task.prompt.indexOf('## 2. Actual project brief'));
