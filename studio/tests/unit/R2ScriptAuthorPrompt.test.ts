@@ -26,7 +26,7 @@ describe('R2 focused source-exact Script Author handoff',()=>{
       const native=compileAuthority(appPath,style,'native','author');
       expect(author.version).toBe('script-author-source-exact-v3');
       expect(author.scriptAuthorClassification?.KEEP_SCRIPT.length).toBeGreaterThan(20);
-      expect(author.scriptAuthorClassification?.KEEP_SCRIPT.every(entry=>/L\\d+$/.test(entry))).toBe(true);
+      expect(author.scriptAuthorClassification?.KEEP_SCRIPT.every(entry=>/L\d+$/.test(entry))).toBe(true);
       expect(author.scriptAuthorClassification?.DEFER_NATIVE.some(entry=>entry.includes('autopilot-runtime.md'))).toBe(true);
       expect(author.scriptAuthorClassification?.STUDIO_ONLY).toContain('provider HTTP/cost/credentials');
       expect(author.scriptAuthorClassification?.AGENT_ONLY.length).toBeGreaterThan(0);
