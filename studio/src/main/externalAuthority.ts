@@ -238,7 +238,25 @@ export function compileAuthority(appPath:string,style:string,stage:Stage,operati
     rules.push('Review independently against the frozen original task and exact evidence; distinguish observed, inferred and not verified.');
   if(operation==='correct')
     rules.push('Return a complete importable artifact. Change only authorized targets/paths; preserve everything outside scope exactly.');
+  const scriptAuthorClassification=stage==='script'&&operation==='author'?{
+    KEEP_SCRIPT:sources.flatMap(item=>(item.locations??[]).map(location=>item.path+':'+location)),
+    DEFER_NATIVE:[
+      'references/autopilot-runtime.md (original manifest, CLI and cache)',
+      'references/autopilot-production-qa.md#Whole-film delivery gate',
+      'references/autopilot-sound-system.md#Mix, runtime and acceptance',
+      'Native shot/caption timing, original project.json v1 and asset publication',
+      ...(style==='B4'?[
+        'references/b4-survival-storytelling.md#Generation and anti-drift gates',
+        'references/b4-opening-direction.md#Acceptance evidence',
+        'references/b4-audio-direction.md#Evidence and acceptance gates'
+      ]:[])
+    ],
+    STUDIO_ONLY:['provider HTTP/cost/credentials','WAV/alignment/media bytes and licensing checks',
+      'original CLI execution, actual preview/render verification and owner approval'],
+    AGENT_ONLY:['automatic tool dispatch, local terminal/browser automation and unattended producer calls']
+  }:undefined;
   return {version:stage==='script'&&operation==='author'?'script-author-source-exact-v3':AUTHORITY_EXTRACTION_REVISION,style,stage,operation,rules,sources,
+    ...(scriptAuthorClassification?{scriptAuthorClassification}:{}),
     matrix:{KEEP:sources.map(item=>item.path),
       MOVE_TO_NATIVE:stage==='script'?['references/autopilot-runtime.md','native project.json contract','native CLI validation and production approval']:[],
       STUDIO_ONLY:['provider HTTP/credentials','CLI execution','cache internals','local media filesystem publication','owner approvals'],
