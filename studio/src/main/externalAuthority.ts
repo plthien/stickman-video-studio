@@ -77,9 +77,9 @@ export const SCRIPT_AUTHOR_EXTRACTION_REVISION='script-author-complete-blocks-v4
 function extractScriptAuthor(full:string,relative:string){
   const spans=SCRIPT_AUTHOR_BLOCKS[relative],expectedBlob=SCRIPT_AUTHOR_BLOB_SHA1[relative];
   if(!spans?.length||!expectedBlob)throw new Error('REBUILD_REQUIRED: missing Script Author requirement inventory: '+relative);
-  const actualBlob=createHash('sha1').update('blob '+Buffer.byteLength(full,'utf8')+'\\0').update(full,'utf8').digest('hex');
+  const actualBlob=createHash('sha1').update('blob '+Buffer.byteLength(full,'utf8') +String.fromCharCode(0)).update(full,'utf8').digest('hex');
   if(actualBlob!==expectedBlob)throw new Error('REBUILD_REQUIRED: Script Author original authority changed: '+relative);
-  const lines=full.replace(/\\r\\n/g,'\\n').split('\\n'),locations:string[]=[],sections=new Map<string,string[]>();
+  const lines=full.replace(/\r\n/g,'\n').split('\n'),locations:string[]=[],sections=new Map<string,string[]>();
   let lastEnd=0;
   for(const [start,end] of spans){
     if(!Number.isInteger(start)||!Number.isInteger(end)||start<1||end<start||end>lines.length||start<=lastEnd)
@@ -87,7 +87,7 @@ function extractScriptAuthor(full:string,relative:string){
     lastEnd=end;
     const location='L'+start+'-L'+end;
     const mixed=SCRIPT_AUTHOR_MIXED_SENTENCES[relative+':'+location];
-    let excerpt=lines.slice(start-1,end).join('\\n');
+    let excerpt=lines.slice(start-1,end).join('\n');
     if(mixed){
       const [from,to]=mixed,fromIndex=excerpt.indexOf(from),toIndex=excerpt.indexOf(to,fromIndex);
       if(fromIndex<0||toIndex<0||excerpt.indexOf(from,fromIndex+1)!==-1||
@@ -100,7 +100,7 @@ function extractScriptAuthor(full:string,relative:string){
     const grouped=sections.get(heading)??[];grouped.push(excerpt);sections.set(heading,grouped);
     locations.push('L'+start+'-L'+end);
   }
-  const text=[...sections].map(([heading,blocks])=>heading+'\\n'+blocks.join('\\n\\n')).join('\\n\\n');
+  const text=[...sections].map(([heading,blocks])=>heading+'\n'+blocks.join('\n\n')).join('\n\n');
   return{text,headings:[...sections.keys()],locations};
 }
 
