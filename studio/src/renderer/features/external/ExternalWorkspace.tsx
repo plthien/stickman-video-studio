@@ -31,7 +31,7 @@ export function ExternalWorkspace(){
               media:expectedOperation==='Media review'?(task.mediaKind??reviewMediaKind):undefined,
               transferAcknowledged:expectedOperation==='Media review'?Boolean(task.mediaTransferAttested):undefined};
             setReviewTargets(fields.targetIds.join(', '));setEditable(fields.editableIds.join(', '));
-            setEditablePaths(fields.editablePaths.join(', '));setFindingScope(fields.findingIds.join(', '));
+            setEditablePaths(fields.editablePaths.join(', '));setFindingScope((fields.findingIds??[]).join(', '));
             if(task.mediaKind)setReviewMediaKind(task.mediaKind);setTransferAcknowledged(Boolean(task.mediaTransferAttested));
             setFrozenScopeKey(JSON.stringify(fields));
           }
