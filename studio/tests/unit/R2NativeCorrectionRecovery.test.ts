@@ -38,7 +38,9 @@ describe('R2 Native correction transaction failure and retry',()=>{
     expect(fs.readFileSync(path.join(root,'project.json'))).toEqual(before);
     expect(readState(root).lifecycle?.tasks['native:correct'].status).toBe('FROZEN');
     expect(fs.existsSync(path.join(root,'.studio/external/lifecycle/pending.json'))).toBe(true);
+    const validationsBefore=cli.calls.length;
     await confirmLifecycleResult(appPath,root,staged.token,{validator:cli.run});
+    expect(cli.calls.length).toBeGreaterThan(validationsBefore);
     expect(readState(root).lifecycle?.tasks['native:correct'].status).toBe('IMPORTED');
     expect(readState(root).lifecycle?.artifacts[task.id].taskId).toBe(task.id);
     expect(JSON.parse(fs.readFileSync(path.join(root,'project.json'),'utf8'))).toEqual(corrected.manifest);
@@ -145,6 +147,18 @@ describe('R2 auxiliary-only publication and complete artifact identity',()=>{
     await confirmLifecycleResult(appPath,p.root,p.token,{validator:async()=>{throw new Error('retry cannot call CLI');}});
     expect((readState(p.root).external.native!.artifact as {soundScript:unknown[]}).soundScript)
       .toEqual(p.artifact.sound_script);
+    expect(readState(p.root).lifecycle?.tasks['native:correct'].status).toBe('IMPORTED');
+  });
+  it('resumes after interrupted auxiliary staging without touching last-good state',async()=>{
+    const p=await auxiliaryProposal(['/sound_script'],a=>{a.sound_script=[{intent:'Suspense build'}];});
+    const beforeRevision=readState(p.root).external.native!.revision;
+    await expect(Promise.resolve(confirmLifecycleResult(appPath,p.root,p.token,{
+      hooks:{afterStaging:()=>{throw new Error('Injected aux staging interruption');}}})))
+      .rejects.toThrow(/Injected aux staging/);
+    expect(readState(p.root).external.native!.revision).toBe(beforeRevision);
+    expect(fs.readFileSync(path.join(p.root,'project.json'))).toEqual(p.before);
+    await confirmLifecycleResult(appPath,p.root,p.token);
+    expect(readState(p.root).external.native!.revision).toBe(beforeRevision+1);
     expect(readState(p.root).lifecycle?.tasks['native:correct'].status).toBe('IMPORTED');
   });
   it('rejects mutation of global native fields not in auxiliary scope',async()=>{
