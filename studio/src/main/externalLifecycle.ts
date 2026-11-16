@@ -6,7 +6,7 @@ import {compileAuthority} from './externalAuthority.js';
 import {rejectNativeUnsafePaths,validateAuthoring} from './sourceCitations.js';
 import {freezeTask,stageImport,confirmImport,validateScript,validateManifest,type ConfirmOptions} from './externalTasks.js';
 
-type Scope={editableIds?:string[];editablePaths?:string[];findingIds?:string[];media?:'preview'|'film'|'voice'|'captions'};
+type Scope={editableIds?:string[];editablePaths?:string[];findingIds?:string[];media?:'preview'|'film'|'voice'|'captions';transferAcknowledged?:boolean};
 type Artifact={value:unknown;sha256:string;id:string};
 const exact=(value:Record<string,unknown>,keys:string[])=>{const extra=Object.keys(value).filter(key=>!keys.includes(key));if(extra.length)throw new Error(`Unknown field: ${extra[0]}`)};
 const lifecycleDir=(root:string)=>resolveProjectFile(root,'.studio/external/lifecycle');
@@ -60,6 +60,29 @@ function assertLifecycleFresh(appPath:string,root:string,state:StudioState,task:
   if(!fs.existsSync(file)||sha(fs.readFileSync(file))!==task.promptSha256)
     throw new Error('REBUILD_REQUIRED: lifecycle task prompt changed.');
 }
+function attestLocalTransfer(root:string,kind:'preview'|'film'|'voice'|'captions',files:Array<{path:string;sha256:string}>){
+  const base=resolveProjectFile(root,'.studio/external/review-packs');
+  if(!fs.existsSync(base))throw new Error('MEDIA_PACK_REQUIRED: export an actual media package before manual transfer attestation.');
+  const folders=fs.readdirSync(base,{withFileTypes:true}).filter(item=>item.isDirectory()&&item.name.startsWith(kind+'-'));
+  for(const folder of folders){
+    const directory=path.join(base,folder.name),file=path.join(directory,'review-package.json');
+    if(!fs.existsSync(file))continue;
+    let pack:Record<string,unknown>;
+    try{pack=strictJson(fs.readFileSync(file,'utf8')) as Record<string,unknown>;}catch{continue;}
+    if(pack.kind!==kind||pack.schema!=='mode-b-review-pack-v2')continue;
+    const items=pack.attachments as Array<{sha256:string;path:string}>|undefined;
+    if(!Array.isArray(items)||!files.every(item=>items.some(ref=>ref.sha256===item.sha256)))continue;
+    let valid=true;
+    for(const item of items){
+      if(typeof item.path!=='string'||!/^media\/[A-Za-z0-9._-]+$/.test(item.path)||
+        typeof item.sha256!=='string'||!(/^[a-f0-9]{64}$/.test(item.sha256))){valid=false;break;}
+      const physical=path.join(directory,item.path);
+      if(!fs.existsSync(physical)||sha(fs.readFileSync(physical))!==item.sha256){valid=false;break;}
+    }
+    if(valid)return folder.name;
+  }
+  throw new Error('MEDIA_PACK_REQUIRED: no current exported package matches exact preview/audio SHA-256 bytes.');
+}
 export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,operation:Exclude<ExternalOperation,'author'>,scope:Scope={},rebuild=false){
   if(!['review','correct','recheck','media-review'].includes(operation))throw new Error('Unsupported lifecycle operation.');
   const state=readState(root),artifact=artifactFor(root,state,stage,operation),authority=compileAuthority(appPath,state.project.style,stage,operation);
@@ -69,6 +92,19 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   const originalTask=fs.readFileSync(resolveProjectFile(root,ownerTask.promptPath),'utf8');
   if(ownerTask.promptSha256!==sha(originalTask))throw new Error('REBUILD_REQUIRED: original frozen author task was modified.');
   const evidencePack=operation==='media-review'?evidence(root,state,scope):{status:'NOT_APPLICABLE',modalities:[],ranges:[],files:[]};
+  let mediaTransferAttested=false,mediaSha256s:string[]=[],mediaDuration:number|undefined;
+  if(operation==='media-review'){
+    const listed=evidencePack.files as Array<{path:string;sha256:string}>;
+    mediaSha256s=listed.map(file=>file.sha256);
+    const duration=(evidencePack.ranges as Array<{start:number;end?:number|null}>)[0]?.end;
+    if(typeof duration==='number'&&Number.isFinite(duration)&&duration>0)mediaDuration=duration;
+    if(scope.transferAcknowledged===true){
+      if(!scope.media)throw new Error('Missing explicit media kind for transfer attestation.');
+      attestLocalTransfer(root,scope.media,listed);
+      mediaTransferAttested=true;
+      evidencePack.status='OWNER_ATTESTED_FILE_TRANSFER_NOT_VERIFIED_BY_STUDIO';
+    }else evidencePack.status='AVAILABLE_LOCALLY_NOT_TRANSFERRED';
+  }
   const editableIds=[...new Set(scope.editableIds??[])],editablePaths=[...new Set(scope.editablePaths??[])];
   if(operation==='correct'&&!editableIds.length&&!editablePaths.length)throw new Error('Correct requires explicit non-empty editable IDs or field paths.');
   if(editableIds.some(id=>typeof id!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(id)))throw new Error('Invalid editable ID.');
@@ -92,7 +128,7 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
     throw new Error('Recheck must account for every unresolved prior finding.');
   const key=stage+':'+operation,prior=state.lifecycle?.tasks[key];
   const snapshot={projectId:state.project.id,stage,operation,artifactSha256:artifact.sha256,authorityHashes:authority.sources.map(item=>[item.path,item.sha256,item.extractionSha256]),
-    originalTaskSha256:sha(originalTask),evidencePack,editableIds,editablePaths,findingIds:findingIds,targetIds,relevantPrior};
+    originalTaskSha256:sha(originalTask),evidencePack,mediaTransferAttested,mediaSha256s,mediaDuration,editableIds,editablePaths,findingIds,targetIds,relevantPrior};
   const sourceContextSha256=lifecycleSourceContext(state,stage,operation),authorityFingerprint=authorityIdentity(authority);
   const inputSha256=sha(JSON.stringify({...snapshot,sourceContextSha256,authorityFingerprint}));
   if(!rebuild&&prior?.status==='FROZEN'&&prior.inputSha256===inputSha256&&fs.existsSync(resolveProjectFile(root,prior.promptPath)))
@@ -104,7 +140,7 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
       artifact:stage==='script'?{schema:'mode-b-script-v1',sections:(artifact.value as {sections:unknown[]}).sections,authoring:(artifact.value as {authoring:unknown}).authoring}:
       artifact.value}:
     {schema:'mode-b-review-v1',artifact_sha256:artifact.sha256,status:'INSUFFICIENT_EVIDENCE',
-      coverage:{target_ids:targetIds,modalities:[],ranges:[]},findings:[]};
+      coverage:{target_ids:targetIds,modalities:[],ranges:[],media_sha256s:mediaTransferAttested?mediaSha256s:[]},findings:[]};
   const envelope={schema:'mode-b-lifecycle-result-v1',project_id:state.project.id,task_id:id,revision,input_sha256:inputSha256,stage,operation,payload:contract};
   const nativeOrScriptRules=authority.sources.map(source=>
     'BEGIN SOURCE '+source.path+' | full SHA256 '+source.sha256+' | extracted SHA256 '+source.extractionSha256+
@@ -114,6 +150,7 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
     'Manual ChatGPT handoff: return a single strict JSON object, no Markdown. Independent review is not owner approval.',
     'Original frozen author task is authoritative. Do not report observing files, frames, audio, motion or timestamps unless they were actually transferred into this ChatGPT conversation.',
     'A local path/hash alone proves no inspection. Correct only explicitly authorized IDs or field paths. Return the COMPLETE artifact.',
+    'Media transfer attestation is an owner declaration, not automated proof ChatGPT watched or listened. Cite exact media SHA and real time/shot IDs for audiovisual findings; if not genuinely provided, mark INSUFFICIENT_EVIDENCE.',
     'ORIGINAL FROZEN AUTHOR TASK | SHA256 '+sha(originalTask),originalTask,
     'STAGE-SCOPED INSTALLED NORMATIVE AUTHORITY',nativeOrScriptRules,
     'CREATIVE DECISIONS / BRIEF',JSON.stringify({brief:state.brief,approvedScript:state.approvedScript??null,currentCandidate:state.scriptCandidate??null},null,2),
@@ -127,7 +164,7 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   const relative='.studio/external/lifecycle/tasks/'+stage+'-'+operation+'-'+revision+'-'+id+'.md',target=resolveProjectFile(root,relative);
   fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,prompt,{encoding:'utf8',flag:'wx'});
   state.lifecycle??={tasks:{},artifacts:{}};
-  state.lifecycle.tasks[key]={id,stage,operation,revision,inputSha256,artifactSha256:artifact.sha256,promptPath:relative,promptSha256:sha(prompt),status:'FROZEN',createdAt:new Date().toISOString(),editableIds,editablePaths,targetIds,findingIds,originalTaskSha256:sha(originalTask),sourceContextSha256,authorityFingerprint};
+  state.lifecycle.tasks[key]={id,stage,operation,revision,inputSha256,artifactSha256:artifact.sha256,promptPath:relative,promptSha256:sha(prompt),status:'FROZEN',createdAt:new Date().toISOString(),editableIds,editablePaths,targetIds,findingIds,originalTaskSha256:sha(originalTask),sourceContextSha256,authorityFingerprint,mediaTransferAttested,mediaSha256s,mediaDuration};
   writeState(root,state);
   return{...state.lifecycle.tasks[key],prompt};
 }
