@@ -53,15 +53,15 @@ const SCRIPT_AUTHOR_BLOB_SHA1:Record<string,string>={
  */
 const SCRIPT_AUTHOR_BLOCKS:Record<string,Array<readonly [number,number]>>={
   'SKILL.md':[[19,19],[21,23],[25,25]],
-  'references/autopilot.md':[[5,5],[11,15],[17,19],[25,26],[43,43],[49,52]],
+  'references/autopilot.md':[[5,5],[11,15],[17,19],[25,25],[43,43],[49,52]],
   'references/autopilot-production-qa.md':[[5,9],[19,27],[29,34],[40,42],[44,46],[48,48]],
-  'references/autopilot-sound-system.md':[[5,7],[18,24],[61,72],[76,76],[80,80],[84,91]],
-  'references/b1-minimal-handdrawn.md':[[7,13],[15,23],[29,31]],
+  'references/autopilot-sound-system.md':[[5,7],[18,24],[61,72],[80,80],[84,91]],
+  'references/b1-minimal-handdrawn.md':[[7,13],[15,15],[19,23],[29,31]],
   'references/b2-colorful-handdrawn.md':[[7,13],[17,17],[19,19],[21,21],[23,25]],
   'references/b3-television.md':[[11,13],[29,39],[41,43],[47,57],[69,73]],
   'references/b4-survival-storytelling.md':[[21,39],[41,47],[61,61],[65,66]],
   'references/b4-opening-direction.md':[[11,14],[16,34],[40,54],[56,58]],
-  'references/b4-audio-direction.md':[[9,9],[17,17],[19,19],[28,32],[38,40],[47,47],[53,55]]
+  'references/b4-audio-direction.md':[[9,9],[17,17],[19,19],[28,30],[32,32],[38,40],[47,47],[53,55]]
 };
 /** For a mixed-stage source line only: exact complete consecutive sentences with
  * a verified source boundary. All other source ranges are reproduced whole.
@@ -71,7 +71,8 @@ const SCRIPT_AUTHOR_MIXED_SENTENCES:Record<string,readonly [string,string]>={
   'references/b2-colorful-handdrawn.md:L21-L21':['Reusing a setting within one story','preserve its spatial and prop continuity.'],
   'references/autopilot-production-qa.md:L48-L48':['B1–B4 styles, languages, previews and films use','at a time**.'],
   'references/b4-survival-storytelling.md:L61-L61':['Default to English and **fix the main narrator','unless the user explicitly chooses otherwise.'],
-  'references/b4-audio-direction.md:L9-L9':['Brian remains the narrator across scenes,','not a new actor.']
+  'references/b4-audio-direction.md:L9-L9':['Brian remains the narrator across scenes,','not a new actor.'],
+  'references/b4-audio-direction.md:L32-L32':['Fit picture to the approved voice,','with no fixed SFX-only title pad.']
 };
 export const SCRIPT_AUTHOR_EXTRACTION_REVISION='script-author-complete-blocks-v4';
 export function extractScriptAuthor(full:string,relative:string){
