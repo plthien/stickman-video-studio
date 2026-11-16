@@ -148,9 +148,22 @@ describe('R2 auxiliary-only publication and complete artifact identity',()=>{
     expect(readState(p.root).lifecycle?.tasks['native:correct'].status).toBe('IMPORTED');
   });
   it('rejects mutation of global native fields not in auxiliary scope',async()=>{
-    const p=await auxiliaryProposal(['/sound_script'],()=>{});
-    const pendingFile=path.join(p.root,'.studio/external/lifecycle/results',p.task.id+'.json');
-    expect(fs.existsSync(pendingFile)).toBe(true);
-    // Scoped global-field rejection is also covered by R2MainFlowAuthorityAndLocks.
+    const {root}=fixture({style:'B1'});
+    const {response}=stageNative(root,nativePayload(root));
+    await confirmImport(appPath,root,response.token,{validator:validator().run});
+    const state=readState(root),task=freezeLifecycleTask(appPath,root,'native','correct',
+      {editablePaths:['/sound_script']});
+    const existing=state.external.native!.artifact as {shotLedger?:unknown[];soundScript?:unknown[];assetNeeds?:unknown[]};
+    const manifest=JSON.parse(fs.readFileSync(path.join(root,'project.json'),'utf8')) as Record<string,unknown>;
+    manifest.fps=15;
+    const result={schema:'mode-b-lifecycle-result-v1',project_id:state.project.id,task_id:task.id,
+      revision:task.revision,input_sha256:task.inputSha256,stage:'native',operation:'correct',
+      payload:{schema:'mode-b-correction-v1',artifact_sha256:task.artifactSha256,
+        finding_ids:[],editable_ids:[],editable_paths:['/sound_script'],
+        artifact:{manifest,shot_ledger:existing.shotLedger??[],
+          sound_script:existing.soundScript??[],asset_needs:existing.assetNeeds??[]}}};
+    expect(()=>stageLifecycleResult(appPath,root,'native','correct',JSON.stringify(result)))
+      .toThrow(/Locked native\/creative field/);
+    expect(readState(root).lifecycle?.tasks['native:correct'].status).toBe('FROZEN');
   });
 });
