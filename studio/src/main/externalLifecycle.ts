@@ -105,7 +105,7 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   return{...state.lifecycle.tasks[key],prompt};
 }
 
-function validateLocks(stage:Stage,before:unknown,after:unknown,editable:string[],editablePaths:string[]){
+export function validateLocks(stage:Stage,before:unknown,after:unknown,editable:string[],editablePaths:string[]){
   const parent=stage==='script'?'/sections':'/manifest/shots';
   const oldRows=stage==='script'?((before as {sections:Array<{id:string}>}).sections):
     ((before as {manifest:{shots:Array<{id:string}>}}).manifest.shots);
