@@ -4,9 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { atomicJson, nativeSkillRoot, readState, resolveProjectFile, runProcess, safeImportedFile, sha, strictJson, writeState, type Stage, type StudioState } from './services.js';
 import { approvedCaptionCues, nativeVoiceTiming } from './captionReview.js';
 import { rejectNativeUnsafePaths, validateAuthoring } from './sourceCitations.js';
+import { compileAuthority } from './externalAuthority.js';
 
-const STYLE: Record<string, string> = { B1: 'b1-minimal-handdrawn.md', B2: 'b2-colorful-handdrawn.md', B3: 'b3-television.md', B4: 'b4-survival-storytelling.md' };
-const COMMON = ['SKILL.md', 'references/autopilot.md', 'references/autopilot-runtime.md', 'references/autopilot-production-qa.md', 'references/autopilot-sound-system.md'];
 const exactKeys = (object: Record<string, unknown>, allowed: string[]) => { const extra = Object.keys(object).filter(key => !allowed.includes(key)); if (extra.length) throw new Error(`Unknown field: ${extra[0]}`); };
 const readUtf8 = (file: string) => fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
 const readJsonValue = (file: string) => (strictJson(`{"value":${readUtf8(file)}}`) as { value: unknown }).value;
@@ -22,19 +21,20 @@ const projectContext = (state: StudioState, root: string, stage:Stage) => {
     words=readJsonValue(resolveProjectFile(root,state.alignment.path));captionCues=readJsonValue(resolveProjectFile(root,state.alignment.captionsPath));
     approvedCues=approvedCaptionCues(root);
   }
-  return { project_id: state.project.id, title: state.project.title, topic: state.brief.topic, audience: state.brief.audience ?? '', purpose: state.brief.purpose ?? '', language: state.brief.language, ratio: state.brief.ratio, target_duration_seconds: state.brief.targetDuration ?? null, style: state.project.style, approved_script: state.approvedScript ?? null, voice: state.voice ? { path: state.voice.path, sha256: state.voice.sha256, duration: state.voice.duration, stale: state.voice.stale, origin: state.voice.origin, profile_id: state.voice.profileId, profile_version: state.voice.profileVersion } : null, alignment: state.alignment ? { provenance: state.alignment.origin, audio_sha256: state.alignment.audioSha256, script_sha256: state.alignment.scriptSha256, words_sha256: state.alignment.wordsSha256, cues_sha256: state.alignment.cuesSha256, words, caption_cues: captionCues, approved_caption_cues: approvedCues, caption_review: state.alignment.captionReview ?? null } : null, media_ledger: state.media ?? [], assets, native_manifest: manifest };
+  const common={project_id:state.project.id,title:state.project.title,topic:state.brief.topic,audience:state.brief.audience??'',purpose:state.brief.purpose??'',language:state.brief.language,ratio:state.brief.ratio,target_duration_seconds:state.brief.targetDuration??null,style:state.project.style};
+  if(stage==='script')return{...common,approved_script:state.approvedScript??null};
+  return { ...common, approved_script: state.approvedScript ?? null, voice: state.voice ? { path: state.voice.path, sha256: state.voice.sha256, duration: state.voice.duration, stale: state.voice.stale, origin: state.voice.origin, profile_id: state.voice.profileId, profile_version: state.voice.profileVersion } : null, alignment: state.alignment ? { provenance: state.alignment.origin, audio_sha256: state.alignment.audioSha256, script_sha256: state.alignment.scriptSha256, words_sha256: state.alignment.wordsSha256, cues_sha256: state.alignment.cuesSha256, words, caption_cues: captionCues, approved_caption_cues: approvedCues, caption_review: state.alignment.captionReview ?? null } : null, media_ledger: state.media ?? [], assets, native_manifest: manifest };
 };
-const sourceBundle = (appPath: string, style: string) => {
-  const { root } = nativeSkillRoot(appPath); const files = [...COMMON, `references/${STYLE[style]}`];
-  if (style === 'B4') files.push('references/b4-opening-direction.md', 'references/b4-audio-direction.md');
-  return files.map(relative => { const text = readUtf8(path.join(root, relative)); return { relative, sha256: sha(text), text }; });
+const sourceBundle=(appPath:string,style:string,stage:Stage)=>{
+  const authority=compileAuthority(appPath,style,stage,'author');
+  return authority.sources.map(source=>({relative:source.path,sha256:source.sha256,text:`Applicable compact normative rules:\n${authority.rules.map((rule,index)=>`${index+1}. ${rule}`).join('\n')}\nLegacy REQUIRED_NONEMPTY_ARRAY placeholder values are forbidden; replace every illustrative field with actual content.\nTraceability only: ${source.path} [${source.sha256}]. Local CLI/provider execution remains Studio-owned.`}));
 };
 export function sourceFingerprint(appPath: string, root: string, stage: Stage) {
-  const state = readState(root), context = projectContext(state, root, stage), sources = sourceBundle(appPath, state.project.style);
+  const state = readState(root), context = projectContext(state, root, stage), authority=compileAuthority(appPath,state.project.style,stage,'author');
   // New unassigned media files never change creative authority. Existing assets are
   // separately snapshotted with their exact bytes at freeze and checked at both gates.
   const creative = Object.fromEntries(Object.entries(context).filter(([key]) => key !== 'assets' && key !== 'media_ledger'));
-  return sha(JSON.stringify({ stage, creative, sources: sources.map(item => [item.relative, item.sha256]) }));
+  return sha(JSON.stringify({ stage, creative, authority }));
 }
 const mediaSnapshot = (state: StudioState) => (state.media ?? []).map(row => ({
   path: row.path, sha256: row.sha256, rights: row.rights, kind: row.kind,
@@ -52,6 +52,7 @@ function assertFrozenSource(appPath:string,root:string,stage:Stage,state:StudioS
   const task=state.tasks?.[stage];
   if(!task||task.status!=='FROZEN')throw new Error('No current frozen task exists.');
   if(!task.sourceFingerprint||sourceFingerprint(appPath,root,stage)!==task.sourceFingerprint)throw new Error('frozen task creative source is stale; rebuild it before import.');
+  if(stage==='script')return task;
   if(!task.assetBaseline||!task.mediaBaseline)throw new Error('REBUILD_REQUIRED: old task lacks verifiable frozen media inventory.');
   const currentMedia=mediaSnapshot(state);
   for(const row of task.mediaBaseline)if(!currentMedia.some(item=>JSON.stringify(item)===JSON.stringify(row)))throw new Error('frozen task registered media changed; rebuild required.');
@@ -62,16 +63,17 @@ function assertFrozenSource(appPath:string,root:string,stage:Stage,state:StudioS
   return task;
 }
 export function freezeTask(appPath: string, root: string, stage: Stage, rebuild = false) {
-  const state = readState(root); const context = projectContext(state, root, stage); const sources = sourceBundle(appPath, state.project.style);
+  const state = readState(root); const context = projectContext(state, root, stage); const sources = sourceBundle(appPath, state.project.style,stage);
   const inputSha256 = sourceFingerprint(appPath, root, stage); const prior = state.tasks?.[stage];
   if (!rebuild && prior && prior.inputSha256 === inputSha256 && fs.existsSync(resolveProjectFile(root, prior.promptPath))) return { ...prior, prompt: readUtf8(resolveProjectFile(root, prior.promptPath)) };
   if (prior) prior.status = 'STALE'; const revision = (prior?.revision ?? 0) + 1; const id = randomUUID();
   const response = stage === 'script'
-    ? { schema: 'mode-b-external-result-v1', project_id: state.project.id, task_id: id, revision, input_sha256: inputSha256, stage, payload: { schema: 'mode-b-script-v1', sections: 'REQUIRED_NONEMPTY_ARRAY_OF_UNIQUE_ID_AND_ACTUAL_TEXT', authoring: 'REQUIRED_ACTUAL_CREATIVE_AUTHORING_OBJECT' } }
-    : { schema: 'mode-b-external-result-v1', project_id: state.project.id, task_id: id, revision, input_sha256: inputSha256, stage, payload: { manifest: 'REQUIRED_COMPLETE_ORIGINAL_PROJECT_JSON_V1_USING_ACTUAL_CONTEXT', shot_ledger: 'REQUIRED_ACTUAL_SHOT_LEDGER_ARRAY', sound_script: 'REQUIRED_ACTUAL_SOUND_SCRIPT_ARRAY', asset_needs: 'REQUIRED_ACTUAL_ASSET_NEEDS_ARRAY' } };
+    ? { schema: 'mode-b-external-result-v1', project_id: state.project.id, task_id: id, revision, input_sha256: inputSha256, stage, payload: { schema: 'mode-b-script-v1', sections: [{id:'opening',text:'Replace with actual project narration.'}], authoring: {creative_direction:{premise:'Replace with actual premise'},characters:[],continuity:{rules:[]},style_decisions:{},voice_intentions:{},sound_intentions:{},source_references:[]} } }
+    : { schema: 'mode-b-external-result-v1', project_id: state.project.id, task_id: id, revision, input_sha256: inputSha256, stage, payload: { manifest: {...(context as {native_manifest:Record<string,unknown>}).native_manifest,shots:'REPLACE_WITH_COMPLETE_NONEMPTY_TIMED_SHOTS',captions:'COPY_APPROVED_CAPTION_CUES_EXACTLY',voice:'COPY_CURRENT_VOICE_OBJECT_EXACTLY'}, shot_ledger: [{shot_id:'actual-shot-id',narrative_purpose:'actual purpose'}], sound_script: [{target_id:'actual-shot-id',intent:'actual story-led sound intent'}], asset_needs: [] } };
   const prompt = `# ORIGINAL MODE B MANUAL CHATGPT HANDOFF — ${stage === 'script' ? 'SCRIPT & CREATIVE DIRECTION' : 'VISUAL / SHOT / SOUND / NATIVE MANIFEST'}\n\nThis is a manual transport boundary in the original Mode B workflow. Do not invent a parallel engine. Do not call tools, return Markdown, executable code or local absolute paths. Public HTTP(S) research citation URLs are permitted ONLY inside script payload.authoring.source_references as inert metadata; never use remote URLs as native assets or executable paths. Return exactly one JSON object matching the frozen envelope below.\n\n## ACTUAL PROJECT CONTEXT\n${JSON.stringify(context, null, 2)}\n\n## REQUIRED RESPONSE ENVELOPE\n${JSON.stringify(response, null, 2)}\n\nThe outer identity fields must be returned byte-for-value. For native authoring, payload.manifest is the original B1–B4 project.json v1 and must contain no Studio/task metadata. Ground every shot in the approved script and actual word/caption timing. List missing media honestly; never fabricate an existing asset path.\n\n## AUTHORITATIVE INSTALLED MODE B SOURCES\n${sources.map(item => `\n--- BEGIN ${item.relative} [sha256 ${item.sha256}] ---\n${item.text}\n--- END ${item.relative} ---`).join('\n')}\n`;
-  const relative = `.studio/external/tasks/${stage}-${revision}-${id}.md`; const target = resolveProjectFile(root, relative); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, prompt, { encoding: 'utf8', flag: 'wx' });
-  state.tasks ??= {}; state.tasks[stage] = { id, revision, inputSha256, sourceFingerprint: inputSha256, assetBaseline: assetSnapshot(root), mediaBaseline: mediaSnapshot(state), promptSha256: sha(prompt), promptPath: relative, status: 'FROZEN', createdAt: new Date().toISOString() }; writeState(root, state); return { ...state.tasks[stage], prompt };
+  const finalPrompt=prompt.replace('Do not call tools, return Markdown, executable code or local absolute paths.','Do not claim or use local CLI, local media, paid providers, or file inspection without actual access. Return no Markdown, executable code, secrets, or local absolute paths. Public research is permitted when demanded and evidence is cited.');
+  const relative = `.studio/external/tasks/${stage}-${revision}-${id}.md`; const target = resolveProjectFile(root, relative); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, finalPrompt, { encoding: 'utf8', flag: 'wx' });
+  state.tasks ??= {}; state.tasks[stage] = { id, revision, inputSha256, sourceFingerprint: inputSha256, ...(stage==='native'?{assetBaseline:assetSnapshot(root),mediaBaseline:mediaSnapshot(state)}:{}), promptSha256: sha(finalPrompt), promptPath: relative, status: 'FROZEN', createdAt: new Date().toISOString() }; writeState(root, state); return { ...state.tasks[stage], prompt:finalPrompt };
 }
 
 interface Envelope { schema: string; project_id: string; task_id: string; revision: number; input_sha256: string; stage: Stage; payload: Record<string, unknown> }
@@ -292,10 +294,8 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
   const revision=(state.external[stage]?.revision??0)+1;
   if(stage==='script'){
     const script=pending.payload as {sections:Array<{id:string;text:string}>;authoring:Record<string,unknown>};
-    const approvedText=script.sections.map(item=>item.text).join('\n\n'),changed=state.approvedScript?.sha256!==sha(approvedText),creativeChanged=JSON.stringify(state.approvedScript?.authoring??null)!==JSON.stringify(script.authoring);
-    state.approvedScript={sections:script.sections,text:approvedText,sha256:sha(approvedText),revision,approvedAt:new Date().toISOString(),authoring:script.authoring};
-    if(changed){if(state.voice)state.voice.stale=true;state.alignment=undefined;}
-    if(changed||creativeChanged){if(state.tasks?.native)state.tasks.native.status='STALE';state.nativeReadiness=undefined;state.preview=undefined;state.approval=undefined;state.render=undefined;}
+    const candidateText=script.sections.map(item=>item.text).join('\n\n');
+    state.scriptCandidate={sections:script.sections,text:candidateText,sha256:sha(candidateText),revision,importedAt:new Date().toISOString(),taskId:task.id,authoring:script.authoring};
     state.external.script={revision,artifact:pending.payload,importedAt:new Date().toISOString()};
     task.status='IMPORTED';
     const revisionFile=path.join(root,'.studio','revisions','script-'+revision+'.json');
@@ -368,6 +368,20 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
     if(fs.existsSync(candidate))fs.unlinkSync(candidate);
     if(tmp&&fs.existsSync(tmp))fs.unlinkSync(tmp);
   }
+}
+
+/** Explicit, repeat-safe owner acceptance boundary. Candidate import alone never becomes narration authority. */
+export function approveScriptCandidate(root:string,note:string){
+  const state=readState(root),candidate=state.scriptCandidate;
+  if(!candidate||sha(candidate.text)!==candidate.sha256)throw new Error('No current verified Script candidate is available.');
+  if(typeof note!=='string'||!note.trim())throw new Error('Owner approval note is required.');
+  if(state.approvedScript?.sha256===candidate.sha256&&JSON.stringify(state.approvedScript.authoring??null)===JSON.stringify(candidate.authoring??null))return state;
+  const changed=state.approvedScript?.sha256!==candidate.sha256,creativeChanged=JSON.stringify(state.approvedScript?.authoring??null)!==JSON.stringify(candidate.authoring??null);
+  state.approvedScript={sections:candidate.sections,text:candidate.text,sha256:candidate.sha256,revision:candidate.revision,approvedAt:new Date().toISOString(),approvedBy:'OWNER',approvalNote:note.trim(),authoring:candidate.authoring};
+  if(changed){if(state.voice)state.voice.stale=true;state.alignment=undefined;}
+  if(changed||creativeChanged){if(state.tasks?.native)state.tasks.native.status='STALE';state.nativeReadiness=undefined;state.preview=undefined;state.approval=undefined;state.render=undefined;}
+  atomicJson(path.join(root,'.studio','revisions','script-approved-'+candidate.revision+'.json'),state.approvedScript);
+  writeState(root,state);return state;
 }
 
 const activeConfirmations=new Set<string>();

@@ -9,9 +9,10 @@ const require=createRequire(import.meta.url);process.env.FFMPEG=require('ffmpeg-
 const {FFMPEG,run,save}=await import('../../skills/directing-stickman-videos/scripts/autopilot-core.mjs');
 
 const studio=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+const repo=path.resolve(studio,'..'),evidenceRoot=path.join(repo,'.r2-evidence');
 const cli=path.resolve(studio,'../skills/directing-stickman-videos/scripts/autopilot.mjs');
 const destination=path.resolve(process.argv[2]||path.join(studio,'test-results-native'));
-if(!destination.startsWith(studio+path.sep))throw new Error('Evidence destination must stay inside studio.');
+if(!destination.startsWith(studio+path.sep)&&!destination.startsWith(evidenceRoot+path.sep))throw new Error('Evidence destination must stay inside studio or the repository evidence root.');
 const root=path.join(destination,'native-fixture');fs.mkdirSync(root,{recursive:true});
 const hash=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 run(FFMPEG,['-v','error','-f','lavfi','-i','sine=frequency=440:duration=20','-ar','24000','-ac','1','-y',path.join(root,'voice.wav')]);

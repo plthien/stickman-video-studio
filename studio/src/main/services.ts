@@ -5,13 +5,16 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export type Stage = 'script' | 'native';
+export type ExternalOperation = 'author' | 'review' | 'correct' | 'recheck' | 'media-review';
 export type NativeCommand = 'doctor' | 'probe' | 'captions' | 'validate' | 'preview' | 'approve' | 'render';
 export interface ProjectSummary { id: string; root: string; title: string; style: string; updatedAt: string; projectFile: string }
 export interface StudioState {
   schema: 'mode-b-studio-state-v1'; project: ProjectSummary; brief: { topic: string; language: string; ratio: '9:16'; targetDuration?: number; audience?: string; purpose?: string };
   external: Partial<Record<Stage, { revision: number; artifact: unknown; importedAt: string }>>;
   tasks?: Partial<Record<Stage, { id: string; revision: number; inputSha256: string; sourceFingerprint?: string; promptSha256?: string; promptPath: string; status: 'FROZEN' | 'IMPORTED' | 'STALE'; createdAt: string; scope?: string; assetBaseline?: Array<{path:string;sha256:string}>; mediaBaseline?: Array<{path:string;sha256:string;rights:string;kind:string;shotId?:string;layerId?:string;track?:string;trackIndex?:number}> }>>;
-  approvedScript?: { sections: Array<{ id: string; text: string }>; text: string; sha256: string; revision: number; approvedAt: string; authoring?: Record<string, unknown> };
+  scriptCandidate?: { sections: Array<{ id: string; text: string }>; text: string; sha256: string; revision: number; importedAt: string; taskId:string; authoring?: Record<string, unknown> };
+  approvedScript?: { sections: Array<{ id: string; text: string }>; text: string; sha256: string; revision: number; approvedAt: string; approvedBy?:'OWNER'; approvalNote?:string; authoring?: Record<string, unknown> };
+  lifecycle?: { tasks:Record<string,{id:string;stage:Stage;operation:ExternalOperation;revision:number;inputSha256:string;artifactSha256:string;promptPath:string;promptSha256:string;status:'FROZEN'|'IMPORTED'|'STALE';createdAt:string;editableIds?:string[];findingIds?:string[];evidenceSha256?:string}>; artifacts:Record<string,{taskId:string;stage:Stage;operation:ExternalOperation;artifactSha256:string;value:unknown;status:string;createdAt:string}> };
   voice?: { path: string; sha256: string; receipt?: unknown; generatedAt: string; duration?: number; stale?: boolean; profileId?: string; profileVersion?: number; referenceBinding?: string; origin?: 'NANO_GENERATED' | 'NANO_LONGFORM' | 'IMPORTED_WAV' };
   alignment?: { path: string; captionsPath: string; audioSha256: string; scriptSha256?: string; wordsSha256?: string; cuesSha256?: string; generatedAt: string; origin?: 'ELEVENLABS' | 'IMPORTED_WORDS'; words?: Array<{word:string;start:number;end:number;loss?:number}>; characters?: unknown; loss?: number; captionReview?: { revision:number; path:string; sha256:string; sourceSha256:string; note:string; approvedAt:string }; captionDraft?: { path:string; sha256:string; sourceSha256:string; boundaries:number[] } };
   approval?: { note: string; previewSha256: string; approvedAt: string };
@@ -52,6 +55,7 @@ const statePath = (root: string) => path.join(root, '.studio', 'state.json');
 export const readState = (root: string): StudioState => {
   const state = JSON.parse(fs.readFileSync(statePath(assertLocalRoot(root)), 'utf8')) as StudioState;
   state.tasks ??= {}; state.nano ??= { endpoint: 'http://127.0.0.1:3901' }; state.imports ??= []; state.media ??= [];
+  state.lifecycle ??= { tasks:{}, artifacts:{} };
   return state;
 };
 export const writeState = (root: string, state: StudioState) => atomicJson(statePath(assertLocalRoot(root)), state);

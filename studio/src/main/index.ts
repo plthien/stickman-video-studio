@@ -2,7 +2,8 @@ import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from 'elect
 import fs from 'node:fs';
 import path, { join } from 'node:path';
 import { alignWithElevenLabs } from './alignment.js';
-import { confirmImport, freezeTask, stageImport, getPendingMedia, fulfillMedia, importMediaFile } from './externalTasks.js';
+import { approveScriptCandidate, confirmImport, freezeTask, stageImport, getPendingMedia, fulfillMedia, importMediaFile } from './externalTasks.js';
+import {confirmLifecycleResult,exportReviewPack,freezeLifecycleTask,stageLifecycleResult} from './externalLifecycle.js';
 import { getCaptionReview, draftCaptionReview, approveCaptionReview } from './captionReview.js';
 import { discoverNano, generateNano, nanoBase } from './nanoClient.js';
 import { cancelJob, nativeJob, reconcileJob } from './nativeJobs.js';
@@ -39,6 +40,11 @@ function registerIpc() {
   ipcMain.handle('external:exportPrompt', async (_event, id: string, stage: Stage) => { const root = rootFor(id), task = freezeTask(app.getAppPath(), root, stage, false); const result = await dialog.showSaveDialog({ defaultPath: path.join(root, '.studio', 'external', `${stage}-prompt.md`), filters: [{ name: 'Markdown', extensions: ['md'] }] }); if (result.canceled || !result.filePath) return null; fs.copyFileSync(path.join(root, task.promptPath), result.filePath); return result.filePath; });
   ipcMain.handle('external:stageImport', (_event, id: string, stage: Stage, text: string) => stageImport(app.getAppPath(), rootFor(id), stage, text));
   ipcMain.handle('external:confirmImport', async (_event, id: string, token: string, options?: {previewSeconds?:number;allowSampleDraft?:boolean}) => { const root = rootFor(id); await confirmImport(app.getAppPath(), root, token, options); return projectSnapshot(root,app.getAppPath()); });
+  ipcMain.handle('external:approveScript',(_event,id:string,note:string)=>{const root=rootFor(id);approveScriptCandidate(root,note);return projectSnapshot(root,app.getAppPath())});
+  ipcMain.handle('external:freezeLifecycle',(_event,id:string,stage:Stage,operation:'review'|'correct'|'recheck'|'media-review',scope:Record<string,unknown>,rebuild=false)=>freezeLifecycleTask(app.getAppPath(),rootFor(id),stage,operation,scope,rebuild));
+  ipcMain.handle('external:stageLifecycle',(_event,id:string,stage:Stage,operation:'review'|'correct'|'recheck'|'media-review',text:string)=>stageLifecycleResult(app.getAppPath(),rootFor(id),stage,operation,text));
+  ipcMain.handle('external:confirmLifecycle',async(_event,id:string,token:string)=>{const root=rootFor(id);confirmLifecycleResult(app.getAppPath(),root,token);return projectSnapshot(root,app.getAppPath())});
+  ipcMain.handle('external:reviewPack',(_event,id:string,kind:'preview'|'film'|'voice'|'captions')=>exportReviewPack(rootFor(id),kind));
   ipcMain.handle('external:pendingMedia', (_event, id: string) => getPendingMedia(app.getAppPath(), rootFor(id)));
   ipcMain.handle('external:fulfillMedia', (_event, id: string, token:string, key:string, relative:string, rights:string) => fulfillMedia(app.getAppPath(), rootFor(id), token, key, relative, rights));
   ipcMain.handle('voice:captionReview', (_event, id: string) => getCaptionReview(rootFor(id)));

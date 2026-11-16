@@ -18,3 +18,5 @@ studio/r1-local-results/
 studio/.electron-test*/
 studio/debug.log
 studio/r2-local-results-20261114-192028
+.r2-evidence/
+studio/r2-final-closure-results-*.zip

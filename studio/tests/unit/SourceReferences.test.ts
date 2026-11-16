@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {afterEach,describe,expect,it,vi} from 'vitest';
-import {confirmImport,freezeTask,stageImport} from '../../src/main/externalTasks';
+import {approveScriptCandidate,confirmImport,freezeTask,stageImport} from '../../src/main/externalTasks';
 import {validateAuthoring} from '../../src/main/sourceCitations';
 import {readState} from '../../src/main/services';
 import {appPath,cleanup,fixture,frozenEnvelope,nativePayload,stageNative} from './SixIssueFixtures';
@@ -17,6 +17,7 @@ describe('WP-D: safe inert public citations without weakening native path rules'
     const staged=stageImport(appPath,root,'script',JSON.stringify(envelope));
     expect(staged.status).toBe('STAGED');
     await confirmImport(appPath,root,staged.token);
+    approveScriptCandidate(root,'Owner reviewed exact citation-bearing narration');
     expect(readState(root).approvedScript?.authoring?.source_references).toEqual(payload.authoring.source_references);
     const next=freezeTask(appPath,root,'native');
     expect(next.prompt).toContain(citation.url);
@@ -53,6 +54,7 @@ describe('WP-D: safe inert public citations without weakening native path rules'
     const payload=script([],description),returned=frozenEnvelope(root,'script',payload);
     const staged=stageImport(appPath,root,'script',JSON.stringify(returned));
     await confirmImport(appPath,root,staged.token);
+    approveScriptCandidate(root,'Owner reviewed exact quoted-source narration');
     expect(readState(root).approvedScript?.authoring?.creative_direction).toEqual({description});
     expect(fetch).not.toHaveBeenCalled();
     expect(fs.readFileSync(path.join(root,'.studio/state.json'),'utf8')).toContain('museum.example.org');
