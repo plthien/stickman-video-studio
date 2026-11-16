@@ -217,7 +217,7 @@ function validateReview(payload:Record<string,unknown>,task:NonNullable<StudioSt
     !Array.isArray(payload.findings))throw new Error('Invalid review result.');
   const coverage=payload.coverage as Record<string,unknown>;
   if(!coverage||typeof coverage!=='object'||Array.isArray(coverage))throw new Error('Review coverage is required.');
-  exact(coverage,['target_ids','modalities','ranges']);
+  exact(coverage,['target_ids','modalities','ranges','media_sha256s']);
   const covered=coverage.target_ids;
   if(!Array.isArray(covered)||covered.some(id=>typeof id!=='string'||!task.targetIds?.includes(id))||new Set(covered).size!==covered.length)
     throw new Error('Review coverage contains fabricated, duplicate or missing target identities.');
@@ -225,6 +225,12 @@ function validateReview(payload:Record<string,unknown>,task:NonNullable<StudioSt
     (covered.length!==task.targetIds?.length||task.targetIds?.some(id=>!covered.includes(id))))
     throw new Error('Unsupported review coverage: every requested target must be accounted for.');
   if(!Array.isArray(coverage.modalities)||!Array.isArray(coverage.ranges))throw new Error('Review coverage modalities and ranges must be arrays.');
+  const mediaSha256s=coverage.media_sha256s??[];
+  if(!Array.isArray(mediaSha256s)||new Set(mediaSha256s).size!==mediaSha256s.length||
+    mediaSha256s.some(value=>typeof value!=='string'||!task.mediaSha256s?.includes(value))||
+    (task.mediaTransferAttested?JSON.stringify(mediaSha256s)!==JSON.stringify(task.mediaSha256s):mediaSha256s.length!==0))
+    throw new Error('Review media provenance differs from frozen owner-attested transfer scope.');
+
   if(coverage.modalities.some(modality=>!['picture','motion','sound','captions','script','manifest'].includes(String(modality)))||
     new Set(coverage.modalities).size!==coverage.modalities.length)
     throw new Error('Review coverage claims unknown or duplicate evidence modalities.');
@@ -236,7 +242,7 @@ function validateReview(payload:Record<string,unknown>,task:NonNullable<StudioSt
       typeof value.end!=='number'||!Number.isFinite(value.end)||value.end<=value.start)
       throw new Error('Review time ranges require real finite increasing bounds.');
   }
-  if(operation==='media-review'&&coverage.modalities.some(modality=>['picture','motion','sound'].includes(String(modality))))
+  if(operation==='media-review'&&!task.mediaTransferAttested&&coverage.modalities.some(modality=>['picture','motion','sound'].includes(String(modality))))
     throw new Error('NOT_VERIFIED: locally packaged media does not establish transferred or inspected audiovisual modalities.');
 
   const findings=payload.findings as unknown[],ids=new Set<string>();
@@ -257,13 +263,24 @@ function validateReview(payload:Record<string,unknown>,task:NonNullable<StudioSt
     exact(ev,['kind','detail','source_sha256','time_range']);
     if(ev.source_sha256!==undefined&&(typeof ev.source_sha256!=='string'||!/^[a-f0-9]{64}$/.test(ev.source_sha256)))throw new Error('Malformed cited evidence SHA.');
     if(ev.time_range!==undefined){const t=ev.time_range as Record<string,unknown>;if(!t||typeof t!=='object'||Array.isArray(t)||typeof t.start!=='number'||typeof t.end!=='number'||!Number.isFinite(t.start)||!Number.isFinite(t.end)||t.start<0||t.end<=t.start)throw new Error('Invalid observed evidence time range.');}
-    if(ev.kind==='observed'&&operation==='media-review')throw new Error('NOT_VERIFIED: local media path/hash is not proof of transferred audiovisual observation.');
+    if(ev.kind==='observed'){
+      if(operation!=='media-review'||!task.mediaTransferAttested)
+        throw new Error('NOT_VERIFIED: visual/audio observation requires a current owner-attested manual transfer package.');
+      if(typeof ev.source_sha256!=='string'||!task.mediaSha256s?.includes(ev.source_sha256))
+        throw new Error('Observed evidence does not bind the exact transferred media SHA-256.');
+      if(!ev.time_range&&!f.target_ids.length)
+        throw new Error('Observed evidence needs an actual shot target or time range.');
+      if(ev.time_range&&task.mediaDuration!==undefined&&
+        (ev.time_range as {end:number}).end>task.mediaDuration+.01)
+        throw new Error('Observed evidence timestamp is outside the actual frozen media.');
+    }
   }
   if(operation==='recheck'&&task.findingIds?.some(id=>!ids.has(id)))throw new Error('Recheck omitted a previously unresolved finding.');
   if(payload.status==='REVIEWED_WITH_FINDINGS'&&!findings.length)throw new Error('Review declares findings but supplies none.');
   if(payload.status==='REVIEWED_NO_FINDINGS'&&findings.some(item=>(item as {status:string}).status!=='resolved'))throw new Error('No-findings recheck contains unresolved findings.');
-  if(operation==='media-review'&&payload.status==='REVIEWED_NO_FINDINGS')
-    throw new Error('INSUFFICIENT_EVIDENCE: physical media inspection requires a verified transfer/owner review, not path metadata.');
+  if(operation==='media-review'&&payload.status==='REVIEWED_NO_FINDINGS'&&
+    (!task.mediaTransferAttested||!coverage.modalities.length||!mediaSha256s.length))
+    throw new Error('INSUFFICIENT_EVIDENCE: no-findings media review needs user-attested actual attachments and explicit observed coverage.');
 }
 export function stageLifecycleResult(appPath:string,root:string,stage:Stage,operation:Exclude<ExternalOperation,'author'>,text:string){
   const state=readState(root),task=state.lifecycle?.tasks[`${stage}:${operation}`];if(!task||task.status!=='FROZEN')throw new Error('No current frozen lifecycle task exists.');
