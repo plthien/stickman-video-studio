@@ -4,7 +4,7 @@ import {randomUUID} from 'node:crypto';
 import {atomicJson,readState,resolveProjectFile,sha,strictJson,writeState,type ExternalOperation,type Stage,type StudioState} from './services.js';
 import {compileAuthority} from './externalAuthority.js';
 import {rejectNativeUnsafePaths,validateAuthoring} from './sourceCitations.js';
-import {freezeTask,stageImport,confirmImport,validateScript,validateManifest,type ConfirmOptions} from './externalTasks.js';
+import {freezeTask,sourceFingerprint,stageImport,confirmImport,validateScript,validateManifest,type ConfirmOptions} from './externalTasks.js';
 
 type Scope={targetIds?:string[];editableIds?:string[];editablePaths?:string[];findingIds?:string[];media?:'preview'|'film'|'voice'|'captions';transferAcknowledged?:boolean};
 type Artifact={value:unknown;sha256:string;id:string};
@@ -110,6 +110,8 @@ export function readFrozenExternalTask(appPath:string,root:string,stage:Stage,op
   const target=resolveProjectFile(root,task.promptPath);
   if(!fs.existsSync(target)||sha(fs.readFileSync(target))!==task.promptSha256)
     throw new Error('REBUILD_REQUIRED: saved frozen task prompt is missing or modified.');
+  if(operation==='author'&&(!task.sourceFingerprint||sourceFingerprint(appPath,root,stage)!==task.sourceFingerprint))
+    throw new Error('STALE: saved author task has a changed creative source; explicitly rebuild it.');
   if(operation!=='author'){
     const life=task as NonNullable<StudioState['lifecycle']>['tasks'][string];
     assertLifecycleFresh(appPath,root,state,life);
