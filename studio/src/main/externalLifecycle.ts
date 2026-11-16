@@ -425,7 +425,7 @@ async function publishNativeCorrection(appPath:string,root:string,pending:Record
     }
     if(alreadyPublished){
       if(!saved||!initial.external.native||
-        (journal.status!=='AUX_PUBLISHED'&&journal.status!=='VALIDATED'&&journal.status!=='NO_OP'))
+        (journal.status!=='AUX_PUBLISHED'&&journal.status!=='AUX_PENDING'&&journal.status!=='VALIDATED'&&journal.status!=='NO_OP'))
         throw new Error('RECOVERY_REQUIRED: matching creative data without a publication journal is not sufficient.');
       return finalizeLifecycle(root,pending,task);
     }
