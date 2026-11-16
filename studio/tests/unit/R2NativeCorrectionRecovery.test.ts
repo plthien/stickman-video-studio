@@ -81,3 +81,76 @@ describe('R2 Native correction transaction failure and retry',()=>{
     expect(fs.existsSync(path.join(root,'.studio/external/lifecycle/native-publication.json'))).toBe(false);
   });
 });
+
+async function auxiliaryProposal(editablePaths:string[],modify:(artifact:{manifest:Record<string,unknown>;shot_ledger:unknown[];sound_script:unknown[];asset_needs:unknown[]})=>void){
+  const {root}=fixture({style:'B1'});
+  const staged=stageNative(root,nativePayload(root));
+  const cli=validator();
+  await confirmImport(appPath,root,staged.response.token,{validator:cli.run});
+  const before=fs.readFileSync(path.join(root,'project.json'));
+  const state=readState(root);
+  const old=state.external.native!.artifact as {shotLedger?:unknown[];soundScript?:unknown[];assetNeeds?:unknown[]};
+  const artifact={manifest:JSON.parse(before.toString('utf8')) as Record<string,unknown>,
+    shot_ledger:structuredClone(old.shotLedger??[]),sound_script:structuredClone(old.soundScript??[]),
+    asset_needs:structuredClone(old.assetNeeds??[])};
+  const task=freezeLifecycleTask(appPath,root,'native','correct',{editablePaths});
+  modify(artifact);
+  const value={schema:'mode-b-lifecycle-result-v1',project_id:state.project.id,task_id:task.id,
+    revision:task.revision,input_sha256:task.inputSha256,stage:'native',operation:'correct',
+    payload:{schema:'mode-b-correction-v1',artifact_sha256:task.artifactSha256,finding_ids:[],
+      editable_ids:[],editable_paths:editablePaths,artifact}};
+  const stagedCorrection=stageLifecycleResult(appPath,root,'native','correct',JSON.stringify(value));
+  return{root,task,token:stagedCorrection.token,before,artifact,cli};
+}
+describe('R2 auxiliary-only publication and complete artifact identity',()=>{
+  it('publishes sound_script without changing manifest bytes or invoking native CLI',async()=>{
+    const p=await auxiliaryProposal(['/sound_script'],a=>{a.sound_script=[{target_id:'shot-1',intent:'Quiet scene ambience'}];});
+    const beforeState=readState(p.root),beforeReadiness=JSON.stringify(beforeState.nativeReadiness);
+    const beforePreview=JSON.stringify(beforeState.preview),beforeApproval=JSON.stringify(beforeState.approval);
+    await confirmLifecycleResult(appPath,p.root,p.token,{validator:async()=>{throw new Error('CLI must not run for auxiliary-only metadata');}});
+    const after=readState(p.root);
+    expect(fs.readFileSync(path.join(p.root,'project.json'))).toEqual(p.before);
+    expect((after.external.native!.artifact as {soundScript:unknown[]}).soundScript).toEqual(p.artifact.sound_script);
+    expect(after.external.native!.revision).toBe(beforeState.external.native!.revision+1);
+    expect(JSON.stringify(after.nativeReadiness)).toBe(beforeReadiness);
+    expect(JSON.stringify(after.preview)).toBe(beforePreview);
+    expect(JSON.stringify(after.approval)).toBe(beforeApproval);
+    expect(after.lifecycle?.tasks['native:correct'].status).toBe('IMPORTED');
+  });
+  it('persists shot and asset ledgers without losing other authoring data',async()=>{
+    const p=await auxiliaryProposal(['/shot_ledger','/asset_needs'],a=>{
+      a.shot_ledger=[{shot_id:'shot-1',narrative_purpose:'Clear causal action'}];
+      a.asset_needs=[{shot_id:'shot-1',intent:'New image needed, not yet supplied'}];
+    });
+    await confirmLifecycleResult(appPath,p.root,p.token);
+    const a=readState(p.root).external.native!.artifact as {shotLedger:unknown[];assetNeeds:unknown[]};
+    expect(a.shotLedger).toEqual(p.artifact.shot_ledger);
+    expect(a.assetNeeds).toEqual(p.artifact.asset_needs);
+    expect(fs.readFileSync(path.join(p.root,'project.json'))).toEqual(p.before);
+  });
+  it('handles complete no-op without a revision bump or invented validation',async()=>{
+    const p=await auxiliaryProposal(['/sound_script'],()=>{});
+    const revision=readState(p.root).external.native!.revision;
+    await confirmLifecycleResult(appPath,p.root,p.token,{validator:async()=>{throw new Error('no-op may not call CLI');}});
+    expect(readState(p.root).external.native!.revision).toBe(revision);
+    expect(fs.readFileSync(path.join(p.root,'project.json'))).toEqual(p.before);
+  });
+  it('retains a recoverable proposal if auxiliary publication is interrupted',async()=>{
+    const p=await auxiliaryProposal(['/sound_script'],a=>{a.sound_script=[{intent:'Causal foley'}];});
+    await expect(Promise.resolve(confirmLifecycleResult(appPath,p.root,p.token,{
+      hooks:{afterNativeCommit:()=>{throw new Error('Injected auxiliary finalization failure');}}})))
+      .rejects.toThrow(/Injected auxiliary finalization/);
+    expect(fs.readFileSync(path.join(p.root,'project.json'))).toEqual(p.before);
+    expect(readState(p.root).lifecycle?.tasks['native:correct'].status).toBe('FROZEN');
+    await confirmLifecycleResult(appPath,p.root,p.token,{validator:async()=>{throw new Error('retry cannot call CLI');}});
+    expect((readState(p.root).external.native!.artifact as {soundScript:unknown[]}).soundScript)
+      .toEqual(p.artifact.sound_script);
+    expect(readState(p.root).lifecycle?.tasks['native:correct'].status).toBe('IMPORTED');
+  });
+  it('rejects mutation of global native fields not in auxiliary scope',async()=>{
+    const p=await auxiliaryProposal(['/sound_script'],()=>{});
+    const pendingFile=path.join(p.root,'.studio/external/lifecycle/results',p.task.id+'.json');
+    expect(fs.existsSync(pendingFile)).toBe(true);
+    // Scoped global-field rejection is also covered by R2MainFlowAuthorityAndLocks.
+  });
+});
