@@ -28,11 +28,11 @@ export function ExternalWorkspace(){
           if(expectedOperation!=='Author'){
             const fields={targetIds:task.targetIds??[],editableIds:task.editableIds??[],
               editablePaths:task.editablePaths??[],findingIds:task.findingIds?.length?task.findingIds:undefined,
-              media:expectedOperation==='Media review'?reviewMediaKind:undefined,
+              media:expectedOperation==='Media review'?(task.mediaKind??reviewMediaKind):undefined,
               transferAcknowledged:expectedOperation==='Media review'?Boolean(task.mediaTransferAttested):undefined};
             setReviewTargets(fields.targetIds.join(', '));setEditable(fields.editableIds.join(', '));
             setEditablePaths(fields.editablePaths.join(', '));setFindingScope(fields.findingIds.join(', '));
-            setTransferAcknowledged(Boolean(task.mediaTransferAttested));
+            if(task.mediaKind)setReviewMediaKind(task.mediaKind);setTransferAcknowledged(Boolean(task.mediaTransferAttested));
             setFrozenScopeKey(JSON.stringify(fields));
           }
         }).catch(reason=>{if(active&&sequence===requests.current.freeze&&isCurrentProjectSession(session))setError(String(reason));});
