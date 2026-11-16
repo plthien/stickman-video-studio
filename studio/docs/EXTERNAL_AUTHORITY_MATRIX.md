@@ -1,13 +1,76 @@
-# External ChatGPT authority matrix v1
+# R2 — Stage-scoped, source-exact External ChatGPT authority
 
-This matrix is the audit map used by `externalAuthority.ts`. Source files are hashed when a task is frozen; a missing applicable source fails closed.
+## Authority precedence
 
-| Operation | Script KEEP | Native KEEP | Studio execution / omitted from ChatGPT |
-|---|---|---|---|
-| Author | brief, premise, hook, causal narrative, continuity, style, voice/sound intentions; B4 opening/threat/narration | approved script, real word/caption timing, shot/action/camera, assets/rights, native audio, style runtime; B4 picture/audio/asset/QA | CLI commands, provider calls, paths, cache/fingerprint implementation, approvals |
-| Review | original task, immutable artifact, narrative/continuity/style gates | original task, immutable artifact, timing/shot/action/sound/style gates | technical validation and renderer PASS remain Studio/native-owned |
-| Correct | complete script grammar; selected sections editable, remaining sections locked | complete project v1 grammar and ledgers; selected targets editable, remaining targets locked | no generated program, new DSL, local command or provider action |
-| Recheck | source, schema, locks, findings and artifact hash | source, schema, locks, findings, native evidence and artifact hash | original native validator is executed by Studio only |
-| Media review | script/voice intent plus transferred audio/image evidence | transferred MP4/audio/frames, coverage ranges, SHAs and associations | a path/report alone never proves picture, motion or sound |
+1. Installed Mode B Core and selected B1–B4 style contracts (unchanged)
+2. MODE_B_EXTERNAL_CHATGPT_CORE_PRESERVING_PLAN_V2.md
+3. docs/ui/UI_V3_IMPLEMENTATION_PLAN.md
+4. Owner-approved R2 Main Workflow Repair
+5. Studio production code and measured evidence
 
-Style source: selected B1-B4 reference. Script additionally uses the narrative portions of `autopilot.md`; Native uses runtime, production-QA and sound-system authorities. B4 Script retains opening constraints; B4 Native retains opening and audio direction. `SKILL.md` remains a traceable authority for both stages, but terminal/agent-only mechanics are not emitted as model jobs.
+External ChatGPT owns manual creative authoring, review, scoped correction and recheck only.
+Studio owns production orchestration, local Nano, ElevenLabs alignment, media, native validation,
+rendering and owner approval. There is no Agent or LLM API runtime.
+
+## Four-way disposition matrix
+
+| Original source / responsibility | Script | Native | Studio | Agent-only |
+|---|---|---|---|---|
+| SKILL.md, Mode B route | KEEP selected Mode B clauses | KEEP Mode B clauses | enforce selected route | A/automatic route |
+| Selected B1–B4 reference | KEEP exact creative sections | KEEP complete original | QA and rendering | agent tool dispatch |
+| autopilot.md | KEEP independent style settings | KEEP complete original | voice and CLI | terminal/provider automation |
+| autopilot-production-qa.md | KEEP planning/opening/motion/caption sections | KEEP complete original | encoded QA and acceptance | automatic tool use |
+| autopilot-sound-system.md | KEEP story-led sound/scene script | KEEP complete original | source rights and actual mix | unattended sourcing |
+| autopilot-runtime.md | MOVE TO NATIVE | KEEP complete original | original CLI/cache/validator | ChatGPT CLI execution |
+| B4 opening/audio direction | KEEP selected exact sections | KEEP complete original | audio/visual evidence checks | unattended voice/provider operations |
+| B4 repeatability check | MOVE TO NATIVE | KEEP complete original | production QA | automatic evidence fabrication |
+| Provider HTTP, credentials, file system, cache | STUDIO_ONLY | STUDIO_ONLY | KEEP | OMIT |
+| Owner approval and creative acceptance | STUDIO_ONLY | STUDIO_ONLY | KEEP manual gate | OMIT |
+
+KEEP preserves literal normative text, not a model-written generic summary.
+MOVE TO NATIVE prevents runtime tutorials leaking into a Script Task.
+STUDIO_ONLY and AGENT_ONLY never authorize the external model to simulate actual execution.
+
+## Source extraction and fail-closed operation
+
+Implementation: studio/src/main/externalAuthority.ts.
+Extraction revision: stage-exact-v2.
+
+- The selected B style, SKILL B mode clauses, narrative settings, story-led sound,
+  planned motion, caption and opening creative QA are extracted via exact headings.
+- Native receives the full installed B style, autopilot, runtime, QA and sound
+  references, plus the complete B4 opening/audio/repeatability references if selected.
+- Every source records installed relative path, original SHA-256, extraction SHA-256,
+  extraction revision, applicability and selected heading inventory.
+- Missing, renamed or empty mandatory selectors fail closed. Frozen original author
+  tasks and lifecycle review prompts bind to current source/brief/artifact identity.
+- The original skills/directing-stickman-videos/** tree is never modified.
+
+## Workflow, correction scope and media truthfulness
+
+Script: Author → Import candidate → Review → Correct selected IDs → Recheck
+→ explicit Owner Approve. Corrected candidates require a matching independent
+recheck before approval. Approved script remains separate from the candidate;
+approved text changes invalidate dependent narration/alignment/preview.
+
+Native corrections require the complete existing manifest v1 plus shot_ledger,
+sound_script and asset_needs arrays. All unlisted shots and global/auxiliary fields
+are locked. Voice and captions remain protected even with expanded scope.
+A retained last-good manifest stays active until the original native CLI
+validates the candidate; a correction journal preserves retriable failures.
+
+Review/Media Review must enumerate actual IDs and coverage. Invalid target IDs,
+duplicate findings, bad status/evidence and unsupported media observation are
+rejected. Review-package export copies real hash-verified MP4/WAV files rather
+than treating a local path in JSON as proof of visual/audio inspection.
+Real ChatGPT file transfer and audiovisual observation require separate
+human activity; imported creative review never auto-approves a film.
+
+## Measurement and verification policy
+
+Compare actual frozen Script Task byte sizes on identical project inputs before
+and after implementation. Prompt size is not a quality proxy. Run local typecheck,
+lint, integration/UT, production build, original Native Core preservation/CLI and
+Windows acceptance against final HEAD. Mark NOT_RUN/BLOCKED when the runner or real
+voice/media/provider is unavailable. Neither this file nor offline fixtures are
+a claim of actual encoded video creative acceptance.
