@@ -208,6 +208,7 @@ export function stageLifecycleResult(appPath:string,root:string,stage:Stage,oper
 }
 
 const nativeCorrectionJournal=(root:string)=>path.join(lifecycleDir(root),'native-publication.json');
+const manifestSemanticHash=(file:string)=>sha(JSON.stringify(strictJson(fs.readFileSync(file,'utf8'))));
 function finalizeLifecycle(root:string,pending:Record<string,unknown>,task:NonNullable<StudioState['lifecycle']>['tasks'][string]){
   const state=readState(root),key=String(pending.stage)+':'+String(pending.operation);
   if(!state.lifecycle?.tasks[key]||state.lifecycle.tasks[key].id!==task.id||
@@ -225,7 +226,7 @@ async function publishNativeCorrection(appPath:string,root:string,pending:Record
   const payload=pending.payload as {artifact:{manifest:Record<string,unknown>;shot_ledger:unknown[];sound_script:unknown[];asset_needs:unknown[]}};
   const desiredSha256=sha(JSON.stringify(payload.artifact.manifest));
   const manifestPath=path.join(root,'project.json');
-  const baselineSha256=sha(fs.readFileSync(manifestPath));
+  const baselineSha256=manifestSemanticHash(manifestPath);
   const journalFile=nativeCorrectionJournal(root);
   const saved=fs.existsSync(journalFile)?strictJson(fs.readFileSync(journalFile,'utf8')) as Record<string,unknown>:null;
   if(saved&&(saved.token!==pending.token||saved.taskId!==task.id||saved.desiredSha256!==desiredSha256))
@@ -259,7 +260,7 @@ async function publishNativeCorrection(appPath:string,root:string,pending:Record
     throw error;
   }
   const current=readState(root);
-  if(sha(fs.readFileSync(manifestPath))!==desiredSha256||!current.external.native||!current.nativeReadiness?.sampleReady)
+  if(manifestSemanticHash(manifestPath)!==desiredSha256||!current.external.native||!current.nativeReadiness?.sampleReady)
     throw new Error('RECOVERY_REQUIRED: native publication is not the validated proposed manifest.');
   journal.status='VALIDATED';journal.publishedRevision=current.external.native.revision;atomicJson(journalFile,journal);
   return finalizeLifecycle(root,pending,task);
@@ -282,7 +283,7 @@ export function confirmLifecycleResult(appPathOrRoot:string,rootOrToken:string,m
     const journal=nativeCorrectionJournal(root);
     const saved=fs.existsSync(journal)?strictJson(fs.readFileSync(journal,'utf8')) as Record<string,unknown>:null;
     if(!(pending.operation==='correct'&&pending.stage==='native'&&saved?.token===token&&
-      saved?.status==='VALIDATED'&&sha(fs.readFileSync(path.join(root,'project.json')))===saved.desiredSha256))
+      saved?.status==='VALIDATED'&&manifestSemanticHash(path.join(root,'project.json'))===saved.desiredSha256))
       throw new Error('STALE: original lifecycle artifact changed before confirmation.');
   }
   if(pending.operation==='correct'&&pending.stage==='native')
