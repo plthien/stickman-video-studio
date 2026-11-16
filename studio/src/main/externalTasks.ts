@@ -358,15 +358,28 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
     atomicJson(path.join(root,'.studio','revisions','native-authoring-'+revision+'.json'),{shot_ledger:again.shotLedger,sound_script:again.soundScript,asset_needs:again.assetNeeds,fulfillments:diskPending.fulfillments,missing:again.missing});
     fs.unlinkSync(pendingPath(root));return fresh;
   }catch(error){
+    let conflict=false;
     if(promoted){
-      const restore=current+'.'+randomUUID()+'.restore';fs.writeFileSync(restore,beforeBytes);fs.renameSync(restore,current);
+      // Never restore an old manifest over an independent, newer filesystem change.
+      const promotedBytes=fs.readFileSync(candidate),currentBytes=fs.readFileSync(current);
+      if(currentBytes.equals(promotedBytes)){
+        const restore=current+'.'+randomUUID()+'.restore';
+        fs.writeFileSync(restore,beforeBytes);fs.renameSync(restore,current);
+      }else conflict=true;
     }
     if(stateCommitted&&committedState&&ownedBefore){
-      const rollback=readState(root);
-      rollback.external.native=externalNativeBefore;rollback.nativeReadiness=ownedBefore.nativeReadiness;rollback.preview=ownedBefore.preview;rollback.approval=ownedBefore.approval;rollback.render=ownedBefore.render;
-      if(rollback.tasks?.native&&rollback.tasks.native.id===committedState.tasks?.native?.id&&oldTaskStatus)rollback.tasks.native.status=oldTaskStatus;
-      writeState(root,rollback);
+      const rollback=readState(root),ownedRevision=committedState.external.native?.revision;
+      if(rollback.external.native?.revision===ownedRevision&&
+        JSON.stringify(rollback.preview)===JSON.stringify(committedState.preview)&&
+        JSON.stringify(rollback.approval)===JSON.stringify(committedState.approval)){
+        rollback.external.native=externalNativeBefore;rollback.nativeReadiness=ownedBefore.nativeReadiness;
+        rollback.preview=ownedBefore.preview;rollback.approval=ownedBefore.approval;rollback.render=ownedBefore.render;
+        if(rollback.tasks?.native&&rollback.tasks.native.id===committedState.tasks?.native?.id&&oldTaskStatus)
+          rollback.tasks.native.status=oldTaskStatus;
+        writeState(root,rollback);
+      }else conflict=true;
     }
+    if(conflict)throw new Error('RECOVERY_REQUIRED: newer independent changes prevented unsafe native rollback; original error: '+String(error));
     throw error;
   }finally{
     if(fs.existsSync(candidate))fs.unlinkSync(candidate);
