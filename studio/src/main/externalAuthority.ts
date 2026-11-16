@@ -121,6 +121,7 @@ const SCRIPT_AUTHOR_REQUIREMENTS:Record<string,string[]>={
     '- **Separate cast identity from menace.',
     '- **Make the threat visible, not merely described.',
     '- **Well-drawn held poses are a valid B4 baseline.',
+    "- B4's deliberate-hold exception takes precedence",
     '- Read and execute the required [B4 audio contract]',
     "B4's deliberate-hold exception takes precedence"
   ],
