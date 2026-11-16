@@ -37,14 +37,12 @@ const SCRIPT_AUTHOR_REQUIREMENTS:Record<string,string[]>={
   'SKILL.md':[
     'A and B share installation, not production contracts.',
     'B accepts topics, briefs, articles and scripts.',
-    'Captions: B1–B4 single-line;',
-    'All B styles: native **16:9 and 9:16**'
+    'Captions: B1–B4 single-line;'
   ],
   'references/autopilot.md':[
     'Resolve each setting in this order:',
     'Font, text-effect and language presets are defaults',
     'Shared B rules govern source fidelity',
-    'For every B preview/film and every genre, read the required',
     '1. Resolve the source/topic, audience, purpose, target duration',
     '- **Story-led casting:**',
     '- Design scenes around meaning, not uniform three-second cuts.',
@@ -70,7 +68,6 @@ const SCRIPT_AUTHOR_REQUIREMENTS:Record<string,string[]>={
     '2. **Physical/spatial events',
     '3. **Emotional punctuation',
     'These are available roles,',
-    'For every B project, save a project-local sound script',
     'Every added cue must answer',
     'Choose a palette from the particular story',
     '**AUDIO CUT** is an intentional designed exception',
@@ -87,8 +84,7 @@ const SCRIPT_AUTHOR_REQUIREMENTS:Record<string,string[]>={
     '- **New content, new acting:',
     '- **Detailed enough, not cluttered:',
     'Voice leads at native **1×** speed.',
-    'Use semantic match cuts, a prop carried between ideas',
-    'Apply the mandatory [B common production'
+    'Use semantic match cuts, a prop carried between ideas'
   ],
   'references/b2-colorful-handdrawn.md':[
     '- Warm paper, irregular fine ink contours',
@@ -151,6 +147,12 @@ const SCRIPT_AUTHOR_REQUIREMENTS:Record<string,string[]>={
     'Use an ending choice only when the brief or story calls'
   ]
 };
+/** Exact contiguous substrings of mixed-stage source paragraphs; never paraphrased. */
+const SCRIPT_AUTHOR_EXCERPT:Record<string,string>={
+  'Plan from the complete voice recording and actual pauses.':'Favor specific everyday action, amusing visual contradictions, explanatory object diagrams and a concrete payoff.',
+  'For new B4 production, resolve **Brian':'**Brian — Deep, Resonant and Comforting**',
+  'B1–B4 styles, languages, previews and films use **semantic subtitles':'B1–B4 styles, languages, previews and films use **semantic subtitles with at most one visible line at a time**.'
+};
 function extractScriptAuthor(full:string,relative:string){
   const prefixes=SCRIPT_AUTHOR_REQUIREMENTS[relative];
   if(!prefixes?.length)throw new Error('REBUILD_REQUIRED: missing Script Author authority selection: '+relative);
@@ -162,7 +164,9 @@ function extractScriptAuthor(full:string,relative:string){
     if(hits.length!==1)throw new Error('REBUILD_REQUIRED: Script Author source selector missing or ambiguous: '+relative+' '+prefix);
     const index=hits[0],line=lines[index];
     const heading=lines.slice(0,index+1).reverse().find(row=>/^#{2,5} /.test(row))??'# '+relative;
-    const entries=sections.get(heading)??[];entries.push(line);sections.set(heading,entries);
+    const excerpt=SCRIPT_AUTHOR_EXCERPT[prefix];
+    if(excerpt&&!line.includes(excerpt))throw new Error('REBUILD_REQUIRED: changed exact creative requirement: '+relative+' '+prefix);
+    const entries=sections.get(heading)??[];entries.push(excerpt??line);sections.set(heading,entries);
     locations.push('L'+String(index+1));
   }
   const text=[...sections].map(([heading,entries])=>heading+'\n'+entries.join('\n\n')).join('\n\n');
