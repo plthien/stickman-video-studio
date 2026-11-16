@@ -98,8 +98,8 @@ describe('R2 focused source-exact Script Author handoff',()=>{
     expect(task.prompt).toContain('Never copy the kite example');
     expect(task.prompt).toContain('"language": "English"');
     expect(task.prompt).toContain('"ratio": "9:16"');
-    const contractStart=task.prompt.indexOf('{\\n',task.prompt.indexOf('## 5. Exact JSON output contract'));
-    const contractEnd=task.prompt.indexOf('\\n\\nRequired payload:',contractStart);
+    const contractStart=task.prompt.indexOf('{\n',task.prompt.indexOf('## 5. Exact JSON output contract'));
+    const contractEnd=task.prompt.indexOf('\n\nRequired payload:',contractStart);
     expect(contractStart).toBeGreaterThan(0);
     expect(contractEnd).toBeGreaterThan(contractStart);
     const example=JSON.parse(task.prompt.slice(contractStart,contractEnd)) as {
