@@ -4,7 +4,7 @@ import {randomUUID} from 'node:crypto';
 import {atomicJson,readState,resolveProjectFile,sha,strictJson,writeState,type ExternalOperation,type Stage,type StudioState} from './services.js';
 import {compileAuthority} from './externalAuthority.js';
 import {rejectNativeUnsafePaths,validateAuthoring} from './sourceCitations.js';
-import {freezeTask,stageImport} from './externalTasks.js';
+import {freezeTask,stageImport,confirmImport,validateScript,validateManifest} from './externalTasks.js';
 
 type Scope={editableIds?:string[];editablePaths?:string[];findingIds?:string[];media?:'preview'|'film'|'voice'|'captions'};
 type Artifact={value:unknown;sha256:string;id:string};
@@ -96,11 +96,83 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   return{...state.lifecycle.tasks[key],prompt};
 }
 
-function entities(stage:Stage,value:unknown){if(stage==='script')return ((value as {sections?:unknown[]}).sections??[]) as Array<Record<string,unknown>>;return ((value as {shots?:unknown[]}).shots??[]) as Array<Record<string,unknown>>;}
-function validateLocks(stage:Stage,before:unknown,after:unknown,editable:string[]){
-  const idKey='id',oldRows=entities(stage,before),newRows=entities(stage,after),map=new Map(newRows.map(row=>[String(row[idKey]),row]));
-  if(oldRows.length!==newRows.length)throw new Error('Correction cannot add/remove entities without explicit expanded structural scope.');
-  for(const row of oldRows){const id=String(row[idKey]);if(!editable.includes(id)&&canonical(row)!==canonical(map.get(id)))throw new Error(`Locked entity changed: ${id}`);}
+function validateLocks(stage:Stage,before:unknown,after:unknown,editable:string[],editablePaths:string[]){
+  const parent=stage==='script'?'/sections':'/manifest/shots';
+  const oldRows=stage==='script'?((before as {sections:Array<{id:string}>}).sections):
+    ((before as {manifest:{shots:Array<{id:string}>}}).manifest.shots);
+  const newRows=stage==='script'?((after as {sections:Array<{id:string}>}).sections):
+    ((after as {manifest:{shots:Array<{id:string}>}}).manifest.shots);
+  if(!Array.isArray(oldRows)||!Array.isArray(newRows)||oldRows.length!==newRows.length)
+    throw new Error('Correction cannot add/remove shots or sections without an explicit structural reissue.');
+  for(let i=0;i<oldRows.length;i++){
+    if(oldRows[i].id!==newRows[i].id)throw new Error('Correction changed the locked entity identity or ordering.');
+  }
+  if(stage==='native'){
+    const left=(before as {manifest:Record<string,unknown>}).manifest,right=(after as {manifest:Record<string,unknown>}).manifest;
+    for(const key of ['voice','captions']){
+      if(canonical(left[key])!==canonical(right[key]))throw new Error('Approved narration and word/caption timing are immutable in Native correction: '+key);
+    }
+  }
+  function authorized(pointer:string):boolean{
+    if(editablePaths.some(path=>pointer===path||pointer.startsWith(path+'/')))return true;
+    for(let i=0;i<oldRows.length;i++){
+      const rowPath=parent+'/'+i;
+      if(editable.includes(oldRows[i].id)&&pointer.startsWith(rowPath+'/')&&pointer!==rowPath+'/id')return true;
+    }
+    return false;
+  }
+  function compare(left:unknown,right:unknown,pointer:string){
+    if(canonical(left)===canonical(right))return;
+    if(authorized(pointer))return;
+    if(!left||!right||typeof left!=='object'||typeof right!=='object'||Array.isArray(left)!==Array.isArray(right))
+      throw new Error('Locked native/creative field changed: '+(pointer||'/'));
+    if(Array.isArray(left)&&Array.isArray(right)){
+      if(left.length!==right.length)throw new Error('Locked array size changed: '+pointer);
+      for(let i=0;i<left.length;i++)compare(left[i],right[i],pointer+'/'+i);
+      return;
+    }
+    const l=left as Record<string,unknown>,r=right as Record<string,unknown>;
+    for(const key of new Set([...Object.keys(l),...Object.keys(r)]))
+      compare(l[key],r[key],pointer+'/'+key.replace(/~/g,'~0').replace(/\//g,'~1'));
+  }
+  compare(before,after,'');
+}
+function validateReview(payload:Record<string,unknown>,task:NonNullable<StudioState['lifecycle']>['tasks'][string],operation:ExternalOperation){
+  exact(payload,['schema','artifact_sha256','status','coverage','findings']);
+  if(payload.schema!=='mode-b-review-v1'||payload.artifact_sha256!==task.artifactSha256||
+    !['REVIEWED_WITH_FINDINGS','REVIEWED_NO_FINDINGS','INSUFFICIENT_EVIDENCE','NOT_VERIFIED'].includes(String(payload.status))||
+    !Array.isArray(payload.findings))throw new Error('Invalid review result.');
+  const coverage=payload.coverage as Record<string,unknown>;
+  if(!coverage||typeof coverage!=='object'||Array.isArray(coverage))throw new Error('Review coverage is required.');
+  exact(coverage,['target_ids','modalities','ranges']);
+  const covered=coverage.target_ids;
+  if(!Array.isArray(covered)||covered.some(id=>typeof id!=='string'||!task.targetIds?.includes(id))||new Set(covered).size!==covered.length)
+    throw new Error('Review coverage contains fabricated, duplicate or missing target identities.');
+  if(payload.status!=='INSUFFICIENT_EVIDENCE'&&payload.status!=='NOT_VERIFIED'&&
+    (covered.length!==task.targetIds?.length||task.targetIds?.some(id=>!covered.includes(id))))
+    throw new Error('Unsupported review coverage: every requested target must be accounted for.');
+  if(!Array.isArray(coverage.modalities)||!Array.isArray(coverage.ranges))throw new Error('Review coverage modalities and ranges must be arrays.');
+  const findings=payload.findings as unknown[],ids=new Set<string>();
+  for(const item of findings){
+    if(!item||typeof item!=='object'||Array.isArray(item))throw new Error('Invalid review finding.');
+    const f=item as Record<string,unknown>;
+    exact(f,['id','severity','status','target_ids','requirement','evidence','recommendation']);
+    if(typeof f.id!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(f.id)||ids.has(f.id))throw new Error('Invalid/duplicate finding ID.');
+    ids.add(f.id);
+    if(!['critical','major','minor'].includes(String(f.severity))||!['open','resolved','uncertain'].includes(String(f.status)))
+      throw new Error('Invalid finding severity/status.');
+    if(!Array.isArray(f.target_ids)||!f.target_ids.length||f.target_ids.some(id=>!task.targetIds?.includes(String(id))))
+      throw new Error('Finding refers to an unknown shot/section target.');
+    if(typeof f.requirement!=='string'||!f.requirement.trim()||typeof f.recommendation!=='string')throw new Error('Finding lacks violated requirement.');
+    const ev=f.evidence as Record<string,unknown>;
+    if(!ev||typeof ev!=='object'||Array.isArray(ev)||!['manifest','inferred','unverified','observed'].includes(String(ev.kind))||
+       typeof ev.detail!=='string'||!ev.detail.trim())throw new Error('Finding lacks verifiable evidence description.');
+    if(ev.kind==='observed'&&operation==='media-review')throw new Error('NOT_VERIFIED: local media path/hash is not proof of transferred audiovisual observation.');
+  }
+  if(payload.status==='REVIEWED_WITH_FINDINGS'&&!findings.length)throw new Error('Review declares findings but supplies none.');
+  if(payload.status==='REVIEWED_NO_FINDINGS'&&findings.length)throw new Error('No-findings status conflicts with supplied findings.');
+  if(operation==='media-review'&&payload.status==='REVIEWED_NO_FINDINGS')
+    throw new Error('INSUFFICIENT_EVIDENCE: physical media inspection requires a verified transfer/owner review, not path metadata.');
 }
 export function stageLifecycleResult(appPath:string,root:string,stage:Stage,operation:Exclude<ExternalOperation,'author'>,text:string){
   const state=readState(root),task=state.lifecycle?.tasks[`${stage}:${operation}`];if(!task||task.status!=='FROZEN')throw new Error('No current frozen lifecycle task exists.');
@@ -109,12 +181,28 @@ export function stageLifecycleResult(appPath:string,root:string,stage:Stage,oper
   if(value.schema!=='mode-b-lifecycle-result-v1'||value.project_id!==state.project.id||value.task_id!==task.id||value.revision!==task.revision||value.input_sha256!==task.inputSha256||value.stage!==stage||value.operation!==operation)throw new Error('Lifecycle project/task/revision binding mismatch.');
   const payload=value.payload as Record<string,unknown>;if(!payload||typeof payload!=='object'||Array.isArray(payload))throw new Error('Invalid lifecycle payload.');
   if(operation==='correct'){
-    exact(payload,['schema','artifact_sha256','finding_ids','editable_ids','artifact']);if(payload.schema!=='mode-b-correction-v1'||payload.artifact_sha256!==task.artifactSha256||JSON.stringify(payload.editable_ids)!==JSON.stringify(task.editableIds??[]))throw new Error('Correction scope/artifact binding mismatch.');
-    const corrected=payload.artifact as Record<string,unknown>;if(stage==='script'){if(corrected.schema!=='mode-b-script-v1'||!Array.isArray(corrected.sections)||!corrected.sections.length)throw new Error('Invalid complete Script correction.');validateAuthoring(corrected.authoring);validateLocks(stage,current.value,corrected,task.editableIds??[]);}else{const manifest=(corrected.manifest??corrected) as Record<string,unknown>;rejectNativeUnsafePaths(manifest);validateLocks(stage,current.value,manifest,task.editableIds??[]);}
+    exact(payload,['schema','artifact_sha256','finding_ids','editable_ids','editable_paths','artifact']);
+    if(payload.schema!=='mode-b-correction-v1'||payload.artifact_sha256!==task.artifactSha256||
+      JSON.stringify(payload.editable_ids)!==JSON.stringify(task.editableIds??[])||
+      JSON.stringify(payload.editable_paths??[])!==JSON.stringify(task.editablePaths??[])||
+      JSON.stringify(payload.finding_ids)!==JSON.stringify(task.findingIds??[]))
+      throw new Error('Correction scope, findings or artifact binding mismatch.');
+    if(!Array.isArray(payload.finding_ids))throw new Error('Finding scope must be explicit.');
+    const corrected=payload.artifact as Record<string,unknown>;
+    if(!corrected||typeof corrected!=='object'||Array.isArray(corrected))throw new Error('Missing complete corrected artifact.');
+    if(stage==='script'){
+      const checked=validateScript(corrected);
+      const previous=current.value as {sections:unknown[];authoring:unknown};
+      validateLocks(stage,{schema:'mode-b-script-v1',sections:previous.sections,authoring:previous.authoring},
+        checked,task.editableIds??[],task.editablePaths??[]);
+    }else{
+      const previous=current.value as {manifest:Record<string,unknown>;shot_ledger:unknown;sound_script:unknown;asset_needs:unknown};
+      validateManifest(state,root,corrected);
+      rejectNativeUnsafePaths(corrected);
+      validateLocks(stage,previous,corrected,task.editableIds??[],task.editablePaths??[]);
+    }
   }else{
-    exact(payload,['schema','artifact_sha256','status','coverage','findings']);if(payload.schema!=='mode-b-review-v1'||payload.artifact_sha256!==task.artifactSha256||!['REVIEWED_WITH_FINDINGS','REVIEWED_NO_FINDINGS','NOT_VERIFIED'].includes(String(payload.status))||!Array.isArray(payload.findings))throw new Error('Invalid review result.');
-    const coverage=payload.coverage as {modalities?:unknown[];ranges?:unknown[]};if(!coverage||!Array.isArray(coverage.modalities)||!Array.isArray(coverage.ranges))throw new Error('Review coverage is required.');
-    if(operation==='media-review'&&payload.status==='REVIEWED_NO_FINDINGS'&&!coverage.modalities.length)throw new Error('INSUFFICIENT_EVIDENCE: media review cannot claim no findings without observed modalities.');
+    validateReview(payload,task,operation);
   }
   const responseSha256=sha(text),token=randomUUID();fs.mkdirSync(path.dirname(resultPath(root,task.id)),{recursive:true});fs.writeFileSync(resultPath(root,task.id),text,{encoding:'utf8',flag:'wx'});atomicJson(pendingPath(root),{token,projectId:state.project.id,taskId:task.id,stage,operation,responseSha256,payload,createdAt:new Date().toISOString()});return{token,before:current.value,after:payload,status:'STAGED'};
 }
