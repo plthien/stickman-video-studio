@@ -121,6 +121,7 @@ const SCRIPT_AUTHOR_REQUIREMENTS:Record<string,string[]>={
     '- **Separate cast identity from menace.',
     '- **Make the threat visible, not merely described.',
     '- **Well-drawn held poses are a valid B4 baseline.',
+    '- Read and execute the required [B4 audio contract]',
     "B4's deliberate-hold exception takes precedence"
   ],
   'references/b4-opening-direction.md':[
@@ -136,7 +137,6 @@ const SCRIPT_AUTHOR_REQUIREMENTS:Record<string,string[]>={
     'Spot the immediate hearing hook'
   ],
   'references/b4-audio-direction.md':[
-    'For new B4 production, resolve **Brian',
     '1. **Cast only real roles.',
     '3. **Act the scene, not a preset.',
     '**Start with perceptible story-led sound',
@@ -150,7 +150,7 @@ const SCRIPT_AUTHOR_REQUIREMENTS:Record<string,string[]>={
 /** Exact contiguous substrings of mixed-stage source paragraphs; never paraphrased. */
 const SCRIPT_AUTHOR_EXCERPT:Record<string,string>={
   'Plan from the complete voice recording and actual pauses.':'Favor specific everyday action, amusing visual contradictions, explanatory object diagrams and a concrete payoff.',
-  'For new B4 production, resolve **Brian':'**Brian — Deep, Resonant and Comforting**',
+  '- Read and execute the required [B4 audio contract]':'Default to English and **fix the main narrator to Brian — Deep, Resonant and Comforting**',
   'B1–B4 styles, languages, previews and films use **semantic subtitles':'B1–B4 styles, languages, previews and films use **semantic subtitles with at most one visible line at a time**.'
 };
 function extractScriptAuthor(full:string,relative:string){
