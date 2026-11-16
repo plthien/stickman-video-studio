@@ -381,7 +381,7 @@ export function stageLifecycleResult(appPath:string,root:string,stage:Stage,oper
 
 export interface LifecyclePublicationOptions { validator?:ConfirmOptions['validator'];previewSeconds?:number;allowSampleDraft?:boolean;hooks?:{afterJournal?:()=>void;afterStaging?:()=>void;afterNativeCommit?:()=>void} }
 const nativeCorrectionJournal=(root:string)=>path.join(lifecycleDir(root),'native-publication.json');
-const manifestSemanticHash=(file:string)=>sha(JSON.stringify(strictJson(fs.readFileSync(file,'utf8'))));
+const manifestSemanticHash=(file:string)=>sha(canonical(strictJson(fs.readFileSync(file,'utf8'))));
 function finalizeLifecycle(root:string,pending:Record<string,unknown>,task:NonNullable<StudioState['lifecycle']>['tasks'][string]){
   const state=readState(root),key=String(pending.stage)+':'+String(pending.operation);
   if(!state.lifecycle?.tasks[key]||state.lifecycle.tasks[key].id!==task.id||
@@ -397,8 +397,8 @@ function finalizeLifecycle(root:string,pending:Record<string,unknown>,task:NonNu
 }
 async function publishNativeCorrection(appPath:string,root:string,pending:Record<string,unknown>,task:NonNullable<StudioState['lifecycle']>['tasks'][string],options:LifecyclePublicationOptions={}){
   const payload=pending.payload as {artifact:{manifest:Record<string,unknown>;shot_ledger:unknown[];sound_script:unknown[];asset_needs:unknown[]}};
-  const desiredSha256=sha(JSON.stringify(payload.artifact.manifest));
-  const desiredArtifactSha256=sha(JSON.stringify(payload.artifact));
+  const desiredSha256=sha(canonical(payload.artifact.manifest));
+  const desiredArtifactSha256=sha(canonical(payload.artifact));
   const manifestPath=path.join(root,'project.json');
   const baselineSha256=manifestSemanticHash(manifestPath);
   const journalFile=nativeCorrectionJournal(root);
@@ -407,7 +407,7 @@ async function publishNativeCorrection(appPath:string,root:string,pending:Record
     saved.desiredSha256!==desiredSha256||saved.desiredArtifactSha256!==desiredArtifactSha256))
     throw new Error('RECOVERY_REQUIRED: another native correction publication is pending.');
   const initial=readState(root),initialArtifact=artifactFor(root,initial,'native','correct');
-  const initialArtifactSha256=initialArtifact.sha256;
+  const initialArtifactSha256=sha(canonical(initialArtifact.value));
   const journal:Record<string,unknown>=saved??{
     token:pending.token,taskId:task.id,baselineSha256,desiredSha256,
     baselineArtifactSha256:initialArtifactSha256,desiredArtifactSha256,authorTaskId:null,status:'PENDING'
@@ -432,7 +432,7 @@ async function publishNativeCorrection(appPath:string,root:string,pending:Record
         throw new Error('RECOVERY_REQUIRED: matching creative data without a publication journal is not sufficient.');
       return finalizeLifecycle(root,pending,task);
     }
-    if(initialArtifactSha256!==task.artifactSha256)
+    if(initialArtifact.sha256!==task.artifactSha256)
       throw new Error('STALE: auxiliary correction baseline no longer matches the reviewed artifact.');
     // Auxiliary-only creative metadata is not an input to the original renderer;
     // preserve project.json, media, readiness, preview and approval verbatim.
@@ -454,9 +454,16 @@ async function publishNativeCorrection(appPath:string,root:string,pending:Record
     // Journal is durable before publishing; crash recovery compares complete artifacts.
     journal.status='AUX_PENDING';journal.publishedRevision=revision;atomicJson(journalFile,journal);
     options.hooks?.afterStaging?.();
+    // Publish a complete historical revision pair without touching the active
+    // manifest bytes or forgetting previously accepted media bindings.
+    const previousAuthoringFile=path.join(root,'.studio','revisions','native-authoring-'+prior.revision+'.json');
+    const previousAuthoring=fs.existsSync(previousAuthoringFile)?
+      strictJson(fs.readFileSync(previousAuthoringFile,'utf8')) as Record<string,unknown>:null;
+    atomicJson(path.join(root,'.studio','revisions','native-'+revision+'.json'),payload.artifact.manifest);
     atomicJson(path.join(root,'.studio','revisions','native-authoring-'+revision+'.json'),
       {shot_ledger:payload.artifact.shot_ledger,sound_script:payload.artifact.sound_script,
-       asset_needs:payload.artifact.asset_needs,fulfillments:[],missing:existing.missing??[]});
+       asset_needs:payload.artifact.asset_needs,
+       fulfillments:previousAuthoring?.fulfillments??{},missing:existing.missing??[]});
     writeState(root,current);
     journal.status='AUX_PUBLISHED';atomicJson(journalFile,journal);
     options.hooks?.afterNativeCommit?.();
@@ -526,7 +533,7 @@ export function confirmLifecycleResult(appPathOrRoot:string,rootOrToken:string,m
     const journal=nativeCorrectionJournal(root);
     const saved=fs.existsSync(journal)?strictJson(fs.readFileSync(journal,'utf8')) as Record<string,unknown>:null;
     if(!(pending.operation==='correct'&&pending.stage==='native'&&saved?.token===token&&
-      saved.desiredArtifactSha256===original.sha256&&
+      saved.desiredArtifactSha256===sha(canonical(original.value))&&
       ((saved.status==='AUX_PUBLISHED'&&manifestSemanticHash(path.join(root,'project.json'))===saved.baselineSha256)||
        (manifestSemanticHash(path.join(root,'project.json'))===saved.desiredSha256&&
         state.nativeReadiness?.sampleReady&&state.nativeReadiness.sourceFingerprint===sha(fs.readFileSync(path.join(root,'project.json')))))))
