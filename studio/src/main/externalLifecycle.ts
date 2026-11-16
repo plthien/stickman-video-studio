@@ -47,14 +47,14 @@ function lifecycleSourceContext(state:StudioState,stage:Stage,operation:External
 }
 const authorityIdentity=(authority:ReturnType<typeof compileAuthority>)=>
   sha(JSON.stringify(authority.sources.map(source=>[source.path,source.sha256,source.extractionSha256,source.extractionRevision])));
-function assertLifecycleFresh(appPath:string,root:string,state:StudioState,task:NonNullable<StudioState['lifecycle']>['tasks'][string]){
+function assertLifecycleFresh(appPath:string,root:string,state:StudioState,task:NonNullable<StudioState['lifecycle']>['tasks'][string],journalResume=false){
   if(!task.sourceContextSha256||task.sourceContextSha256!==lifecycleSourceContext(state,task.stage,task.operation))
     throw new Error('STALE: lifecycle brief, approved creative source or voice/alignment was changed.');
   const authority=compileAuthority(appPath,state.project.style,task.stage,task.operation);
   if(!task.authorityFingerprint||task.authorityFingerprint!==authorityIdentity(authority))
     throw new Error('REBUILD_REQUIRED: installed Mode B creative authority changed.');
   const source=state.tasks?.[task.stage];
-  if(!source||!task.originalTaskSha256||source.promptSha256!==task.originalTaskSha256)
+  if(!journalResume&&(!source||!task.originalTaskSha256||source.promptSha256!==task.originalTaskSha256))
     throw new Error('REBUILD_REQUIRED: original frozen author task changed.');
   const file=resolveProjectFile(root,task.promptPath);
   if(!fs.existsSync(file)||sha(fs.readFileSync(file))!==task.promptSha256)
@@ -352,8 +352,15 @@ export function confirmLifecycleResult(appPathOrRoot:string,rootOrToken:string,m
   if(task.status==='IMPORTED'&&state.lifecycle?.artifacts[task.id]?.taskId===task.id){fs.unlinkSync(file);if(fs.existsSync(nativeCorrectionJournal(root)))fs.unlinkSync(nativeCorrectionJournal(root));return state;}
   if(task.status!=='FROZEN')throw new Error('Lifecycle task is stale or replayed.');
   const recoveryJournal=nativeCorrectionJournal(root);
-  const isPublishedNativeRecovery=pending.operation==='correct'&&pending.stage==='native'&&fs.existsSync(recoveryJournal)&&manifestSemanticHash(path.join(root,'project.json'))===(strictJson(fs.readFileSync(recoveryJournal,'utf8')) as Record<string,unknown>).desiredSha256;
-  if(!isPublishedNativeRecovery)assertLifecycleFresh(appPath,root,state,task);
+  const journal=fs.existsSync(recoveryJournal)?
+    strictJson(fs.readFileSync(recoveryJournal,'utf8')) as Record<string,unknown>:null;
+  const currentManifestSha256=manifestSemanticHash(path.join(root,'project.json'));
+  const nativeTask=state.tasks?.native;
+  const trustedNativeResume=Boolean(pending.operation==='correct'&&pending.stage==='native'&&journal&&
+    journal.token===token&&journal.taskId===task.id&&
+    (currentManifestSha256===journal.baselineSha256||currentManifestSha256===journal.desiredSha256)&&
+    (!journal.authorTaskId||nativeTask?.id===journal.authorTaskId));
+  assertLifecycleFresh(appPath,root,state,task,trustedNativeResume);
   const frozenFile=resultPath(root,task.id);
   if(!fs.existsSync(frozenFile)||sha(fs.readFileSync(frozenFile))!==pending.responseSha256)
     throw new Error('Frozen lifecycle response bytes changed before publication.');
