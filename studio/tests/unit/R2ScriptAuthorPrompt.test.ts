@@ -131,7 +131,7 @@ describe('R2 focused source-exact Script Author handoff',()=>{
     const expected=[
       ['Slender proportions','Act with the whole body','not a hard requirement for every possible story'],
       ['Maintain physical contact and object ownership','Reusing a setting within one story','not a location quota'],
-      ['If narration names a behavior','same frozen pose','When an animal carries the story'],
+      ['If narration names a behavior','an unchanged dog next to the word APPROACH is not approaching','When an animal carries the story'],
       ['Scripted abnormal anatomy','deliberate-hold exception','This exception does not change A or B1–B3']
     ];
     for(let i=0;i<originals.length;i++){
