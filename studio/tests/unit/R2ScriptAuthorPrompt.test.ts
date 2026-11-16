@@ -58,6 +58,7 @@ describe('R2 focused source-exact Script Author handoff',()=>{
         expect(all).toContain('Story-led horror visibility gate');
         expect(all).toContain('First-three-second visual escalation gate');
         expect(all).toContain('First-frame audio gate');
+        expect(all).toContain('deliberate-hold exception');
       }
     }
   });
