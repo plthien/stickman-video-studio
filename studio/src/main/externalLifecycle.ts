@@ -29,7 +29,20 @@ function evidence(root:string,state:StudioState,scope:Scope){
   const selected=scope.media;if(!selected)return{status:'NOT_VERIFIED',modalities:[],ranges:[],files:[]};
   const row=selected==='preview'?state.preview:selected==='film'?state.render:undefined;
   if((selected==='preview'||selected==='film')&&!row)throw new Error(`NOT_VERIFIED: verified ${selected} media does not exist.`);
-  if(row){const file=resolveProjectFile(root,row.path),bytes=fs.readFileSync(file);if(sha(bytes)!==row.sha256)throw new Error('BLOCKED: registered review media bytes changed.');return{status:'AVAILABLE_LOCALLY_NOT_TRANSFERRED',modalities:[],ranges:[{start:0,end:selected==='preview'?state.nativeReadiness?.checkedSeconds??state.nativeReadiness?.previewSeconds:null}],files:[{path:row.path,sha256:row.sha256,reportPath:row.reportPath,reportSha256:row.reportSha256}]};}
+  if(row){
+    const file=resolveProjectFile(root,row.path),bytes=fs.readFileSync(file);
+    if(sha(bytes)!==row.sha256)throw new Error('BLOCKED: registered review media bytes changed.');
+    const reportFile=resolveProjectFile(root,row.reportPath);
+    if(!row.reportSha256||!fs.existsSync(reportFile)||sha(fs.readFileSync(reportFile))!==row.reportSha256)
+      throw new Error('NOT_VERIFIED: native QA report for encoded media is missing or changed.');
+    const report=strictJson(fs.readFileSync(reportFile,'utf8')) as Record<string,unknown>;
+    const observedDuration=typeof report.duration==='number'&&Number.isFinite(report.duration)&&report.duration>0?report.duration:null;
+    const sampleDuration=selected==='preview'?state.nativeReadiness?.checkedSeconds??state.nativeReadiness?.previewSeconds:null;
+    const end=observedDuration??sampleDuration??null;
+    return{status:'AVAILABLE_LOCALLY_NOT_TRANSFERRED',modalities:[],ranges:[{start:0,end}],
+      duration_source:observedDuration!==null?'REGISTERED_NATIVE_QA_REPORT':sampleDuration!==null?'ORIGINAL_SAMPLE_VALIDATION':'NOT_VERIFIED',
+      files:[{path:row.path,sha256:row.sha256,reportPath:row.reportPath,reportSha256:row.reportSha256}]};
+  }
   if(selected==='voice'){if(!state.voice||state.voice.stale)throw new Error('NOT_VERIFIED: current voice evidence is unavailable.');return{status:'AVAILABLE_LOCALLY_NOT_TRANSFERRED',modalities:[],ranges:[{start:0,end:state.voice.duration??null}],files:[{path:state.voice.path,sha256:state.voice.sha256}]};}
   if(!state.alignment?.captionReview)throw new Error('NOT_VERIFIED: owner-reviewed captions are unavailable.');return{status:'AVAILABLE_LOCALLY_NOT_TRANSFERRED',modalities:[],ranges:[],files:[{path:state.alignment.captionsPath,sha256:state.alignment.captionReview.sha256}]};
 }
