@@ -55,16 +55,25 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   if(editableIds.some(id=>!targetIds.includes(id)))throw new Error('Editable target does not exist in frozen artifact.');
   const relevantPrior=Object.values(state.lifecycle?.artifacts??{}).filter(item=>item.stage===stage&&['review','recheck','media-review'].includes(item.operation))
     .sort((x,y)=>y.createdAt.localeCompare(x.createdAt)).slice(0,3).map(item=>({taskId:item.taskId,operation:item.operation,value:item.value}));
+  const reviewFindings=relevantPrior.flatMap(item=>{
+    const p=item.value as {findings?:Array<{id:string;status?:string}>};
+    return (p.findings??[]).filter(f=>f.status!=='resolved').map(f=>f.id);
+  });
+  const findingIds=scope.findingIds??((operation==='correct'||operation==='recheck')?[...new Set(reviewFindings)]:[]);
+  if(new Set(findingIds).size!==findingIds.length||findingIds.some(id=>typeof id!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(id)))
+    throw new Error('Invalid finding scope.');
+  if(operation==='recheck'&&reviewFindings.some(id=>!findingIds.includes(id)))
+    throw new Error('Recheck must account for every unresolved prior finding.');
   const key=stage+':'+operation,prior=state.lifecycle?.tasks[key];
   const snapshot={projectId:state.project.id,stage,operation,artifactSha256:artifact.sha256,authorityHashes:authority.sources.map(item=>[item.path,item.sha256,item.extractionSha256]),
-    originalTaskSha256:sha(originalTask),evidencePack,editableIds,editablePaths,findingIds:scope.findingIds??[],targetIds,relevantPrior};
+    originalTaskSha256:sha(originalTask),evidencePack,editableIds,editablePaths,findingIds:findingIds,targetIds,relevantPrior};
   const inputSha256=sha(JSON.stringify(snapshot));
   if(!rebuild&&prior?.status==='FROZEN'&&prior.inputSha256===inputSha256&&fs.existsSync(resolveProjectFile(root,prior.promptPath)))
     return{...prior,prompt:fs.readFileSync(resolveProjectFile(root,prior.promptPath),'utf8')};
   if(prior)prior.status='STALE';
   const id=randomUUID(),revision=(prior?.revision??0)+1;
   const contract=operation==='correct'?
-    {schema:'mode-b-correction-v1',artifact_sha256:artifact.sha256,finding_ids:scope.findingIds??[],editable_ids:editableIds,editable_paths:editablePaths,
+    {schema:'mode-b-correction-v1',artifact_sha256:artifact.sha256,finding_ids:findingIds,editable_ids:editableIds,editable_paths:editablePaths,
       artifact:stage==='script'?{schema:'mode-b-script-v1',sections:(artifact.value as {sections:unknown[]}).sections,authoring:(artifact.value as {authoring:unknown}).authoring}:
       artifact.value}:
     {schema:'mode-b-review-v1',artifact_sha256:artifact.sha256,status:'INSUFFICIENT_EVIDENCE',
@@ -84,14 +93,14 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
     'IMMUTABLE TARGET ARTIFACT',JSON.stringify({id:artifact.id,sha256:artifact.sha256,value:artifact.value},null,2),
     'REVIEW COVERAGE INVENTORY',JSON.stringify(targetIds),
     'PRIOR FINDINGS AND UNCERTAINTY',JSON.stringify(relevantPrior,null,2),
-    'EDITABLE SCOPE AND GLOBAL LOCKS',JSON.stringify({editableIds,editablePaths,locked:'all other section/shot IDs, fields and auxiliary ledgers',findingIds:scope.findingIds??[]},null,2),
+    'EDITABLE SCOPE AND GLOBAL LOCKS',JSON.stringify({editableIds,editablePaths,locked:'all other section/shot IDs, fields and auxiliary ledgers',findingIds:findingIds},null,2),
     'ACTUAL EVIDENCE TRANSFER STATUS',JSON.stringify(evidencePack,null,2),
     'JSON RESPONSE CONTRACT | replace the example status/findings with supported results only',JSON.stringify(envelope,null,2)
   ].join('\n\n')+'\n';
   const relative='.studio/external/lifecycle/tasks/'+stage+'-'+operation+'-'+revision+'-'+id+'.md',target=resolveProjectFile(root,relative);
   fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,prompt,{encoding:'utf8',flag:'wx'});
   state.lifecycle??={tasks:{},artifacts:{}};
-  state.lifecycle.tasks[key]={id,stage,operation,revision,inputSha256,artifactSha256:artifact.sha256,promptPath:relative,promptSha256:sha(prompt),status:'FROZEN',createdAt:new Date().toISOString(),editableIds,editablePaths,targetIds,findingIds:scope.findingIds,originalTaskSha256:sha(originalTask)};
+  state.lifecycle.tasks[key]={id,stage,operation,revision,inputSha256,artifactSha256:artifact.sha256,promptPath:relative,promptSha256:sha(prompt),status:'FROZEN',createdAt:new Date().toISOString(),editableIds,editablePaths,targetIds,findingIds,originalTaskSha256:sha(originalTask)};
   writeState(root,state);
   return{...state.lifecycle.tasks[key],prompt};
 }
@@ -169,8 +178,9 @@ function validateReview(payload:Record<string,unknown>,task:NonNullable<StudioSt
        typeof ev.detail!=='string'||!ev.detail.trim())throw new Error('Finding lacks verifiable evidence description.');
     if(ev.kind==='observed'&&operation==='media-review')throw new Error('NOT_VERIFIED: local media path/hash is not proof of transferred audiovisual observation.');
   }
+  if(operation==='recheck'&&task.findingIds?.some(id=>!ids.has(id)))throw new Error('Recheck omitted a previously unresolved finding.');
   if(payload.status==='REVIEWED_WITH_FINDINGS'&&!findings.length)throw new Error('Review declares findings but supplies none.');
-  if(payload.status==='REVIEWED_NO_FINDINGS'&&findings.length)throw new Error('No-findings status conflicts with supplied findings.');
+  if(payload.status==='REVIEWED_NO_FINDINGS'&&findings.some(item=>(item as {status:string}).status!=='resolved'))throw new Error('No-findings recheck contains unresolved findings.');
   if(operation==='media-review'&&payload.status==='REVIEWED_NO_FINDINGS')
     throw new Error('INSUFFICIENT_EVIDENCE: physical media inspection requires a verified transfer/owner review, not path metadata.');
 }
