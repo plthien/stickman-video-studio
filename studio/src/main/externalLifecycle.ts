@@ -416,7 +416,7 @@ async function publishNativeCorrection(appPath:string,root:string,pending:Record
     throw new Error('STALE: independent native creative changes prevent correction retry.');
   if(!saved){atomicJson(journalFile,journal);options.hooks?.afterJournal?.();}
   const alreadyPublished=initialArtifactSha256===desiredArtifactSha256;
-  const originalNoOp=alreadyPublished&&!saved;
+  const originalNoOp=alreadyPublished&&(!saved||journal.baselineArtifactSha256===desiredArtifactSha256);
   if(baselineSha256===desiredSha256){
     if(originalNoOp){
       // A complete creative no-op needs no publication and no fabricated CLI verification.
