@@ -433,8 +433,8 @@ async function publishNativeCorrection(appPath:string,root:string,pending:Record
       // rather than misclassifying the completed manifest as auxiliary-only.
       const validatedManifestResume=Boolean(saved?.authorTaskId&&
         initial.tasks?.native?.id===saved.authorTaskId&&
-        initial.tasks.native.status==='IMPORTED'&&initial.nativeReadiness?.sampleReady&&
-        initial.nativeReadiness.sourceFingerprint===sha(fs.readFileSync(manifestPath)));
+        initial.tasks?.native?.status==='IMPORTED'&&initial.nativeReadiness?.sampleReady&&
+        initial.nativeReadiness?.sourceFingerprint===sha(fs.readFileSync(manifestPath)));
       const publishedAuxiliary=journal.status==='AUX_PUBLISHED'||journal.status==='AUX_PENDING';
       if(!saved||!initial.external.native||
         !(validatedManifestResume||publishedAuxiliary||journal.status==='VALIDATED'))
