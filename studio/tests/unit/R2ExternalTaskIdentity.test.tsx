@@ -53,6 +53,31 @@ describe('R2 explicit external reservation identity',()=>{
     await waitFor(()=>expect(harness.freezeLifecycle).toHaveBeenCalledTimes(2));
     expect(harness.freezeLifecycle.mock.calls[1][4]).toBe(true);
   });
+  it('preserves the task ID when building the unchanged scope, then rebuilds explicitly',async()=>{
+    showCorrect();
+    fireEvent.change(screen.getByPlaceholderText('S03, S04'),{target:{value:'shot-1'}});
+    fireEvent.click(screen.getByRole('button',{name:'Build Task'}));
+    await screen.findByText(/Frozen task frozen-1/);
+    fireEvent.click(screen.getByRole('button',{name:'Build Task'}));
+    await waitFor(()=>expect(harness.freezeLifecycle).toHaveBeenCalledTimes(2));
+    expect(harness.freezeLifecycle.mock.calls[1][4]).toBe(false);
+    expect(screen.getByText(/Frozen task frozen-1/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:'Rebuild Task'}));
+    await screen.findByText(/Frozen task rebuild-2/);
+    expect(harness.freezeLifecycle.mock.calls[2][4]).toBe(true);
+  });
+  it('discards delayed frozen-task replies from a previous project',async()=>{
+    let resolveOld:(value:unknown)=>void=()=>{};
+    harness.readFrozen.mockImplementation((id:string)=>id==='project-A'?
+      new Promise(resolve=>{resolveOld=resolve;}):Promise.resolve(null));
+    const view=render(<ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider>);
+    await waitFor(()=>expect(harness.readFrozen).toHaveBeenCalledWith('project-A','script','author'));
+    harness.projectId='project-B';
+    view.rerender(<ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider>);
+    await waitFor(()=>expect(harness.readFrozen).toHaveBeenCalledWith('project-B','script','author'));
+    resolveOld(task('stale-project-A',{}));
+    await waitFor(()=>expect(screen.queryByText(/Frozen task stale-project-A/)).not.toBeInTheDocument());
+  });
   it('restores a frozen task through read-only IPC without a new reservation',async()=>{
     harness.readFrozen.mockImplementation(async(_project:string,_stage:string,operation:string)=>
       operation==='correct'?task('persisted-7',{editableIds:['shot-1']}):null);
