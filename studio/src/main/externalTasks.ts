@@ -29,7 +29,7 @@ const sourceBundle=(appPath:string,style:string,stage:Stage)=>{
   const authority=compileAuthority(appPath,style,stage,'author');
   return authority.sources.map(source=>({
     relative:source.path,sha256:source.sha256,extractionSha256:source.extractionSha256,
-    extractionRevision:source.extractionRevision,headings:source.headings,text:source.text
+    extractionRevision:source.extractionRevision,headings:source.headings,locations:source.locations??[],text:source.text
   }));
 };
 export function sourceFingerprint(appPath: string, root: string, stage: Stage) {
@@ -65,6 +65,49 @@ function assertFrozenSource(appPath:string,root:string,stage:Stage,state:StudioS
   }
   return task;
 }
+function scriptAuthorPrompt(
+  context:ReturnType<typeof projectContext>,
+  response:Record<string,unknown>,
+  sources:ReturnType<typeof sourceBundle>
+){
+  const brief=context as Record<string,unknown>,duration=brief.target_duration_seconds;
+  const durationText=typeof duration==='number'&&duration>0?
+    'Aim for the requested '+duration+' seconds of natural spoken narration, including meaningful pauses. No approved WPM target is provided in this task: do not invent an authoritative speaking rate or force a word count. The accepted WAV later determines actual duration.':
+    'No target duration was supplied. Choose a natural structure suited to this brief without inventing a precise length or speech rate; actual duration is measured from the accepted WAV later.';
+  const provenance=sources.map(item=>
+    '- '+item.relative+' | source SHA256 '+item.sha256+' | extraction SHA256 '+item.extractionSha256+
+    ' | revision '+item.extractionRevision+' | exact locations '+item.locations.join(', ')).join('\n');
+  const authority=sources.map(item=>
+    '### '+item.relative+'\n'+item.text).join('\n\n');
+  return [
+    '# MODE B — EXTERNAL CHATGPT | SCRIPT AUTHOR',
+    '## 1. Mission and deliverable',
+    'Write the complete original spoken narration and establish the creative decisions needed to produce a strong, coherent story-led Mode B video. This is SCRIPT AUTHORING only, not the production/runtime stage. Return one importable JSON object, no Markdown or commentary.',
+    '## 2. Actual project brief',
+    JSON.stringify(context,null,2),
+    'Empty audience/purpose fields are open creative choices, not missing mandatory inputs. Preserve explicit choices and approved narration if supplied. For fictional or speculative premises, distinguish story-world assumptions from factual claims where needed.',
+    '## 3. Narrative and creative responsibilities',
+    '- Establish a compelling premise and concrete opening hook tied to this topic/audience; unfold causal events or explanatory progression, develop escalation, and earn a satisfying ending without forcing a universal number of beats, roles or sections.',
+    '- Keep character identity, world constraints, motivation, recurring locations/props, relationships, transformations and continuity consistent. Explain applicable decisions in authoring; use empty arrays only when genuinely inapplicable.',
+    '- Write sections[].text as natural spoken narration, not directions to actors, camera, editors, sound engineers, CLI or image generators. Section text must read coherently when joined in order with two newline characters.',
+    '- Plan visual communicability within the selected B style: what the audience must understand, relevant dramatic actions, objects and contrast. Do not deliver a shot ledger, frame plan, rendered asset, native manifest or exact timestamps.',
+    '- Record concrete voice/emotion/sound intentions for later production; never claim generated audio, acquired media, observed footage, actual captions or completed checks.',
+    '- '+durationText,
+    '## 4. Applicable original Mode B authority (literal sourced creative requirements)',
+    'The requirements below are exact selected original source paragraphs, not summaries. Their source files are NOT available to you outside this task; apply the text actually supplied below. Production/verification details mentioned incidentally remain responsibilities of later Studio/Native stages, not actions to perform here.',
+    'Source traceability (source hashes, exact original line locations and extraction revision):',
+    provenance,
+    authority,
+    '## 5. Exact JSON output contract',
+    'Return exactly one JSON object matching the frozen identity envelope. Keep schema, project_id, task_id, revision, input_sha256 and stage unchanged. Replace every illustrative value in payload with the real project-specific content.',
+    JSON.stringify(response,null,2),
+    'Required payload: schema="mode-b-script-v1"; sections is a non-empty ordered array of {id,text}; authoring is a JSON object. Each id must be unique, 1–80 characters of A–Z/a–z/0–9/_/-, with no spaces. Each text must contain only meaningful narration intended to be spoken. The approved narration text is the ordered sections[].text values joined with two newline characters.',
+    'authoring contains production-relevant creative choices, never spoken narration. creative_direction, characters, continuity, style_decisions, voice_intentions and sound_intentions are suggested descriptive fields, not an additional mandatory nested schema. Include concrete details where relevant; do not fabricate characters, citations or irrelevant structure. source_references, if used, must be actual trustworthy inert citations in the existing accepted format, not media paths or instructions.',
+    '## 6. Delivery checks',
+    'Check full narration coherence, causal progression, hook/payoff, style fit, distinct creative decisions, stable identity/continuity, and honest treatment of factual versus speculative claims. No example placeholders (including REQUIRED_NONEMPTY_ARRAY), fake media, unverified claims, word timestamps, WAV lengths, provider execution, Native shots, CLI output or final-film QA. Do not silently rewrite already approved narration; any mismatch is resolved through owner review and the later voice workflow.'
+  ].join('\n\n')+'\n';
+}
+
 export function freezeTask(appPath: string, root: string, stage: Stage, rebuild = false) {
   const state = readState(root); const context = projectContext(state, root, stage); const sources = sourceBundle(appPath, state.project.style,stage);
   const inputSha256 = sourceFingerprint(appPath, root, stage); const prior = state.tasks?.[stage];
@@ -74,7 +117,7 @@ export function freezeTask(appPath: string, root: string, stage: Stage, rebuild 
     ? { schema: 'mode-b-external-result-v1', project_id: state.project.id, task_id: id, revision, input_sha256: inputSha256, stage, payload: { schema: 'mode-b-script-v1', sections: [{id:'REPLACE_WITH_ACTUAL_SECTION_ID',text:'REQUIRED_NONEMPTY_ARRAY: replace with actual project narration.'}], authoring: {creative_direction:{premise:'REQUIRED_PROJECT_PREMISE: replace with actual project premise'},characters:[],continuity:{rules:[]},style_decisions:{},voice_intentions:{},sound_intentions:{},source_references:[]} } }
     : { schema: 'mode-b-external-result-v1', project_id: state.project.id, task_id: id, revision, input_sha256: inputSha256, stage, payload: { manifest: {...(context as {native_manifest:Record<string,unknown>}).native_manifest,shots:[],captions:(context as {alignment:{approved_caption_cues:unknown}}).alignment.approved_caption_cues,voice:(context as {native_manifest:Record<string,unknown>}).native_manifest.voice}, shot_ledger: [{shot_id:'actual-shot-id',narrative_purpose:'actual purpose'}], sound_script: [{target_id:'actual-shot-id',intent:'actual story-led sound intent'}], asset_needs: [] } };
   const prompt = `# ORIGINAL MODE B MANUAL CHATGPT HANDOFF — ${stage === 'script' ? 'SCRIPT & CREATIVE DIRECTION' : 'VISUAL / SHOT / SOUND / NATIVE MANIFEST'}\n\nThis is a manual transport boundary in the original Mode B workflow. Do not invent a parallel engine. Do not call tools, return Markdown, executable code or local absolute paths. Public HTTP(S) research citation URLs are permitted ONLY inside script payload.authoring.source_references as inert metadata; never use remote URLs as native assets or executable paths. Return exactly one JSON object matching the frozen envelope below.\n\n## ACTUAL PROJECT CONTEXT\n${JSON.stringify(context, null, 2)}\n\n## REQUIRED RESPONSE ENVELOPE\n${JSON.stringify(response, null, 2)}\n\nThe RESPONSE ENVELOPE is a structural starting point, NOT a valid finished film. Fill every required shot, ledger and actual field with project-specific verified data; no placeholder values, invented media, or fabricated timing. The outer identity fields must be returned byte-for-value. For native authoring, payload.manifest is the original B1–B4 project.json v1 and must contain no Studio/task metadata. Ground every shot in the approved script and actual word/caption timing. List missing media honestly; never fabricate an existing asset path.\n\n## AUTHORITATIVE INSTALLED MODE B SOURCES (SOURCE-EXACT VERIFIED STAGE EXTRACTIONS)\n${sources.map(item => `\n--- BEGIN ${item.relative} [full SHA256 ${item.sha256}; extraction SHA256 ${item.extractionSha256}; revision ${item.extractionRevision}; sections ${item.headings.join(' | ') || 'complete original'}] ---\n${item.text}\n--- END ${item.relative} ---`).join('\n')}\n`;
-  const finalPrompt=prompt.replace('Do not call tools, return Markdown, executable code or local absolute paths.','Do not claim or use local CLI, local media, paid providers, or file inspection without actual access. Return no Markdown, executable code, secrets, or local absolute paths. Public research is permitted when demanded and evidence is cited.');
+  const finalPrompt=stage==='script'?scriptAuthorPrompt(context,response,sources):prompt.replace('Do not call tools, return Markdown, executable code or local absolute paths.','Do not claim or use local CLI, local media, paid providers, or file inspection without actual access. Return no Markdown, executable code, secrets, or local absolute paths. Public research is permitted when demanded and evidence is cited.');
   const relative = `.studio/external/tasks/${stage}-${revision}-${id}.md`; const target = resolveProjectFile(root, relative); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, finalPrompt, { encoding: 'utf8', flag: 'wx' });
   state.tasks ??= {}; state.tasks[stage] = { id, revision, inputSha256, sourceFingerprint: inputSha256, ...(stage==='native'?{assetBaseline:assetSnapshot(root),mediaBaseline:mediaSnapshot(state)}:{}), promptSha256: sha(finalPrompt), promptPath: relative, status: 'FROZEN', createdAt: new Date().toISOString() }; writeState(root, state); return { ...state.tasks[stage], prompt:finalPrompt };
 }
