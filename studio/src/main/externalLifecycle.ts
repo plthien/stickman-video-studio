@@ -207,7 +207,7 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   const relative='.studio/external/lifecycle/tasks/'+stage+'-'+operation+'-'+revision+'-'+id+'.md',target=resolveProjectFile(root,relative);
   fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,prompt,{encoding:'utf8',flag:'wx'});
   state.lifecycle??={tasks:{},artifacts:{}};
-  state.lifecycle.tasks[key]={id,stage,operation,revision,inputSha256,artifactSha256:artifact.sha256,promptPath:relative,promptSha256:sha(prompt),status:'FROZEN',createdAt:new Date().toISOString(),editableIds,editablePaths,targetIds,findingIds,originalTaskSha256:sha(originalTask),sourceContextSha256,authorityFingerprint,mediaTransferAttested,mediaSha256s,mediaDuration,mediaBaseline:structuredClone(state.media??[])};
+  state.lifecycle.tasks[key]={id,stage,operation,revision,inputSha256,artifactSha256:artifact.sha256,promptPath:relative,promptSha256:sha(prompt),status:'FROZEN',createdAt:new Date().toISOString(),editableIds,editablePaths,targetIds,findingIds,originalTaskSha256:sha(originalTask),sourceContextSha256,authorityFingerprint,mediaTransferAttested,mediaKind:scope.media,mediaSha256s,mediaDuration,mediaBaseline:structuredClone(state.media??[])};
   writeState(root,state);
   return{...state.lifecycle.tasks[key],prompt};
 }
