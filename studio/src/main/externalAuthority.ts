@@ -53,15 +53,25 @@ const SCRIPT_AUTHOR_BLOB_SHA1:Record<string,string>={
  */
 const SCRIPT_AUTHOR_BLOCKS:Record<string,Array<readonly [number,number]>>={
   'SKILL.md':[[19,19],[21,23],[25,25]],
-  'references/autopilot.md':[[5,5],[11,15],[17,21],[25,26],[43,43],[49,52]],
-  'references/autopilot-production-qa.md':[[5,9],[19,27],[29,34],[36,42],[44,52]],
-  'references/autopilot-sound-system.md':[[5,7],[18,24],[45,49],[61,72],[74,80],[84,91]],
-  'references/b1-minimal-handdrawn.md':[[7,13],[15,23],[25,31]],
-  'references/b2-colorful-handdrawn.md':[[7,13],[15,19],[21,25]],
+  'references/autopilot.md':[[5,5],[11,15],[17,19],[25,26],[43,43],[49,52]],
+  'references/autopilot-production-qa.md':[[5,9],[19,27],[29,34],[40,42],[44,46],[48,48]],
+  'references/autopilot-sound-system.md':[[5,7],[18,24],[61,72],[76,76],[80,80],[84,91]],
+  'references/b1-minimal-handdrawn.md':[[7,13],[15,23],[29,31]],
+  'references/b2-colorful-handdrawn.md':[[7,13],[17,19],[21,21],[23,25]],
   'references/b3-television.md':[[11,13],[29,39],[41,43],[47,57],[69,73]],
-  'references/b4-survival-storytelling.md':[[21,39],[41,47],[58,66]],
-  'references/b4-opening-direction.md':[[5,14],[16,34],[40,54],[56,60]],
-  'references/b4-audio-direction.md':[[5,9],[13,19],[24,34],[38,47],[49,55]]
+  'references/b4-survival-storytelling.md':[[21,39],[41,47],[61,61],[65,66]],
+  'references/b4-opening-direction.md':[[11,14],[16,34],[40,54],[56,58]],
+  'references/b4-audio-direction.md':[[9,9],[17,17],[19,19],[28,32],[38,40],[47,47],[53,55]]
+};
+/** For a mixed-stage source line only: exact complete consecutive sentences with
+ * a verified source boundary. All other source ranges are reproduced whole.
+ */
+const SCRIPT_AUTHOR_MIXED_SENTENCES:Record<string,readonly [string,string]>={
+  'references/b2-colorful-handdrawn.md:L17-L19':['Favor specific everyday action,','Avoid unsupported psychology labels or medical claims.'],
+  'references/b2-colorful-handdrawn.md:L21-L21':['Reusing a setting within one story','preserve its spatial and prop continuity.'],
+  'references/autopilot-production-qa.md:L48-L48':['B1–B4 styles, languages, previews and films use','at a time**.'],
+  'references/b4-survival-storytelling.md:L61-L61':['Default to English and **fix the main narrator','unless the user explicitly chooses otherwise.'],
+  'references/b4-audio-direction.md:L9-L9':['Brian remains the narrator across scenes,','not a new actor.']
 };
 export const SCRIPT_AUTHOR_EXTRACTION_REVISION='script-author-complete-blocks-v4';
 function extractScriptAuthor(full:string,relative:string){
@@ -75,7 +85,16 @@ function extractScriptAuthor(full:string,relative:string){
     if(!Number.isInteger(start)||!Number.isInteger(end)||start<1||end<start||end>lines.length||start<=lastEnd)
       throw new Error('REBUILD_REQUIRED: invalid or overlapping Script Author source range: '+relative+' L'+start+'-L'+end);
     lastEnd=end;
-    const excerpt=lines.slice(start-1,end).join('\\n');
+    const location='L'+start+'-L'+end;
+    const mixed=SCRIPT_AUTHOR_MIXED_SENTENCES[relative+':'+location];
+    let excerpt=lines.slice(start-1,end).join('\\n');
+    if(mixed){
+      const [from,to]=mixed,fromIndex=excerpt.indexOf(from),toIndex=excerpt.indexOf(to,fromIndex);
+      if(fromIndex<0||toIndex<0||excerpt.indexOf(from,fromIndex+1)!==-1||
+        excerpt.indexOf(to,toIndex+1)!==-1)
+        throw new Error('REBUILD_REQUIRED: ambiguous mixed-stage sentence boundary: '+relative+' '+location);
+      excerpt=excerpt.slice(fromIndex,toIndex+to.length);
+    }
     if(!excerpt.trim())throw new Error('REBUILD_REQUIRED: empty Script Author source block: '+relative);
     const heading=lines.slice(0,start).reverse().find(row=>/^#{2,5} /.test(row))??'# '+relative;
     const grouped=sections.get(heading)??[];grouped.push(excerpt);sections.set(heading,grouped);
