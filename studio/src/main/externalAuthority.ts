@@ -95,7 +95,7 @@ export function extractScriptAuthor(full:string,relative:string){
       if(fromIndex<0||toIndex<0||excerpt.indexOf(from,fromIndex+1)!==-1||
         excerpt.indexOf(to,toIndex+1)!==-1)
         throw new Error('REBUILD_REQUIRED: ambiguous mixed-stage sentence boundary: '+relative+' '+location);
-      if(fromIndex>0&&!/[.!?]\\s*$/.test(excerpt.slice(0,fromIndex)))
+      if(fromIndex>0&&!/[.!?]\s*$/.test(excerpt.slice(0,fromIndex)))
         throw new Error('REBUILD_REQUIRED: mixed-stage excerpt begins mid-sentence: '+relative+' '+location);
       excerpt=excerpt.slice(fromIndex,toIndex+to.length);
       if(!/[.!?]$/.test(excerpt))
