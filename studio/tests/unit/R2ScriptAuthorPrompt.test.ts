@@ -38,7 +38,7 @@ describe('R2 focused source-exact Script Author handoff',()=>{
       expect(native.sources.some(source=>source.path==='references/autopilot-runtime.md')).toBe(true);
       for(const source of author.sources){
         const original=fs.readFileSync(path.join(nativeSkillRoot(appPath).root,source.path));
-        const originalText=original.toString('utf8');
+        const originalText=original.toString('utf8').replace(/\r\n/g,'\n');
         const lines=originalText.replace(/\r\n/g,'\n').split('\n');
         expect(sha(original)).toBe(source.sha256);
         expect(sha(source.text)).toBe(source.extractionSha256);
@@ -119,6 +119,7 @@ describe('R2 focused source-exact Script Author handoff',()=>{
     const file=path.join(nativeSkillRoot(appPath).root,'references/b2-colorful-handdrawn.md');
     const original=fs.readFileSync(file,'utf8');
     expect(()=>extractScriptAuthor(original,'references/b2-colorful-handdrawn.md')).not.toThrow();
+    expect(()=>extractScriptAuthor(original.replace(/\r?\n/g,'\r\n'),'references/b2-colorful-handdrawn.md')).not.toThrow();
     expect(()=>extractScriptAuthor(original.replace('Warm paper','Cold paper'),
       'references/b2-colorful-handdrawn.md')).toThrow(/original authority changed/);
     expect(()=>extractScriptAuthor(original,'references/nonexistent-style.md'))
