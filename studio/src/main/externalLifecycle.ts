@@ -102,6 +102,22 @@ function attestLocalTransfer(root:string,kind:'preview'|'film'|'voice'|'captions
   }
   throw new Error('MEDIA_PACK_REQUIRED: no current exported package matches exact preview/audio SHA-256 bytes.');
 }
+/** Read an existing reservation without creating or replacing its identity. */
+export function readFrozenExternalTask(appPath:string,root:string,stage:Stage,operation:ExternalOperation){
+  const state=readState(root);
+  const task=operation==='author'?state.tasks?.[stage]:state.lifecycle?.tasks[stage+':'+operation];
+  if(!task||task.status!=='FROZEN')return null;
+  const target=resolveProjectFile(root,task.promptPath);
+  if(!fs.existsSync(target)||sha(fs.readFileSync(target))!==task.promptSha256)
+    throw new Error('REBUILD_REQUIRED: saved frozen task prompt is missing or modified.');
+  if(operation!=='author'){
+    const life=task as NonNullable<StudioState['lifecycle']>['tasks'][string];
+    assertLifecycleFresh(appPath,root,state,life);
+    if(artifactFor(root,state,stage,operation).sha256!==life.artifactSha256)
+      throw new Error('STALE: saved lifecycle task targets an older creative artifact.');
+  }
+  return {...task,prompt:fs.readFileSync(target,'utf8')};
+}
 export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,operation:Exclude<ExternalOperation,'author'>,scope:Scope={},rebuild=false){
   if(!['review','correct','recheck','media-review'].includes(operation))throw new Error('Unsupported lifecycle operation.');
   const state=readState(root),artifact=artifactFor(root,state,stage,operation),authority=compileAuthority(appPath,state.project.style,stage,operation);
@@ -379,23 +395,76 @@ function finalizeLifecycle(root:string,pending:Record<string,unknown>,task:NonNu
 async function publishNativeCorrection(appPath:string,root:string,pending:Record<string,unknown>,task:NonNullable<StudioState['lifecycle']>['tasks'][string],options:LifecyclePublicationOptions={}){
   const payload=pending.payload as {artifact:{manifest:Record<string,unknown>;shot_ledger:unknown[];sound_script:unknown[];asset_needs:unknown[]}};
   const desiredSha256=sha(JSON.stringify(payload.artifact.manifest));
+  const desiredArtifactSha256=sha(JSON.stringify(payload.artifact));
   const manifestPath=path.join(root,'project.json');
   const baselineSha256=manifestSemanticHash(manifestPath);
   const journalFile=nativeCorrectionJournal(root);
   const saved=fs.existsSync(journalFile)?strictJson(fs.readFileSync(journalFile,'utf8')) as Record<string,unknown>:null;
-  if(saved&&(saved.token!==pending.token||saved.taskId!==task.id||saved.desiredSha256!==desiredSha256))
+  if(saved&&(saved.token!==pending.token||saved.taskId!==task.id||
+    saved.desiredSha256!==desiredSha256||saved.desiredArtifactSha256!==desiredArtifactSha256))
     throw new Error('RECOVERY_REQUIRED: another native correction publication is pending.');
-  const journal:Record<string,unknown>=saved??{token:pending.token,taskId:task.id,baselineSha256,desiredSha256,authorTaskId:null,status:'PENDING'};
+  const initial=readState(root),initialArtifact=artifactFor(root,initial,'native','correct');
+  const initialArtifactSha256=initialArtifact.sha256;
+  const journal:Record<string,unknown>=saved??{
+    token:pending.token,taskId:task.id,baselineSha256,desiredSha256,
+    baselineArtifactSha256:initialArtifactSha256,desiredArtifactSha256,authorTaskId:null,status:'PENDING'
+  };
   if(saved&&baselineSha256!==journal.baselineSha256&&baselineSha256!==desiredSha256)
     throw new Error('STALE: independent native manifest change prevents correction retry.');
+  if(saved&&initialArtifactSha256!==journal.baselineArtifactSha256&&
+    initialArtifactSha256!==desiredArtifactSha256)
+    throw new Error('STALE: independent native creative changes prevent correction retry.');
   if(!saved){atomicJson(journalFile,journal);options.hooks?.afterJournal?.();}
+  const alreadyPublished=initialArtifactSha256===desiredArtifactSha256;
+  const originalNoOp=alreadyPublished&&!saved;
   if(baselineSha256===desiredSha256){
-    const finished=readState(root);
-    if(!saved||!finished.external.native||!finished.nativeReadiness?.sampleReady||
-      finished.nativeReadiness.sourceFingerprint!==sha(fs.readFileSync(manifestPath))||
-      finished.tasks?.native?.status!=='IMPORTED')
-      throw new Error('RECOVERY_REQUIRED: matching bytes alone do not establish a validated correction.');
-    journal.status='VALIDATED';journal.publishedRevision=finished.external.native.revision;atomicJson(journalFile,journal);
+    if(originalNoOp){
+      // A complete creative no-op needs no publication and no fabricated CLI verification.
+      journal.status='NO_OP';atomicJson(journalFile,journal);
+      return finalizeLifecycle(root,pending,task);
+    }
+    if(alreadyPublished){
+      if(!saved||!initial.external.native||
+        (journal.status!=='AUX_PUBLISHED'&&journal.status!=='VALIDATED'&&journal.status!=='NO_OP'))
+        throw new Error('RECOVERY_REQUIRED: matching creative data without a publication journal is not sufficient.');
+      return finalizeLifecycle(root,pending,task);
+    }
+    if(initialArtifactSha256!==task.artifactSha256)
+      throw new Error('STALE: auxiliary correction baseline no longer matches the reviewed artifact.');
+    // Auxiliary-only creative metadata is not an input to the original renderer;
+    // preserve project.json, media, readiness, preview and approval verbatim.
+    // If a future ledger becomes a render dependency, it must use the manifest
+    // validation/invalidation path rather than this metadata-only publication.
+    const current=readState(root);
+    if(artifactFor(root,current,'native','correct').sha256!==task.artifactSha256||
+      manifestSemanticHash(manifestPath)!==baselineSha256)
+      throw new Error('STALE: native creative state changed during auxiliary publication.');
+    const prior=current.external.native;
+    if(!prior)throw new Error('REVIEW_REQUIRED: missing native authoring baseline.');
+    validateManifest(current,root,payload.artifact as unknown as Record<string,unknown>);
+    validateLocks('native',initialArtifact.value,payload.artifact,task.editableIds??[],task.editablePaths??[]);
+    const revision=prior.revision+1;
+    const existing=prior.artifact as Record<string,unknown>;
+    current.external.native={...prior,revision,importedAt:new Date().toISOString(),
+      artifact:{...existing,shotLedger:payload.artifact.shot_ledger,
+        soundScript:payload.artifact.sound_script,assetNeeds:payload.artifact.asset_needs}};
+    // Journal is durable before publishing; crash recovery compares complete artifacts.
+    journal.status='AUX_PENDING';journal.publishedRevision=revision;atomicJson(journalFile,journal);
+    options.hooks?.afterStaging?.();
+    atomicJson(path.join(root,'.studio','revisions','native-authoring-'+revision+'.json'),
+      {shot_ledger:payload.artifact.shot_ledger,sound_script:payload.artifact.sound_script,
+       asset_needs:payload.artifact.asset_needs,fulfillments:[],missing:existing.missing??[]});
+    writeState(root,current);
+    journal.status='AUX_PUBLISHED';atomicJson(journalFile,journal);
+    options.hooks?.afterNativeCommit?.();
+    return finalizeLifecycle(root,pending,task);
+  }
+  if(alreadyPublished){
+    if(!saved||!initial.nativeReadiness?.sampleReady||
+      initial.nativeReadiness.sourceFingerprint!==sha(fs.readFileSync(manifestPath))||
+      initial.tasks?.native?.status!=='IMPORTED')
+      throw new Error('RECOVERY_REQUIRED: matching native bytes do not prove CLI validation.');
+    journal.status='VALIDATED';journal.publishedRevision=initial.external.native?.revision;atomicJson(journalFile,journal);
     return finalizeLifecycle(root,pending,task);
   }
   let authorTask;
@@ -454,7 +523,10 @@ export function confirmLifecycleResult(appPathOrRoot:string,rootOrToken:string,m
     const journal=nativeCorrectionJournal(root);
     const saved=fs.existsSync(journal)?strictJson(fs.readFileSync(journal,'utf8')) as Record<string,unknown>:null;
     if(!(pending.operation==='correct'&&pending.stage==='native'&&saved?.token===token&&
-      manifestSemanticHash(path.join(root,'project.json'))===saved.desiredSha256&&state.nativeReadiness?.sampleReady&&state.nativeReadiness.sourceFingerprint===sha(fs.readFileSync(path.join(root,'project.json')))))
+      saved.desiredArtifactSha256===original.sha256&&
+      ((saved.status==='AUX_PUBLISHED'&&manifestSemanticHash(path.join(root,'project.json'))===saved.baselineSha256)||
+       (manifestSemanticHash(path.join(root,'project.json'))===saved.desiredSha256&&
+        state.nativeReadiness?.sampleReady&&state.nativeReadiness.sourceFingerprint===sha(fs.readFileSync(path.join(root,'project.json')))))))
       throw new Error('STALE: original lifecycle artifact changed before confirmation.');
   }
   if(pending.operation==='correct'&&pending.stage==='native')
