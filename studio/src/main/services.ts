@@ -135,16 +135,22 @@ export function nativeSkillRoot(appPath: string) {
   const root = path.resolve(configured || appPath, configured ? '.' : '../skills/directing-stickman-videos');
   const cli = path.join(root, 'scripts', 'autopilot.mjs'); if (!fs.existsSync(cli)) throw new Error('Original Mode B CLI was not found.'); return { root, cli };
 }
+/** Electron's executable is not a Node CLI unless the subprocess opts into RunAsNode. */
+export function subprocessEnvironment(exe: string, provided: NodeJS.ProcessEnv = process.env, hostExecutable = process.execPath, electronHost = Boolean((process.versions as NodeJS.ProcessVersions & {electron?:string}).electron)): NodeJS.ProcessEnv {
+  const environment = { ...provided };
+  if (electronHost && path.resolve(exe) === path.resolve(hostExecutable)) environment.ELECTRON_RUN_AS_NODE = '1';
+  return environment;
+}
 export async function runProcess(exe: string, args: string[], options: { cwd: string; timeout?: number; env?: NodeJS.ProcessEnv; signal?: AbortSignal }) {
   return await new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
-    const child = spawn(exe, args, { cwd: options.cwd, shell: false, windowsHide: true, detached: process.platform !== 'win32', env: options.env ?? process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(exe, args, { cwd: options.cwd, shell: false, windowsHide: true, detached: process.platform !== 'win32', env: subprocessEnvironment(exe, options.env ?? process.env), stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = ''; let stderr = ''; const cap = 8 * 1024 * 1024;
     const append = (current: string, chunk: Buffer) => (current + chunk.toString('utf8')).slice(-cap);
     child.stdout.on('data', chunk => { stdout = append(stdout, chunk as Buffer); }); child.stderr.on('data', chunk => { stderr = append(stderr, chunk as Buffer); });
     let settled=false,timedOut=false;const killTree=()=>{if(!child.pid)return;if(process.platform==='win32')spawnSync('taskkill.exe',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});else try{process.kill(-child.pid,'SIGTERM')}catch{child.kill()}};
     const stop=()=>killTree();options.signal?.addEventListener('abort',stop,{once:true});
     const timer=setTimeout(()=>{timedOut=true;killTree()},options.timeout??10*60_000);
-    child.once('error',error=>{if(settled)return;settled=true;clearTimeout(timer);reject(error)});child.once('close',code=>{if(settled)return;settled=true;clearTimeout(timer);options.signal?.removeEventListener('abort',stop);if(options.signal?.aborted)reject(new Error('Native command cancelled.'));else if(timedOut)reject(new Error('Native command timed out.'));else resolve({code:code??-1,stdout,stderr})});
+    child.once('error',error=>{if(settled)return;settled=true;clearTimeout(timer);reject(error)});child.once('close',code=>{if(settled)return;settled=true;clearTimeout(timer);options.signal?.removeEventListener('abort',stop);if(options.signal?.aborted)reject(new Error('Native command cancelled.'));else if(timedOut)reject(new Error(`Native ${String(args[1] ?? args[0] ?? 'command')} timed out after ${options.timeout ?? 10*60_000} ms; stdout=${stdout.slice(-400) || '(empty)'}; stderr=${stderr.slice(-800) || '(empty)'}`));else resolve({code:code??-1,stdout,stderr})});
   });
 }
 export async function runNative(appPath: string, root: string, command: NativeCommand, input: { seconds?: number; note?: string; replace?: boolean; file?: string } = {}) {

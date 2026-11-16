@@ -2,8 +2,9 @@ import { test, expect, chromium, type Browser, type Page } from '@playwright/tes
 import { createRequire } from 'node:module';
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
 import { promisify } from 'node:util';
-import { access, rename } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { access, mkdtemp, readFile, rename, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 const electronPath=createRequire(import.meta.url)('electron') as string,execFileAsync=promisify(execFile);
 const guiUnavailable=process.platform!=='win32'||Boolean(process.env.ELECTRON_RUN_AS_NODE),guiReason='Real Electron GUI requires an ordinary Windows desktop; acceptance clears ELECTRON_RUN_AS_NODE.';
 const cleanEnv=(userData:string)=>{const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;delete env.VITE_DEV_SERVER_URL;env.MODE_B_STUDIO_DISABLE_GPU='1';env.MODE_B_STUDIO_USER_DATA=resolve('test-results-electron',userData);return env};
@@ -16,3 +17,28 @@ test('Electron production shell starts with real isolated preload',async()=>{tes
 test('Electron development URL uses real npm run dev on strict port 5174 without dist',async()=>{test.skip(guiUnavailable,guiReason);test.setTimeout(120_000);const env=cleanEnv('user-data-development');env.R1_ELECTRON_CDP_PORT='9337';env.MODE_B_STUDIO_TEST_NO_SANDBOX='1';const dist=resolve('dist'),backup=resolve('dist.dev-smoke-backup');let moved=false,child:ChildProcess|undefined,browser:Browser|undefined,output='';try{await expect(access(backup)).rejects.toThrow();try{await access(dist);await rename(dist,backup);moved=true}catch(error){void error}child=spawn('cmd.exe',['/d','/s','/c','npm run dev'],{cwd:process.cwd(),env,stdio:['ignore','pipe','pipe'],windowsHide:true});child.stdout?.on('data',chunk=>output+=String(chunk));child.stderr?.on('data',chunk=>output+=String(chunk));const connected=await connect('9337',child,()=>output);browser=connected.browser;await expect(connected.page.getByRole('heading',{name:'Project Setup'})).toBeVisible();expect(await connected.page.evaluate(()=>({origin:location.origin,bridge:window.studio?.version,node:typeof(globalThis as typeof globalThis&{require?:unknown}).require,wrongPort:performance.getEntriesByType('resource').some(resource=>resource.name.includes('127.0.0.1:5173'))}))).toEqual({origin:'http://127.0.0.1:5174',bridge:'0.2.0',node:'undefined',wrongPort:false})}finally{if(browser)await browser.close();await stop(child);if(moved)await rename(backup,dist)}});
 
 test('real main/preload Electron drives offline native preview approval render and reopen',async()=>{test.skip(guiUnavailable,guiReason);const project=process.env.R2_ELECTRON_PROJECT;test.skip(!project,'R2_ELECTRON_PROJECT must point to the acceptance fixture.');test.setTimeout(20*60_000);const env=cleanEnv('user-data-e2e');env.MODE_B_SKILL_ROOT=resolve('..','skills','directing-stickman-videos');const launched=spawnProduction('9339',env);let browser:Browser|undefined;try{const connected=await connect('9339',launched.child,launched.output);browser=connected.browser;const page=connected.page;await expect(page.getByRole('heading',{name:'Project Setup'})).toBeVisible();const opened=await page.evaluate(async root=>window.studio!.openProject(root),project);expect(opened.voice?.origin).toBe('IMPORTED_WAV');expect(opened.alignment?.origin).toBe('IMPORTED_WORDS');await page.evaluate(async id=>window.studio!.nativeRun(id,'validate',{seconds:20}),opened.project.id);const preview=await page.evaluate(async id=>window.studio!.nativeRun(id,'preview',{seconds:20,replace:true}),opened.project.id);expect(preview.state.preview?.sha256).toMatch(/^[a-f0-9]{64}$/);const approved=await page.evaluate(async({id,sha256})=>window.studio!.nativeRun(id,'approve',{note:'Electron E2E explicitly reviewed deterministic offline fixture',attested:true,reviewedSha256:sha256}),{id:opened.project.id,sha256:preview.state.preview!.sha256});expect(approved.state.approval?.previewSha256).toBe(preview.state.preview?.sha256);const rendered=await page.evaluate(async id=>window.studio!.nativeRun(id,'render',{replace:true}),opened.project.id);expect(rendered.state.render?.sha256).toMatch(/^[a-f0-9]{64}$/);const reopened=await page.evaluate(async root=>window.studio!.openProject(root),project);expect(reopened.render?.sha256).toBe(rendered.state.render?.sha256)}finally{if(browser)await browser.close();await stop(launched.child)}});
+
+test('Electron project:create executes the original Native init as Node CLI (no 60s timeout)',async()=>{
+  test.skip(guiUnavailable,guiReason);
+  test.setTimeout(95_000);
+  const parent=await mkdtemp(join(tmpdir(),'r2-create-native-'));
+  const env=cleanEnv('user-data-project-create');
+  env.MODE_B_SKILL_ROOT=resolve('..','skills','directing-stickman-videos');
+  const launched=spawnProduction('9340',env);
+  let browser:Browser|undefined;
+  try{
+    const connected=await connect('9340',launched.child,launched.output);
+    browser=connected.browser;
+    const created=await connected.page.evaluate(async parentPath=>window.studio!.createProject({
+      parent:parentPath,folder:'E2E-Create',title:'Real Native Init',topic:'Source-owned CLI scaffold',style:'B1',language:'English',targetDuration:60
+    }),parent);
+    expect(created.project.root).toBe(join(parent,'E2E-Create'));
+    expect(created.project.style).toBe('B1');
+    const manifest=JSON.parse(await readFile(join(parent,'E2E-Create','project.json'),'utf8'));
+    expect(manifest).toMatchObject({version:1,style:'B1',width:1080,height:1920});
+  }finally{
+    if(browser)await browser.close();
+    await stop(launched.child);
+    await rm(parent,{recursive:true,force:true});
+  }
+});
