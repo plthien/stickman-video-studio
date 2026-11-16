@@ -3,40 +3,97 @@ import path from 'node:path';
 import { nativeSkillRoot, sha, type Stage } from './services.js';
 
 export type ExternalOperation = 'author'|'review'|'correct'|'recheck'|'media-review';
-export interface AuthoritySource { path:string; sha256:string; applicability:string[] }
+export type Disposition = 'KEEP'|'MOVE_TO_NATIVE'|'STUDIO_ONLY'|'AGENT_ONLY';
+export interface AuthoritySource {
+  path:string; sha256:string; extractionSha256:string; extractionRevision:string;
+  applicability:string[]; disposition:Disposition; headings:string[]; text:string;
+}
+export const AUTHORITY_EXTRACTION_REVISION = 'stage-exact-v2';
 
 const STYLE:Record<string,string>={B1:'b1-minimal-handdrawn.md',B2:'b2-colorful-handdrawn.md',B3:'b3-television.md',B4:'b4-survival-storytelling.md'};
-const SCRIPT_RULES:Record<string,string[]>={
-  B1:['Use a restrained hand-drawn premise, readable staging, and narration that can be expressed without decorative clutter.'],
-  B2:['Use colorful hand-drawn storytelling with purposeful color, clear emotional beats, and feasible visual actions.'],
-  B3:['Write for a television presentation: a clear program premise, legible information hierarchy, and narration that supports deliberate cuts.'],
-  B4:['Open with an immediate survival threat and a concrete premise.','Maintain causal escalation, consequence, and payoff; narration must stay story-led rather than list-like.','State voice and sound intentions early, but never invent timing or claim rendered evidence.']
+
+const STYLE_SCRIPT_HEADINGS:Record<string,string[]>={
+  B1:['## Visual language','## Stick-figure features and acting — B1 only','## Rhythm and sound','## Acceptance'],
+  B2:['## Resolved defaults','## Scene and motion decisions'],
+  B3:['## Reference fidelity without copying a story','## Featured pets: appealing characters, not stock symbols','## Motion planning: restrained is not frozen','## Typography, voice and scene resources','## Capability and acceptance gates'],
+  B4:['## Required portable style lock','## Fixed visual language, variable story','## Story-led horror visibility gate','## Generation and anti-drift gates','## Narration, motion and finishing']
 };
-const NATIVE_RULES:Record<string,string[]>={
-  B1:['Preserve minimal hand-drawn readability, intentional motion, and exact narration/caption timing.'],
-  B2:['Preserve purposeful color continuity, hand-drawn character/prop identity, and story-driven camera/action.'],
-  B3:['Preserve television framing, typography safe areas, program continuity, and deliberate transitions.'],
-  B4:['Implement the approved opening threat with picture and audio acting together.','Use story-driven blocking, camera, asset continuity, ambience and sound accents; do not decorate mechanically.','Honor B4 opening, audio, asset and production-QA contracts while retaining exact approved narration and cues.']
+const SCRIPT_PLAN:Record<string,string[]>={
+  'SKILL.md':['## Two modes, one Skill'],
+  'references/autopilot.md':['## Independent B-style settings'],
+  'references/autopilot-production-qa.md':['## Plan from meaning and actual narration','## First 30 seconds: picture, sound and copy together','## Meaningful motion, not filler','## Clear screenshots and content-matched graphics','## Natural captions and semantic sound'],
+  'references/autopilot-sound-system.md':['## Common B sound contract','## Universal scene/beat sound script']
+};
+const B4_SCRIPT:Record<string,string[]>={
+  'references/b4-opening-direction.md':['## Opening design before generation','## Text has a dramatic job','## Sound and picture must resolve together'],
+  'references/b4-audio-direction.md':['## Fixed main narrator','## Automatic character casting and performance','## Automatic SFX direction and source gate']
 };
 
-function requiredFiles(style:string,stage:Stage,operation:ExternalOperation){
-  const selected=STYLE[style];if(!selected)throw new Error('External manual workflow supports B1-B4 only.');
-  const files=['SKILL.md',`references/${selected}`];
-  if(stage==='script')files.push('references/autopilot.md');
-  else files.push('references/autopilot-runtime.md','references/autopilot-production-qa.md','references/autopilot-sound-system.md');
-  if(style==='B4')files.push(stage==='script'?'references/b4-opening-direction.md':'references/b4-opening-direction.md','references/b4-audio-direction.md');
-  if(operation==='media-review'&&!files.includes('references/autopilot-production-qa.md'))files.push('references/autopilot-production-qa.md');
-  return [...new Set(files)];
+function selectSections(full:string,headings:string[],relative:string){
+  if(!headings.length)return full;
+  const lines=full.replace(/\r\n/g,'\n').split('\n');
+  return headings.map(heading=>{
+    const indices=lines.flatMap((line,i)=>line.trim()===heading?[i]:[]);
+    if(indices.length!==1)throw new Error('REBUILD_REQUIRED: unverified authority extraction selector: '+relative+' '+heading);
+    const at=indices[0],level=(heading.match(/^#+/)??[''])[0].length;
+    let end=lines.length;
+    for(let j=at+1;j<lines.length;j++){
+      const match=lines[j].match(/^(#{1,6})\s+/);
+      if(match&&match[1].length<=level){end=j;break;}
+    }
+    const section=lines.slice(at,end).join('\n').trim();
+    if(section.length<heading.length+30)throw new Error('REBUILD_REQUIRED: empty authority extraction: '+relative+' '+heading);
+    return section;
+  }).join('\n\n');
 }
-
+function source(appPath:string,relative:string,style:string,stage:Stage,operation:ExternalOperation,headings:string[],disposition:Disposition):AuthoritySource{
+  const target=path.join(nativeSkillRoot(appPath).root,relative);
+  if(!fs.existsSync(target)||!fs.statSync(target).isFile())throw new Error('Required Mode B authority is missing: '+relative);
+  const bytes=fs.readFileSync(target),full=bytes.toString('utf8');
+  const text=selectSections(full,headings,relative);
+  if(!text.trim())throw new Error('REBUILD_REQUIRED: required authority is empty: '+relative);
+  return {path:relative,sha256:sha(bytes),extractionSha256:sha(text),
+    extractionRevision:AUTHORITY_EXTRACTION_REVISION,applicability:[style,stage,operation],
+    disposition,headings,text};
+}
 export function compileAuthority(appPath:string,style:string,stage:Stage,operation:ExternalOperation){
-  const root=nativeSkillRoot(appPath).root,files=requiredFiles(style,stage,operation);
-  const sources:AuthoritySource[]=files.map(relative=>{
-    const target=path.join(root,relative);if(!fs.existsSync(target))throw new Error(`Required Mode B authority is missing: ${relative}`);
-    return{path:relative,sha256:sha(fs.readFileSync(target)),applicability:[style,stage,operation]};
-  });
-  const rules=[...(stage==='script'?SCRIPT_RULES[style]:NATIVE_RULES[style])];
-  if(operation==='review'||operation==='recheck'||operation==='media-review')rules.push('Review independently against the original task and cited authority. Separate observed evidence, inference, and unavailable evidence; never convert uncertainty into PASS.');
-  if(operation==='correct')rules.push('Change only the explicitly editable targets. Return the complete original artifact grammar and preserve all locked entities semantically.');
-  return{version:'mode-b-authority-matrix-v1',style,stage,operation,rules,sources};
+  const selected=STYLE[style];
+  if(!selected)throw new Error('External manual workflow supports B1–B4 only.');
+  const specs:Array<[string,string[],Disposition]>=[];
+  if(stage==='script'){
+    specs.push(['SKILL.md',SCRIPT_PLAN['SKILL.md'],'KEEP']);
+    specs.push(['references/'+selected,STYLE_SCRIPT_HEADINGS[style],'KEEP']);
+    specs.push(['references/autopilot.md',SCRIPT_PLAN['references/autopilot.md'],'KEEP']);
+    specs.push(['references/autopilot-production-qa.md',SCRIPT_PLAN['references/autopilot-production-qa.md'],'KEEP']);
+    specs.push(['references/autopilot-sound-system.md',SCRIPT_PLAN['references/autopilot-sound-system.md'],'KEEP']);
+    if(style==='B4')for(const [relative,headings] of Object.entries(B4_SCRIPT))specs.push([relative,headings,'KEEP']);
+  }else{
+    specs.push(['SKILL.md',SCRIPT_PLAN['SKILL.md'],'KEEP']);
+    specs.push(['references/'+selected,[],'KEEP']);
+    specs.push(['references/autopilot.md',[],'KEEP']);
+    specs.push(['references/autopilot-runtime.md',[],'KEEP']);
+    specs.push(['references/autopilot-production-qa.md',[],'KEEP']);
+    specs.push(['references/autopilot-sound-system.md',[],'KEEP']);
+    if(style==='B4'){
+      specs.push(['references/b4-opening-direction.md',[],'KEEP']);
+      specs.push(['references/b4-audio-direction.md',[],'KEEP']);
+      specs.push(['references/b4-repeatability-check.md',[],'KEEP']);
+    }
+  }
+  const sources=specs.map(([relative,headings,disposition])=>source(appPath,relative,style,stage,operation,headings,disposition));
+  const rules=[
+    'Use the exact normative text below. User-approved source choices take precedence only where the original Mode B contract allows.',
+    'Keep project-specific narrative causality, character/world identity, recurring props and approved creative decisions.',
+    'Do not invent actual media, executed CLI commands, voice samples, aligned timings, citations or acceptance evidence.',
+    'Authoring/review may plan actions and sound; Studio alone executes providers, native CLI, cache, media validation and approvals.'
+  ];
+  if(operation==='review'||operation==='recheck'||operation==='media-review')
+    rules.push('Review independently against the frozen original task and exact evidence; distinguish observed, inferred and not verified.');
+  if(operation==='correct')
+    rules.push('Return a complete importable artifact. Change only authorized targets/paths; preserve everything outside scope exactly.');
+  return {version:AUTHORITY_EXTRACTION_REVISION,style,stage,operation,rules,sources,
+    matrix:{KEEP:sources.map(item=>item.path),
+      MOVE_TO_NATIVE:stage==='script'?['references/autopilot-runtime.md','native project.json contract','native CLI validation and production approval']:[],
+      STUDIO_ONLY:['provider HTTP/credentials','CLI execution','cache internals','local media filesystem publication','owner approvals'],
+      AGENT_ONLY:['agent tool selection','agent terminal commands','automatic browser/provider operation']}};
 }
