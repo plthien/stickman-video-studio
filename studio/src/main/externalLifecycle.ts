@@ -258,7 +258,23 @@ export function stageLifecycleResult(appPath:string,root:string,stage:Stage,oper
   }else{
     validateReview(payload,task,operation);
   }
-  const responseSha256=sha(text),token=randomUUID();fs.mkdirSync(path.dirname(resultPath(root,task.id)),{recursive:true});fs.writeFileSync(resultPath(root,task.id),text,{encoding:'utf8',flag:'wx'});atomicJson(pendingPath(root),{token,projectId:state.project.id,taskId:task.id,stage,operation,responseSha256,payload,createdAt:new Date().toISOString()});return{token,before:current.value,after:payload,status:'STAGED'};
+  const responseSha256=sha(text),savedPath=resultPath(root,task.id),stagingPath=pendingPath(root);
+  if(fs.existsSync(stagingPath)){
+    const existing=strictJson(fs.readFileSync(stagingPath,'utf8')) as Record<string,unknown>;
+    if(existing.projectId!==state.project.id||existing.taskId!==task.id||existing.responseSha256!==responseSha256)
+      throw new Error('PENDING_LIFECYCLE_CONFLICT: explicitly confirm or resolve the existing proposal before staging another.');
+    if(!fs.existsSync(savedPath)||sha(fs.readFileSync(savedPath))!==responseSha256)
+      throw new Error('RECOVERY_REQUIRED: staged lifecycle response bytes changed.');
+    return{token:String(existing.token),before:current.value,after:payload,status:'STAGED'};
+  }
+  fs.mkdirSync(path.dirname(savedPath),{recursive:true});
+  if(fs.existsSync(savedPath)){
+    if(sha(fs.readFileSync(savedPath))!==responseSha256)
+      throw new Error('Lifecycle response for this task is immutable; rebuild for a different proposal.');
+  }else fs.writeFileSync(savedPath,text,{encoding:'utf8',flag:'wx'});
+  const token=randomUUID();
+  atomicJson(stagingPath,{token,projectId:state.project.id,taskId:task.id,stage,operation,responseSha256,payload,createdAt:new Date().toISOString()});
+  return{token,before:current.value,after:payload,status:'STAGED'};
 }
 
 export interface LifecyclePublicationOptions { validator?:ConfirmOptions['validator'];hooks?:{afterJournal?:()=>void;afterStaging?:()=>void;afterNativeCommit?:()=>void} }
