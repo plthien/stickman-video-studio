@@ -268,8 +268,8 @@ function validateReview(payload:Record<string,unknown>,task:NonNullable<StudioSt
     if(typeof value.start!=='number'||!Number.isFinite(value.start)||value.start<0||
       typeof value.end!=='number'||!Number.isFinite(value.end)||value.end<=value.start)
       throw new Error('Review time ranges require real finite increasing bounds.');
-    if(operation==='media-review'&&task.mediaDuration!==undefined&&value.end>task.mediaDuration+.01)
-      throw new Error('Review coverage time range outside actual frozen media.');
+    if(operation==='media-review'&&(task.mediaDuration===undefined||value.end>task.mediaDuration+.01))
+      throw new Error('Review coverage time range missing verified duration or outside actual frozen media.');
   }
   if(operation==='media-review'&&!task.mediaTransferAttested&&coverage.modalities.some(modality=>['picture','motion','sound'].includes(String(modality))))
     throw new Error('NOT_VERIFIED: locally packaged media does not establish transferred or inspected audiovisual modalities.');
@@ -299,9 +299,9 @@ function validateReview(payload:Record<string,unknown>,task:NonNullable<StudioSt
         throw new Error('Observed evidence does not bind the exact transferred media SHA-256.');
       if(!ev.time_range&&!f.target_ids.length)
         throw new Error('Observed evidence needs an actual shot target or time range.');
-      if(ev.time_range&&task.mediaDuration!==undefined&&
-        (ev.time_range as {end:number}).end>task.mediaDuration+.01)
-        throw new Error('Observed evidence timestamp is outside the actual frozen media.');
+      if(ev.time_range&&(task.mediaDuration===undefined||
+        (ev.time_range as {end:number}).end>task.mediaDuration+.01))
+        throw new Error('Observed evidence requires verified media duration and in-range timestamps.');
     }
   }
   if(operation==='recheck'&&task.findingIds?.some(id=>!ids.has(id)))throw new Error('Recheck omitted a previously unresolved finding.');
