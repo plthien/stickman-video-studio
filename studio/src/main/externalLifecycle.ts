@@ -34,6 +34,30 @@ function evidence(root:string,state:StudioState,scope:Scope){
   if(!state.alignment?.captionReview)throw new Error('NOT_VERIFIED: owner-reviewed captions are unavailable.');return{status:'AVAILABLE_LOCALLY_NOT_TRANSFERRED',modalities:[],ranges:[],files:[{path:state.alignment.captionsPath,sha256:state.alignment.captionReview.sha256}]};
 }
 
+function lifecycleSourceContext(state:StudioState,stage:Stage){
+  return sha(JSON.stringify({
+    projectId:state.project.id,style:state.project.style,brief:state.brief,
+    approvedScript:state.approvedScript??null,
+    scriptCandidate:stage==='script'?state.scriptCandidate??null:null,
+    voice:stage==='native'?state.voice??null:null,
+    alignment:stage==='native'?state.alignment??null:null
+  }));
+}
+const authorityIdentity=(authority:ReturnType<typeof compileAuthority>)=>
+  sha(JSON.stringify(authority.sources.map(source=>[source.path,source.sha256,source.extractionSha256,source.extractionRevision])));
+function assertLifecycleFresh(appPath:string,root:string,state:StudioState,task:NonNullable<StudioState['lifecycle']>['tasks'][string]){
+  if(!task.sourceContextSha256||task.sourceContextSha256!==lifecycleSourceContext(state,task.stage))
+    throw new Error('STALE: lifecycle brief, approved creative source or voice/alignment was changed.');
+  const authority=compileAuthority(appPath,state.project.style,task.stage,task.operation);
+  if(!task.authorityFingerprint||task.authorityFingerprint!==authorityIdentity(authority))
+    throw new Error('REBUILD_REQUIRED: installed Mode B creative authority changed.');
+  const source=state.tasks?.[task.stage];
+  if(!source||!task.originalTaskSha256||source.promptSha256!==task.originalTaskSha256)
+    throw new Error('REBUILD_REQUIRED: original frozen author task changed.');
+  const file=resolveProjectFile(root,task.promptPath);
+  if(!fs.existsSync(file)||sha(fs.readFileSync(file))!==task.promptSha256)
+    throw new Error('REBUILD_REQUIRED: lifecycle task prompt changed.');
+}
 export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,operation:Exclude<ExternalOperation,'author'>,scope:Scope={},rebuild=false){
   if(!['review','correct','recheck','media-review'].includes(operation))throw new Error('Unsupported lifecycle operation.');
   const state=readState(root),artifact=artifactFor(root,state,stage,operation),authority=compileAuthority(appPath,state.project.style,stage,operation);
@@ -67,7 +91,8 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   const key=stage+':'+operation,prior=state.lifecycle?.tasks[key];
   const snapshot={projectId:state.project.id,stage,operation,artifactSha256:artifact.sha256,authorityHashes:authority.sources.map(item=>[item.path,item.sha256,item.extractionSha256]),
     originalTaskSha256:sha(originalTask),evidencePack,editableIds,editablePaths,findingIds:findingIds,targetIds,relevantPrior};
-  const inputSha256=sha(JSON.stringify(snapshot));
+  const sourceContextSha256=lifecycleSourceContext(state,stage),authorityFingerprint=authorityIdentity(authority);
+  const inputSha256=sha(JSON.stringify({...snapshot,sourceContextSha256,authorityFingerprint}));
   if(!rebuild&&prior?.status==='FROZEN'&&prior.inputSha256===inputSha256&&fs.existsSync(resolveProjectFile(root,prior.promptPath)))
     return{...prior,prompt:fs.readFileSync(resolveProjectFile(root,prior.promptPath),'utf8')};
   if(prior)prior.status='STALE';
@@ -100,7 +125,7 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   const relative='.studio/external/lifecycle/tasks/'+stage+'-'+operation+'-'+revision+'-'+id+'.md',target=resolveProjectFile(root,relative);
   fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,prompt,{encoding:'utf8',flag:'wx'});
   state.lifecycle??={tasks:{},artifacts:{}};
-  state.lifecycle.tasks[key]={id,stage,operation,revision,inputSha256,artifactSha256:artifact.sha256,promptPath:relative,promptSha256:sha(prompt),status:'FROZEN',createdAt:new Date().toISOString(),editableIds,editablePaths,targetIds,findingIds,originalTaskSha256:sha(originalTask)};
+  state.lifecycle.tasks[key]={id,stage,operation,revision,inputSha256,artifactSha256:artifact.sha256,promptPath:relative,promptSha256:sha(prompt),status:'FROZEN',createdAt:new Date().toISOString(),editableIds,editablePaths,targetIds,findingIds,originalTaskSha256:sha(originalTask),sourceContextSha256,authorityFingerprint};
   writeState(root,state);
   return{...state.lifecycle.tasks[key],prompt};
 }
@@ -186,7 +211,7 @@ function validateReview(payload:Record<string,unknown>,task:NonNullable<StudioSt
 }
 export function stageLifecycleResult(appPath:string,root:string,stage:Stage,operation:Exclude<ExternalOperation,'author'>,text:string){
   const state=readState(root),task=state.lifecycle?.tasks[`${stage}:${operation}`];if(!task||task.status!=='FROZEN')throw new Error('No current frozen lifecycle task exists.');
-  const current=artifactFor(root,state,stage,operation);if(current.sha256!==task.artifactSha256)throw new Error('Lifecycle artifact is stale.');compileAuthority(appPath,state.project.style,stage,operation);
+  const current=artifactFor(root,state,stage,operation);if(current.sha256!==task.artifactSha256)throw new Error('Lifecycle artifact is stale.');assertLifecycleFresh(appPath,root,state,task);
   const value=strictJson(text) as Record<string,unknown>;exact(value,['schema','project_id','task_id','revision','input_sha256','stage','operation','payload']);
   if(value.schema!=='mode-b-lifecycle-result-v1'||value.project_id!==state.project.id||value.task_id!==task.id||value.revision!==task.revision||value.input_sha256!==task.inputSha256||value.stage!==stage||value.operation!==operation)throw new Error('Lifecycle project/task/revision binding mismatch.');
   const payload=value.payload as Record<string,unknown>;if(!payload||typeof payload!=='object'||Array.isArray(payload))throw new Error('Invalid lifecycle payload.');
@@ -291,6 +316,9 @@ export function confirmLifecycleResult(appPathOrRoot:string,rootOrToken:string,m
   if(!task||task.id!==pending.taskId)throw new Error('Lifecycle task is stale or replayed.');
   if(task.status==='IMPORTED'&&state.lifecycle?.artifacts[task.id]?.taskId===task.id){fs.unlinkSync(file);if(fs.existsSync(nativeCorrectionJournal(root)))fs.unlinkSync(nativeCorrectionJournal(root));return state;}
   if(task.status!=='FROZEN')throw new Error('Lifecycle task is stale or replayed.');
+  const recoveryJournal=nativeCorrectionJournal(root);
+  const isPublishedNativeRecovery=pending.operation==='correct'&&pending.stage==='native'&&fs.existsSync(recoveryJournal)&&manifestSemanticHash(path.join(root,'project.json'))===(strictJson(fs.readFileSync(recoveryJournal,'utf8')) as Record<string,unknown>).desiredSha256;
+  if(!isPublishedNativeRecovery)assertLifecycleFresh(appPath,root,state,task);
   const frozenFile=resultPath(root,task.id);
   if(!fs.existsSync(frozenFile)||sha(fs.readFileSync(frozenFile))!==pending.responseSha256)
     throw new Error('Frozen lifecycle response bytes changed before publication.');
