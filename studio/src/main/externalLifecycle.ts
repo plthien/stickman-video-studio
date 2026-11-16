@@ -312,6 +312,36 @@ export function confirmLifecycleResult(appPathOrRoot:string,rootOrToken:string,m
 }
 
 export function exportReviewPack(root:string,kind:'preview'|'film'|'voice'|'captions'){
-  const state=readState(root),pack=evidence(root,state,{media:kind}),id=randomUUID(),relative=`.studio/external/review-packs/${kind}-${id}.json`;
-  const value={schema:'mode-b-review-pack-v1',project_id:state.project.id,kind,created_at:new Date().toISOString(),coverage:pack,script:state.approvedScript??null,manifest_sha256:sha(fs.readFileSync(path.join(root,'project.json'))),media_ledger:state.media??[],notice:'Local export only. The user must explicitly transfer listed media; this JSON alone does not prove picture, motion or sound was observed.'};atomicJson(resolveProjectFile(root,relative),value);return{path:relative,pack:value};
+  const state=readState(root),available=evidence(root,state,{media:kind}),id=randomUUID();
+  const relative='.studio/external/review-packs/'+kind+'-'+id,dir=resolveProjectFile(root,relative);
+  const attachments:Array<{path:string;sha256:string;bytes:number;kind:string;original:string}>=[];
+  const attach=(source:string,expected:string,mediaKind:string)=>{
+    const input=resolveProjectFile(root,source),bytes=fs.readFileSync(input);
+    if(sha(bytes)!==expected)throw new Error('BLOCKED: media review source bytes changed: '+source);
+    const target='media/'+attachments.length+'-'+path.basename(source),output=path.join(dir,target);
+    fs.mkdirSync(path.dirname(output),{recursive:true});fs.copyFileSync(input,output);
+    if(sha(fs.readFileSync(output))!==expected)throw new Error('Review package copy verification failed.');
+    attachments.push({path:target,sha256:expected,bytes:bytes.length,kind:mediaKind,original:source});
+  };
+  for(const file of available.files as Array<{path:string;sha256:string}>)attach(file.path,file.sha256,kind);
+  if((kind==='preview'||kind==='film')&&state.voice&&!state.voice.stale)attach(state.voice.path,state.voice.sha256,'voice');
+  const native=strictJson(fs.readFileSync(path.join(root,'project.json'),'utf8')) as Record<string,unknown>;
+  const originalTask=state.tasks?.native??null;
+  const originalPrompt=originalTask&&fs.existsSync(resolveProjectFile(root,originalTask.promptPath))?
+    {path:originalTask.promptPath,sha256:sha(fs.readFileSync(resolveProjectFile(root,originalTask.promptPath)))}:null;
+  let words:unknown=null;
+  if(state.alignment?.wordsSha256){
+    const input=resolveProjectFile(root,state.alignment.path),bytes=fs.readFileSync(input);
+    if(sha(bytes)!==state.alignment.wordsSha256)throw new Error('BLOCKED: actual alignment changed before review-pack export.');
+    words=strictJson(bytes.toString('utf8'));
+  }
+  const pack={schema:'mode-b-review-pack-v2',project_id:state.project.id,kind,created_at:new Date().toISOString(),
+    transfer_status:'LOCAL_PACKAGE_CREATED_NOT_PROOF_OF_CHATGPT_TRANSFER',attachments,
+    coverage:available,script:state.approvedScript??null,original_native_task:originalPrompt,
+    manifest_sha256:sha(fs.readFileSync(path.join(root,'project.json'))),shots:native.shots??[],
+    captions:native.captions??[],actual_word_alignment:words,media_ledger:state.media??[],
+    native_qa_report:kind==='preview'?state.preview?.reportPath:kind==='film'?state.render?.reportPath:null,
+    notice:'The folder contains actual copied media and this manifest. Manually transfer the requested MP4/WAV and review-package JSON to ChatGPT. A local path or SHA does not prove the model inspected frames, heard audio or verified motion. Owner acceptance remains separate.'};
+  const output=path.join(dir,'review-package.json');atomicJson(output,pack);
+  return{path:relative+'/review-package.json',folder:relative,pack};
 }
