@@ -34,19 +34,21 @@ function evidence(root:string,state:StudioState,scope:Scope){
   if(!state.alignment?.captionReview)throw new Error('NOT_VERIFIED: owner-reviewed captions are unavailable.');return{status:'AVAILABLE_LOCALLY_NOT_TRANSFERRED',modalities:[],ranges:[],files:[{path:state.alignment.captionsPath,sha256:state.alignment.captionReview.sha256}]};
 }
 
-function lifecycleSourceContext(state:StudioState,stage:Stage){
+function lifecycleSourceContext(state:StudioState,stage:Stage,operation:ExternalOperation){
   return sha(JSON.stringify({
     projectId:state.project.id,style:state.project.style,brief:state.brief,
     approvedScript:state.approvedScript??null,
     scriptCandidate:stage==='script'?state.scriptCandidate??null:null,
     voice:stage==='native'?state.voice??null:null,
-    alignment:stage==='native'?state.alignment??null:null
+    alignment:stage==='native'?state.alignment??null:null,
+    registeredMedia:stage==='native'?state.media??[]:null,
+    reviewMedia:operation==='media-review'?{preview:state.preview??null,render:state.render??null}:null
   }));
 }
 const authorityIdentity=(authority:ReturnType<typeof compileAuthority>)=>
   sha(JSON.stringify(authority.sources.map(source=>[source.path,source.sha256,source.extractionSha256,source.extractionRevision])));
 function assertLifecycleFresh(appPath:string,root:string,state:StudioState,task:NonNullable<StudioState['lifecycle']>['tasks'][string]){
-  if(!task.sourceContextSha256||task.sourceContextSha256!==lifecycleSourceContext(state,task.stage))
+  if(!task.sourceContextSha256||task.sourceContextSha256!==lifecycleSourceContext(state,task.stage,task.operation))
     throw new Error('STALE: lifecycle brief, approved creative source or voice/alignment was changed.');
   const authority=compileAuthority(appPath,state.project.style,task.stage,task.operation);
   if(!task.authorityFingerprint||task.authorityFingerprint!==authorityIdentity(authority))
@@ -91,7 +93,7 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   const key=stage+':'+operation,prior=state.lifecycle?.tasks[key];
   const snapshot={projectId:state.project.id,stage,operation,artifactSha256:artifact.sha256,authorityHashes:authority.sources.map(item=>[item.path,item.sha256,item.extractionSha256]),
     originalTaskSha256:sha(originalTask),evidencePack,editableIds,editablePaths,findingIds:findingIds,targetIds,relevantPrior};
-  const sourceContextSha256=lifecycleSourceContext(state,stage),authorityFingerprint=authorityIdentity(authority);
+  const sourceContextSha256=lifecycleSourceContext(state,stage,operation),authorityFingerprint=authorityIdentity(authority);
   const inputSha256=sha(JSON.stringify({...snapshot,sourceContextSha256,authorityFingerprint}));
   if(!rebuild&&prior?.status==='FROZEN'&&prior.inputSha256===inputSha256&&fs.existsSync(resolveProjectFile(root,prior.promptPath)))
     return{...prior,prompt:fs.readFileSync(resolveProjectFile(root,prior.promptPath),'utf8')};
