@@ -6,7 +6,7 @@ import {compileAuthority} from './externalAuthority.js';
 import {rejectNativeUnsafePaths,validateAuthoring} from './sourceCitations.js';
 import {freezeTask,stageImport,confirmImport,validateScript,validateManifest,type ConfirmOptions} from './externalTasks.js';
 
-type Scope={editableIds?:string[];editablePaths?:string[];findingIds?:string[];media?:'preview'|'film'|'voice'|'captions';transferAcknowledged?:boolean};
+type Scope={targetIds?:string[];editableIds?:string[];editablePaths?:string[];findingIds?:string[];media?:'preview'|'film'|'voice'|'captions';transferAcknowledged?:boolean};
 type Artifact={value:unknown;sha256:string;id:string};
 const exact=(value:Record<string,unknown>,keys:string[])=>{const extra=Object.keys(value).filter(key=>!keys.includes(key));if(extra.length)throw new Error(`Unknown field: ${extra[0]}`)};
 const lifecycleDir=(root:string)=>resolveProjectFile(root,'.studio/external/lifecycle');
@@ -112,9 +112,15 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
     throw new Error('Invalid or overly broad editable field path.');
   const sectionRows=stage==='script'?(artifact.value as {sections:Array<{id:string}>}).sections:
     ((artifact.value as {manifest:{shots?:Array<{id:string}>}}).manifest.shots??[]);
-  const targetIds=sectionRows.map(item=>item.id);
-  if(new Set(targetIds).size!==targetIds.length||targetIds.some(id=>typeof id!=='string'))throw new Error('Invalid native/script object inventory.');
-  if(editableIds.some(id=>!targetIds.includes(id)))throw new Error('Editable target does not exist in frozen artifact.');
+  const allTargetIds=sectionRows.map(item=>item.id);
+  if(new Set(allTargetIds).size!==allTargetIds.length||allTargetIds.some(id=>typeof id!=='string'))
+    throw new Error('Invalid native/script object inventory.');
+  const requested=scope.targetIds??[];
+  if(!Array.isArray(requested)||new Set(requested).size!==requested.length||
+    requested.some(id=>typeof id!=='string'||!allTargetIds.includes(id)))
+    throw new Error('Review target scope contains fabricated or duplicate entity IDs.');
+  const targetIds=requested.length?requested:allTargetIds;
+  if(editableIds.some(id=>!allTargetIds.includes(id)))throw new Error('Editable target does not exist in frozen artifact.');
   const relevantPrior=Object.values(state.lifecycle?.artifacts??{}).filter(item=>item.stage===stage&&['review','recheck','media-review'].includes(item.operation))
     .sort((x,y)=>y.createdAt.localeCompare(x.createdAt)).slice(0,3).map(item=>({taskId:item.taskId,operation:item.operation,value:item.value}));
   const reviewFindings=relevantPrior.flatMap(item=>{
