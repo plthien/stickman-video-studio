@@ -6,7 +6,7 @@ import {compileAuthority} from './externalAuthority.js';
 import {rejectNativeUnsafePaths,validateAuthoring} from './sourceCitations.js';
 import {freezeTask,stageImport} from './externalTasks.js';
 
-type Scope={editableIds?:string[];findingIds?:string[];media?:'preview'|'film'|'voice'|'captions'};
+type Scope={editableIds?:string[];editablePaths?:string[];findingIds?:string[];media?:'preview'|'film'|'voice'|'captions'};
 type Artifact={value:unknown;sha256:string;id:string};
 const exact=(value:Record<string,unknown>,keys:string[])=>{const extra=Object.keys(value).filter(key=>!keys.includes(key));if(extra.length)throw new Error(`Unknown field: ${extra[0]}`)};
 const lifecycleDir=(root:string)=>resolveProjectFile(root,'.studio/external/lifecycle');
@@ -20,34 +20,80 @@ function artifactFor(root:string,state:StudioState,stage:Stage,operation:Externa
     return{value,sha256:sha(JSON.stringify(value)),id:`script-${value.revision}`};
   }
   const file=path.join(root,'project.json');if(!state.external.native||!fs.existsSync(file))throw new Error('REVIEW_REQUIRED: no imported Native artifact exists.');
-  const value=strictJson(fs.readFileSync(file,'utf8'));return{value,sha256:sha(JSON.stringify(value)),id:`native-${state.external.native.revision}-${operation}`};
+  const manifest=strictJson(fs.readFileSync(file,'utf8'));
+  const existing=state.external.native.artifact as Record<string,unknown>|undefined;
+  const value={manifest,shot_ledger:existing?.shotLedger??[],sound_script:existing?.soundScript??[],asset_needs:existing?.assetNeeds??[]};
+  return{value,sha256:sha(JSON.stringify(value)),id:'native-'+state.external.native.revision+'-'+operation};
 }
 function evidence(root:string,state:StudioState,scope:Scope){
   const selected=scope.media;if(!selected)return{status:'NOT_VERIFIED',modalities:[],ranges:[],files:[]};
   const row=selected==='preview'?state.preview:selected==='film'?state.render:undefined;
   if((selected==='preview'||selected==='film')&&!row)throw new Error(`NOT_VERIFIED: verified ${selected} media does not exist.`);
-  if(row){const file=resolveProjectFile(root,row.path),bytes=fs.readFileSync(file);if(sha(bytes)!==row.sha256)throw new Error('BLOCKED: registered review media bytes changed.');return{status:'VERIFIED',modalities:['picture','motion','sound'],ranges:[{start:0,end:selected==='preview'?state.nativeReadiness?.checkedSeconds??state.nativeReadiness?.previewSeconds:null}],files:[{path:row.path,sha256:row.sha256,reportPath:row.reportPath,reportSha256:row.reportSha256}]};}
-  if(selected==='voice'){if(!state.voice||state.voice.stale)throw new Error('NOT_VERIFIED: current voice evidence is unavailable.');return{status:'VERIFIED',modalities:['sound'],ranges:[{start:0,end:state.voice.duration??null}],files:[{path:state.voice.path,sha256:state.voice.sha256}]};}
-  if(!state.alignment?.captionReview)throw new Error('NOT_VERIFIED: owner-reviewed captions are unavailable.');return{status:'VERIFIED',modalities:['captions'],ranges:[],files:[{path:state.alignment.captionsPath,sha256:state.alignment.captionReview.sha256}]};
+  if(row){const file=resolveProjectFile(root,row.path),bytes=fs.readFileSync(file);if(sha(bytes)!==row.sha256)throw new Error('BLOCKED: registered review media bytes changed.');return{status:'AVAILABLE_LOCALLY_NOT_TRANSFERRED',modalities:[],ranges:[{start:0,end:selected==='preview'?state.nativeReadiness?.checkedSeconds??state.nativeReadiness?.previewSeconds:null}],files:[{path:row.path,sha256:row.sha256,reportPath:row.reportPath,reportSha256:row.reportSha256}]};}
+  if(selected==='voice'){if(!state.voice||state.voice.stale)throw new Error('NOT_VERIFIED: current voice evidence is unavailable.');return{status:'AVAILABLE_LOCALLY_NOT_TRANSFERRED',modalities:[],ranges:[{start:0,end:state.voice.duration??null}],files:[{path:state.voice.path,sha256:state.voice.sha256}]};}
+  if(!state.alignment?.captionReview)throw new Error('NOT_VERIFIED: owner-reviewed captions are unavailable.');return{status:'AVAILABLE_LOCALLY_NOT_TRANSFERRED',modalities:[],ranges:[],files:[{path:state.alignment.captionsPath,sha256:state.alignment.captionReview.sha256}]};
 }
 
 export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,operation:Exclude<ExternalOperation,'author'>,scope:Scope={},rebuild=false){
   if(!['review','correct','recheck','media-review'].includes(operation))throw new Error('Unsupported lifecycle operation.');
   const state=readState(root),artifact=artifactFor(root,state,stage,operation),authority=compileAuthority(appPath,state.project.style,stage,operation);
+  const ownerTask=state.tasks?.[stage];
+  if(!ownerTask||!fs.existsSync(resolveProjectFile(root,ownerTask.promptPath)))
+    throw new Error('REBUILD_REQUIRED: original frozen author task is unavailable for independent review/correction.');
+  const originalTask=fs.readFileSync(resolveProjectFile(root,ownerTask.promptPath),'utf8');
+  if(ownerTask.promptSha256!==sha(originalTask))throw new Error('REBUILD_REQUIRED: original frozen author task was modified.');
   const evidencePack=operation==='media-review'?evidence(root,state,scope):{status:'NOT_APPLICABLE',modalities:[],ranges:[],files:[]};
-  const editableIds=[...new Set(scope.editableIds??[])];if(operation==='correct'&&!editableIds.length)throw new Error('Correct requires an explicit non-empty editable target scope.');
-  const inputSha256=sha(JSON.stringify({projectId:state.project.id,stage,operation,artifactSha256:artifact.sha256,authority,evidencePack,editableIds,findingIds:scope.findingIds??[]}));
-  const key=`${stage}:${operation}`,prior=state.lifecycle?.tasks[key];
-  if(!rebuild&&prior?.status==='FROZEN'&&prior.inputSha256===inputSha256&&fs.existsSync(resolveProjectFile(root,prior.promptPath)))return{...prior,prompt:fs.readFileSync(resolveProjectFile(root,prior.promptPath),'utf8')};
-  if(prior)prior.status='STALE';const id=randomUUID(),revision=(prior?.revision??0)+1;
-  const contract=operation==='review'||operation==='recheck'||operation==='media-review'
-    ?{schema:'mode-b-review-v1',artifact_sha256:artifact.sha256,status:'REVIEWED_WITH_FINDINGS',coverage:{modalities:evidencePack.modalities,ranges:evidencePack.ranges},findings:[{id:'F-001',severity:'major',target_ids:['actual-id'],requirement:'Exact violated requirement',evidence:{kind:'observed|manifest|inferred|unverified',detail:'Actual evidence or INSUFFICIENT_EVIDENCE'},recommendation:'Scoped corrective target'}]}
-    :{schema:'mode-b-correction-v1',artifact_sha256:artifact.sha256,finding_ids:scope.findingIds??[],editable_ids:editableIds,artifact:stage==='script'?{schema:'mode-b-script-v1',sections:[{id:'actual-id',text:'Complete corrected narration'}],authoring:{creative_direction:{},characters:[],style_decisions:{},voice_intentions:{},sound_intentions:{},source_references:[]}}:{manifest:'COMPLETE_ORIGINAL_PROJECT_JSON_V1',shot_ledger:[],sound_script:[],asset_needs:[]}};
+  const editableIds=[...new Set(scope.editableIds??[])],editablePaths=[...new Set(scope.editablePaths??[])];
+  if(operation==='correct'&&!editableIds.length&&!editablePaths.length)throw new Error('Correct requires explicit non-empty editable IDs or field paths.');
+  if(editableIds.some(id=>typeof id!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(id)))throw new Error('Invalid editable ID.');
+  if(editablePaths.some(p=>typeof p!=='string'||!/^\/(?:manifest\/)?[A-Za-z0-9_~-]+(?:\/[A-Za-z0-9_~-]+)*$/.test(p)||p==='/'||p==='/manifest'))
+    throw new Error('Invalid or overly broad editable field path.');
+  const sectionRows=stage==='script'?(artifact.value as {sections:Array<{id:string}>}).sections:
+    ((artifact.value as {manifest:{shots?:Array<{id:string}>}}).manifest.shots??[]);
+  const targetIds=sectionRows.map(item=>item.id);
+  if(new Set(targetIds).size!==targetIds.length||targetIds.some(id=>typeof id!=='string'))throw new Error('Invalid native/script object inventory.');
+  if(editableIds.some(id=>!targetIds.includes(id)))throw new Error('Editable target does not exist in frozen artifact.');
+  const relevantPrior=Object.values(state.lifecycle?.artifacts??{}).filter(item=>item.stage===stage&&['review','recheck','media-review'].includes(item.operation))
+    .sort((x,y)=>y.createdAt.localeCompare(x.createdAt)).slice(0,3).map(item=>({taskId:item.taskId,operation:item.operation,value:item.value}));
+  const key=stage+':'+operation,prior=state.lifecycle?.tasks[key];
+  const snapshot={projectId:state.project.id,stage,operation,artifactSha256:artifact.sha256,authorityHashes:authority.sources.map(item=>[item.path,item.sha256,item.extractionSha256]),
+    originalTaskSha256:sha(originalTask),evidencePack,editableIds,editablePaths,findingIds:scope.findingIds??[],targetIds,relevantPrior};
+  const inputSha256=sha(JSON.stringify(snapshot));
+  if(!rebuild&&prior?.status==='FROZEN'&&prior.inputSha256===inputSha256&&fs.existsSync(resolveProjectFile(root,prior.promptPath)))
+    return{...prior,prompt:fs.readFileSync(resolveProjectFile(root,prior.promptPath),'utf8')};
+  if(prior)prior.status='STALE';
+  const id=randomUUID(),revision=(prior?.revision??0)+1;
+  const contract=operation==='correct'?
+    {schema:'mode-b-correction-v1',artifact_sha256:artifact.sha256,finding_ids:scope.findingIds??[],editable_ids:editableIds,editable_paths:editablePaths,
+      artifact:stage==='script'?{schema:'mode-b-script-v1',sections:(artifact.value as {sections:unknown[]}).sections,authoring:(artifact.value as {authoring:unknown}).authoring}:
+      artifact.value}:
+    {schema:'mode-b-review-v1',artifact_sha256:artifact.sha256,status:'INSUFFICIENT_EVIDENCE',
+      coverage:{target_ids:targetIds,modalities:[],ranges:[]},findings:[]};
   const envelope={schema:'mode-b-lifecycle-result-v1',project_id:state.project.id,task_id:id,revision,input_sha256:inputSha256,stage,operation,payload:contract};
-  const prompt=`# MODE B EXTERNAL ${operation.toUpperCase()}\n\nReturn exactly one JSON object. Review independently; an author report is not evidence. Technical/native PASS remains Studio-owned. Do not claim frames, timestamps, motion or sound not actually present in the transferred evidence. For correction, modify only editable IDs and return the complete original artifact grammar.\n\nAUTHORITY\n${authority.rules.map((x,i)=>`${i+1}. ${x}`).join('\n')}\n\nTRACEABILITY\n${JSON.stringify(authority.sources,null,2)}\n\nORIGINAL TASK INPUT\n${JSON.stringify({project:state.brief,style:state.project.style,approvedScript:state.approvedScript??null},null,2)}\n\nIMMUTABLE ARTIFACT\n${JSON.stringify({id:artifact.id,sha256:artifact.sha256,value:artifact.value},null,2)}\n\nSCOPE AND LOCKS\n${JSON.stringify({editableIds,locked:'all artifact entity IDs not listed as editable',findingIds:scope.findingIds??[]},null,2)}\n\nAVAILABLE EVIDENCE\n${JSON.stringify(evidencePack,null,2)}\n\nRESPONSE CONTRACT\n${JSON.stringify(envelope,null,2)}\n`;
-  const relative=`.studio/external/lifecycle/tasks/${stage}-${operation}-${revision}-${id}.md`,target=resolveProjectFile(root,relative);fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,prompt,{encoding:'utf8',flag:'wx'});
-  state.lifecycle??={tasks:{},artifacts:{}};const lifecycle=state.lifecycle;lifecycle.tasks[key]={id,stage,operation,revision,inputSha256,artifactSha256:artifact.sha256,promptPath:relative,promptSha256:sha(prompt),status:'FROZEN',createdAt:new Date().toISOString(),editableIds,findingIds:scope.findingIds};writeState(root,state);
-  return{...lifecycle.tasks[key],prompt};
+  const nativeOrScriptRules=authority.sources.map(source=>
+    'BEGIN SOURCE '+source.path+' | full SHA256 '+source.sha256+' | extracted SHA256 '+source.extractionSha256+
+    ' | revision '+source.extractionRevision+'\n'+source.text+'\nEND SOURCE '+source.path).join('\n\n');
+  const prompt=[
+    '# MODE B EXTERNAL '+operation.toUpperCase(),
+    'Manual ChatGPT handoff: return a single strict JSON object, no Markdown. Independent review is not owner approval.',
+    'Original frozen author task is authoritative. Do not report observing files, frames, audio, motion or timestamps unless they were actually transferred into this ChatGPT conversation.',
+    'A local path/hash alone proves no inspection. Correct only explicitly authorized IDs or field paths. Return the COMPLETE artifact.',
+    'ORIGINAL FROZEN AUTHOR TASK | SHA256 '+sha(originalTask),originalTask,
+    'STAGE-SCOPED INSTALLED NORMATIVE AUTHORITY',nativeOrScriptRules,
+    'CREATIVE DECISIONS / BRIEF',JSON.stringify({brief:state.brief,approvedScript:state.approvedScript??null,currentCandidate:state.scriptCandidate??null},null,2),
+    'IMMUTABLE TARGET ARTIFACT',JSON.stringify({id:artifact.id,sha256:artifact.sha256,value:artifact.value},null,2),
+    'REVIEW COVERAGE INVENTORY',JSON.stringify(targetIds),
+    'PRIOR FINDINGS AND UNCERTAINTY',JSON.stringify(relevantPrior,null,2),
+    'EDITABLE SCOPE AND GLOBAL LOCKS',JSON.stringify({editableIds,editablePaths,locked:'all other section/shot IDs, fields and auxiliary ledgers',findingIds:scope.findingIds??[]},null,2),
+    'ACTUAL EVIDENCE TRANSFER STATUS',JSON.stringify(evidencePack,null,2),
+    'JSON RESPONSE CONTRACT | replace the example status/findings with supported results only',JSON.stringify(envelope,null,2)
+  ].join('\n\n')+'\n';
+  const relative='.studio/external/lifecycle/tasks/'+stage+'-'+operation+'-'+revision+'-'+id+'.md',target=resolveProjectFile(root,relative);
+  fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,prompt,{encoding:'utf8',flag:'wx'});
+  state.lifecycle??={tasks:{},artifacts:{}};
+  state.lifecycle.tasks[key]={id,stage,operation,revision,inputSha256,artifactSha256:artifact.sha256,promptPath:relative,promptSha256:sha(prompt),status:'FROZEN',createdAt:new Date().toISOString(),editableIds,editablePaths,targetIds,findingIds:scope.findingIds,originalTaskSha256:sha(originalTask)};
+  writeState(root,state);
+  return{...state.lifecycle.tasks[key],prompt};
 }
 
 function entities(stage:Stage,value:unknown){if(stage==='script')return ((value as {sections?:unknown[]}).sections??[]) as Array<Record<string,unknown>>;return ((value as {shots?:unknown[]}).shots??[]) as Array<Record<string,unknown>>;}
