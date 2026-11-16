@@ -3,7 +3,7 @@ import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {afterEach,describe,expect,it} from 'vitest';
 import {confirmLifecycleResult,freezeLifecycleTask,stageLifecycleResult} from '../../src/main/externalLifecycle';
-import {projectId,readState,type StudioState} from '../../src/main/services';
+import {projectId,readState,writeState,type StudioState} from '../../src/main/services';
 
 const roots:string[]=[];const appPath=path.resolve('.');
 afterEach(()=>roots.splice(0).forEach(root=>fs.rmSync(root,{recursive:true,force:true})));
@@ -13,5 +13,43 @@ const awaitHash=(value:string)=>createHash('sha256').update(value).digest('hex')
 describe('External creative lifecycle',()=>{
   it('binds independent review to the exact candidate and never approves it',()=>{const root=fixture(),task=freezeLifecycleTask(appPath,root,'script','review');expect(task.prompt).toContain('causal');expect(task.prompt).toContain('B4');const result={schema:'mode-b-lifecycle-result-v1',project_id:readState(root).project.id,task_id:task.id,revision:task.revision,input_sha256:task.inputSha256,stage:'script',operation:'review',payload:{schema:'mode-b-review-v1',artifact_sha256:task.artifactSha256,status:'REVIEWED_WITH_FINDINGS',coverage:{target_ids:['opening','payoff'],modalities:[],ranges:[]},findings:[{id:'F-1',severity:'major',status:'open',target_ids:['opening'],requirement:'opening threat',evidence:{kind:'manifest',detail:'threat lacks consequence'},recommendation:'strengthen causal consequence'}]}};const pending=stageLifecycleResult(appPath,root,'script','review',JSON.stringify(result));confirmLifecycleResult(root,pending.token);expect(readState(root).approvedScript).toBeUndefined();expect(readState(root).lifecycle?.artifacts[task.id].status).toBe('REVIEWED_WITH_FINDINGS')});
   it('rejects correction outside the explicit section lock and accepts a scoped candidate',()=>{const root=fixture(),task=freezeLifecycleTask(appPath,root,'script','correct',{editableIds:['opening'],findingIds:['F-1']});const base=readState(root).scriptCandidate!;const envelope=(sections:typeof base.sections)=>({schema:'mode-b-lifecycle-result-v1',project_id:readState(root).project.id,task_id:task.id,revision:task.revision,input_sha256:task.inputSha256,stage:'script',operation:'correct',payload:{schema:'mode-b-correction-v1',artifact_sha256:task.artifactSha256,finding_ids:['F-1'],editable_ids:['opening'],artifact:{schema:'mode-b-script-v1',sections,authoring:base.authoring}}});expect(()=>stageLifecycleResult(appPath,root,'script','correct',JSON.stringify(envelope([{id:'opening',text:'Changed.'},{id:'payoff',text:'Unauthorized.'}])))).toThrow(/Locked entity/);const pending=stageLifecycleResult(appPath,root,'script','correct',JSON.stringify(envelope([{id:'opening',text:'The storm destroys the only shelter, forcing action.'},base.sections[1]])));confirmLifecycleResult(root,pending.token);expect(readState(root).scriptCandidate?.sections[0].text).toContain('forcing action');expect(readState(root).approvedScript).toBeUndefined()});
+  it('rejects fabricated review target IDs, incomplete coverage and duplicate findings',()=>{
+    const root=fixture(),task=freezeLifecycleTask(appPath,root,'script','review'),project_id=readState(root).project.id;
+    const result=(findings:unknown[],target_ids:string[],status='REVIEWED_WITH_FINDINGS')=>JSON.stringify({
+      schema:'mode-b-lifecycle-result-v1',project_id,task_id:task.id,revision:task.revision,
+      input_sha256:task.inputSha256,stage:'script',operation:'review',
+      payload:{schema:'mode-b-review-v1',artifact_sha256:task.artifactSha256,status,
+        coverage:{target_ids,modalities:[],ranges:[]},findings}
+    });
+    const finding=(id:string,target:string)=>({id,status:'open',severity:'major',target_ids:[target],
+      requirement:'actual source rule',evidence:{kind:'manifest',detail:'verified script bytes'},
+      recommendation:'repair only actual target'});
+    expect(()=>stageLifecycleResult(appPath,root,'script','review',result([finding('F-001','made-up')],['opening','payoff']))).toThrow(/unknown shot\/section|unknown.*target/);
+    expect(()=>stageLifecycleResult(appPath,root,'script','review',result([finding('F-001','opening')],['opening']))).toThrow(/coverage/);
+    expect(()=>stageLifecycleResult(appPath,root,'script','review',result([finding('F-001','opening'),finding('F-001','payoff')],['opening','payoff']))).toThrow(/duplicate/);
+  });
+  it('binds staged reviews to candidate revision and rejects obsolete imports',()=>{
+    const root=fixture(),task=freezeLifecycleTask(appPath,root,'script','review');
+    const state=readState(root);state.scriptCandidate!.sections[0].text='Updated latest creative candidate.';
+    state.scriptCandidate!.text=state.scriptCandidate!.sections.map(x=>x.text).join('\n\n');
+    state.scriptCandidate!.sha256=awaitHash(state.scriptCandidate!.text);
+    state.scriptCandidate!.revision++;writeState(root,state);
+    const response=JSON.stringify({schema:'mode-b-lifecycle-result-v1',project_id:state.project.id,
+      task_id:task.id,revision:task.revision,input_sha256:task.inputSha256,stage:'script',operation:'review',
+      payload:{schema:'mode-b-review-v1',artifact_sha256:task.artifactSha256,
+        status:'REVIEWED_NO_FINDINGS',coverage:{target_ids:['opening','payoff'],modalities:[],ranges:[]},findings:[]}});
+    expect(()=>stageLifecycleResult(appPath,root,'script','review',response)).toThrow(/stale/);
+  });
+  it('reuses staged identical lifecycle response and never overwrites pending with a new proposal',()=>{
+    const root=fixture(),task=freezeLifecycleTask(appPath,root,'script','review'),project_id=readState(root).project.id;
+    const response=JSON.stringify({schema:'mode-b-lifecycle-result-v1',project_id,task_id:task.id,
+      revision:task.revision,input_sha256:task.inputSha256,stage:'script',operation:'review',
+      payload:{schema:'mode-b-review-v1',artifact_sha256:task.artifactSha256,status:'REVIEWED_NO_FINDINGS',
+        coverage:{target_ids:['opening','payoff'],modalities:[],ranges:[]},findings:[]}});
+    const first=stageLifecycleResult(appPath,root,'script','review',response);
+    const second=stageLifecycleResult(appPath,root,'script','review',response);
+    expect(first.token).toBe(second.token);
+    expect(()=>stageLifecycleResult(appPath,root,'script','review',response.replace('REVIEWED_NO_FINDINGS','INSUFFICIENT_EVIDENCE'))).toThrow(/PENDING_LIFECYCLE_CONFLICT/);
+  });
   it('fails closed when a media review has no verified transferable media',()=>{const root=fixture();expect(()=>freezeLifecycleTask(appPath,root,'script','media-review',{media:'voice'})).toThrow(/NOT_VERIFIED/)})
 });
