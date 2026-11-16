@@ -1,6 +1,7 @@
 // @vitest-environment node
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import {createHash} from 'node:crypto';
+import {approveScriptCandidate} from '../../src/main/externalTasks';
 import {afterEach,describe,expect,it} from 'vitest';
 import {confirmLifecycleResult,freezeLifecycleTask,stageLifecycleResult} from '../../src/main/externalLifecycle';
 import {projectId,readState,writeState,type StudioState} from '../../src/main/services';
@@ -50,6 +51,40 @@ describe('External creative lifecycle',()=>{
     const second=stageLifecycleResult(appPath,root,'script','review',response);
     expect(first.token).toBe(second.token);
     expect(()=>stageLifecycleResult(appPath,root,'script','review',response.replace('REVIEWED_NO_FINDINGS','INSUFFICIENT_EVIDENCE'))).toThrow(/PENDING_LIFECYCLE_CONFLICT/);
+  });
+  it('corrected Script cannot approve until exact-current-candidate Recheck resolves original findings',()=>{
+    const root=fixture(),project_id=readState(root).project.id;
+    const review=freezeLifecycleTask(appPath,root,'script','review');
+    const finding=(status:string)=>({id:'F-001',severity:'major',status,target_ids:['opening'],
+      requirement:'A real causal survival opening',evidence:{kind:'manifest',detail:'Exact frozen section wording'},
+      recommendation:'Repair section opening only'});
+    const wrap=(task:typeof review,operation:string,payload:unknown)=>JSON.stringify({schema:'mode-b-lifecycle-result-v1',
+      project_id,task_id:task.id,revision:task.revision,input_sha256:task.inputSha256,
+      stage:'script',operation,payload});
+    const first=stageLifecycleResult(appPath,root,'script','review',wrap(review,'review',{
+      schema:'mode-b-review-v1',artifact_sha256:review.artifactSha256,
+      status:'REVIEWED_WITH_FINDINGS',coverage:{target_ids:['opening','payoff'],modalities:[],ranges:[]},
+      findings:[finding('open')]}));
+    confirmLifecycleResult(root,first.token);
+    const correction=freezeLifecycleTask(appPath,root,'script','correct',{editableIds:['opening'],findingIds:['F-001']});
+    const candidate=readState(root).scriptCandidate!;
+    const modified=structuredClone(candidate.sections);
+    modified[0].text='The shelter collapses, forcing an urgent causal survival decision.';
+    const result=stageLifecycleResult(appPath,root,'script','correct',wrap(correction,'correct',{
+      schema:'mode-b-correction-v1',artifact_sha256:correction.artifactSha256,
+      finding_ids:['F-001'],editable_ids:['opening'],editable_paths:[],
+      artifact:{schema:'mode-b-script-v1',sections:modified,authoring:candidate.authoring}}));
+    confirmLifecycleResult(root,result.token);
+    expect(()=>approveScriptCandidate(root,'Accept repaired narration')).toThrow(/RECHECK_REQUIRED/);
+    const recheck=freezeLifecycleTask(appPath,root,'script','recheck',{findingIds:['F-001']});
+    const reviewed=stageLifecycleResult(appPath,root,'script','recheck',wrap(recheck,'recheck',{
+      schema:'mode-b-review-v1',artifact_sha256:recheck.artifactSha256,
+      status:'REVIEWED_NO_FINDINGS',coverage:{target_ids:['opening','payoff'],modalities:[],ranges:[]},
+      findings:[finding('resolved')]}));
+    confirmLifecycleResult(root,reviewed.token);
+    const accepted=approveScriptCandidate(root,'Owner checked corrected narration and evidence');
+    expect(accepted.approvedScript?.sections[0].text).toContain('forcing');
+    expect(accepted.approvedScript?.sections[1]).toEqual(candidate.sections[1]);
   });
   it('fails closed when a media review has no verified transferable media',()=>{const root=fixture();expect(()=>freezeLifecycleTask(appPath,root,'script','media-review',{media:'voice'})).toThrow(/NOT_VERIFIED/)})
 });
