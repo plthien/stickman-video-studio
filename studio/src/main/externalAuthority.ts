@@ -6,7 +6,7 @@ export type ExternalOperation = 'author'|'review'|'correct'|'recheck'|'media-rev
 export type Disposition = 'KEEP'|'MOVE_TO_NATIVE'|'STUDIO_ONLY'|'AGENT_ONLY';
 export interface AuthoritySource {
   path:string; sha256:string; extractionSha256:string; extractionRevision:string;
-  applicability:string[]; disposition:Disposition; headings:string[]; text:string;
+  applicability:string[]; disposition:Disposition; headings:string[]; text:string; locations?:string[];
 }
 export const AUTHORITY_EXTRACTION_REVISION = 'stage-exact-v2';
 
@@ -29,6 +29,147 @@ const B4_SCRIPT:Record<string,string[]>={
   'references/b4-audio-direction.md':['## Fixed main narrator','## Automatic character casting and performance','## Automatic SFX direction and source gate']
 };
 
+/** Script Author selections are literal complete source paragraphs/requirements.
+ * No model-authored paraphrases; every selector must resolve uniquely or fail closed.
+ * These prefixes are version-controlled source-boundary locators, not summaries.
+ */
+const SCRIPT_AUTHOR_REQUIREMENTS:Record<string,string[]>={
+  'SKILL.md':[
+    'A and B share installation, not production contracts.',
+    'B accepts topics, briefs, articles and scripts.',
+    'Captions: B1–B4 single-line;',
+    'All B styles: native **16:9 and 9:16**'
+  ],
+  'references/autopilot.md':[
+    'Resolve each setting in this order:',
+    'Font, text-effect and language presets are defaults',
+    'Shared B rules govern source fidelity',
+    'For every B preview/film and every genre, read the required',
+    '1. Resolve the source/topic, audience, purpose, target duration',
+    '- **Story-led casting:**',
+    '- Design scenes around meaning, not uniform three-second cuts.',
+    '- Identity and acting are separate:',
+    '- Micro-animation must advance the meaning:'
+  ],
+  'references/autopilot-production-qa.md':[
+    'Make actions, objects, diagrams and marks explain the spoken idea.',
+    'Give the **first 30 seconds**',
+    '- When writing copy, start with a short, concrete line',
+    '- Match each line to a specific principal action',
+    'If copy is supplied or already approved, preserve it;',
+    '- No **principal-picture inactivity longer than 2.5 seconds**',
+    '- Do not repeat compositions to fill time.',
+    '- Vary entry order by meaning:',
+    'Match icons, platform/company marks',
+    'B1–B4 styles, languages, previews and films use **semantic subtitles'
+  ],
+  'references/autopilot-sound-system.md':[
+    'Sound must communicate place, physical contact, information or emotion',
+    'Build three **functional layers**',
+    '1. **Place/continuity',
+    '2. **Physical/spatial events',
+    '3. **Emotional punctuation',
+    'These are available roles,',
+    'For every B project, save a project-local sound script',
+    'Every added cue must answer',
+    'Choose a palette from the particular story',
+    '**AUDIO CUT** is an intentional designed exception',
+    '“Low, breathy,”'
+  ],
+  'references/b1-minimal-handdrawn.md':[
+    '- Near-white warm paper',
+    '- Expressive hand-drawn stick figures',
+    '- Hand-drawn colored props',
+    '- Large, short in-scene text',
+    '- **Slender proportions:',
+    '- **More exaggerated expressions:',
+    '- **Act with the whole body:',
+    '- **New content, new acting:',
+    '- **Detailed enough, not cluttered:',
+    'Voice leads at native **1×** speed.',
+    'Use semantic match cuts, a prop carried between ideas',
+    'Apply the mandatory [B common production'
+  ],
+  'references/b2-colorful-handdrawn.md':[
+    '- Warm paper, irregular fine ink contours',
+    '- Ordinary round-headed stickmen',
+    '- Handwritten scene headings',
+    '- Original restrained action SFX',
+    'Favor specific everyday action',
+    'Keep the drawing language consistent, not the set.',
+    'Before drawing a new story, record a short scene map',
+    'Maintain physical contact and object ownership'
+  ],
+  'references/b3-television.md':[
+    'Reference priority is **explicit user choices',
+    'Use references as visual study, not as a reusable soundtrack',
+    'The established direction is a dark field',
+    'Plan the edit across shots as well as within them',
+    'When an animal carries the story',
+    'Use stable poses with bounded local animation.',
+    'If narration names a behavior, **show that behavior**',
+    'The following are **not** substitutes',
+    'Use varied story-specific environments, prop details'
+  ],
+  'references/b4-survival-storytelling.md':[
+    'The reference set and style prompt fix clear slightly organic black contours',
+    'Do **not** translate “refined,”',
+    'The current dispatcher specifically uses a bald round white head',
+    'Gloves have rounded palms',
+    '**Limb proportion and reach are a separate visual gate.',
+    '**Check the pelvis-to-leg fork,',
+    'For local expression or threat-state changes,',
+    'Scripted abnormal anatomy is a **named-character exception',
+    'For **B4 horror stories**',
+    '- **Name the visible evidence before generation.',
+    '- **Separate cast identity from menace.',
+    '- **Make the threat visible, not merely described.',
+    '**Well-drawn held poses are a valid B4 baseline.',
+    "B4's deliberate-hold exception takes precedence"
+  ],
+  'references/b4-opening-direction.md':[
+    '- **Earn attention with the story.',
+    '- **Reserve distinct opening artwork.',
+    '- **Progress, do not merely decorate.',
+    'Use a concise question, usually two short semantic groups',
+    'The first three seconds need a designed progression',
+    'Alongside the text, show at least one',
+    'For horror, the change must strengthen',
+    'Every B4 **narrative shot is at most 3.0 seconds**',
+    '**Show facts; do not label every fact.',
+    'Spot the immediate hearing hook'
+  ],
+  'references/b4-audio-direction.md':[
+    'For new B4 production, resolve **Brian',
+    '1. **Cast only real roles.',
+    '3. **Act the scene, not a preset.',
+    '**Start with perceptible story-led sound',
+    'Fit picture to the approved voice',
+    'Intentional opening silence remains possible',
+    '**Subtle continuous bed, necessary SFX.',
+    '- **Hook and payoff follow genre.',
+    'Use an ending choice only when the brief or story calls'
+  ]
+};
+function extractScriptAuthor(full:string,relative:string){
+  const prefixes=SCRIPT_AUTHOR_REQUIREMENTS[relative];
+  if(!prefixes?.length)throw new Error('REBUILD_REQUIRED: missing Script Author authority selection: '+relative);
+  const lines=full.replace(/\r\n/g,'\n').split('\n');
+  const locations:string[]=[];
+  const sections=new Map<string,string[]>();
+  for(const prefix of prefixes){
+    const hits=lines.flatMap((line,i)=>line.trimStart().startsWith(prefix)?[i]:[]);
+    if(hits.length!==1)throw new Error('REBUILD_REQUIRED: Script Author source selector missing or ambiguous: '+relative+' '+prefix);
+    const index=hits[0],line=lines[index];
+    const heading=lines.slice(0,index+1).reverse().find(row=>/^#{2,5} /.test(row))??'# '+relative;
+    const entries=sections.get(heading)??[];entries.push(line);sections.set(heading,entries);
+    locations.push('L'+String(index+1));
+  }
+  const text=[...sections].map(([heading,entries])=>heading+'\n'+entries.join('\n\n')).join('\n\n');
+  if(!text.trim())throw new Error('REBUILD_REQUIRED: empty Script Author authority for '+relative);
+  return{text,headings:[...sections.keys()],locations};
+}
+
 function selectSections(full:string,headings:string[],relative:string){
   if(!headings.length)return full;
   const lines=full.replace(/\r\n/g,'\n').split('\n');
@@ -50,11 +191,13 @@ function source(appPath:string,relative:string,style:string,stage:Stage,operatio
   const target=path.join(nativeSkillRoot(appPath).root,relative);
   if(!fs.existsSync(target)||!fs.statSync(target).isFile())throw new Error('Required Mode B authority is missing: '+relative);
   const bytes=fs.readFileSync(target),full=bytes.toString('utf8');
-  const text=selectSections(full,headings,relative);
+  const focused=stage==='script'&&operation==='author'?extractScriptAuthor(full,relative):null;
+  const text=focused?.text??selectSections(full,headings,relative);
   if(!text.trim())throw new Error('REBUILD_REQUIRED: required authority is empty: '+relative);
   return {path:relative,sha256:sha(bytes),extractionSha256:sha(text),
-    extractionRevision:AUTHORITY_EXTRACTION_REVISION,applicability:[style,stage,operation],
-    disposition,headings,text};
+    extractionRevision:focused?'script-author-source-exact-v3':AUTHORITY_EXTRACTION_REVISION,
+    applicability:[style,stage,operation],disposition,
+    headings:focused?.headings??headings,...(focused?{locations:focused.locations}:{}),text};
 }
 export function compileAuthority(appPath:string,style:string,stage:Stage,operation:ExternalOperation){
   const selected=STYLE[style];
@@ -91,7 +234,7 @@ export function compileAuthority(appPath:string,style:string,stage:Stage,operati
     rules.push('Review independently against the frozen original task and exact evidence; distinguish observed, inferred and not verified.');
   if(operation==='correct')
     rules.push('Return a complete importable artifact. Change only authorized targets/paths; preserve everything outside scope exactly.');
-  return {version:AUTHORITY_EXTRACTION_REVISION,style,stage,operation,rules,sources,
+  return {version:stage==='script'&&operation==='author'?'script-author-source-exact-v3':AUTHORITY_EXTRACTION_REVISION,style,stage,operation,rules,sources,
     matrix:{KEEP:sources.map(item=>item.path),
       MOVE_TO_NATIVE:stage==='script'?['references/autopilot-runtime.md','native project.json contract','native CLI validation and production approval']:[],
       STUDIO_ONLY:['provider HTTP/credentials','CLI execution','cache internals','local media filesystem publication','owner approvals'],
