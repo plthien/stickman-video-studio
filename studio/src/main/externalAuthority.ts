@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import {createHash} from 'node:crypto';
 import { nativeSkillRoot, sha, type Stage } from './services.js';
 
 export type ExternalOperation = 'author'|'review'|'correct'|'recheck'|'media-review';
@@ -29,148 +30,58 @@ const B4_SCRIPT:Record<string,string[]>={
   'references/b4-audio-direction.md':['## Fixed main narrator','## Automatic character casting and performance','## Automatic SFX direction and source gate']
 };
 
-/** Script Author selections are literal complete source paragraphs/requirements.
- * No model-authored paraphrases; every selector must resolve uniquely or fail closed.
- * These prefixes are version-controlled source-boundary locators, not summaries.
+/** Original Core blob identities; Script Author must be explicitly re-reviewed
+ * if ANY installed source bytes change. Native/lifecycle extraction remains unchanged.
+ * Ranges are 1-based inclusive source line spans, preserving complete Markdown blocks.
  */
-const SCRIPT_AUTHOR_REQUIREMENTS:Record<string,string[]>={
-  'SKILL.md':[
-    'A and B share installation, not production contracts.',
-    'B accepts topics, briefs, articles and scripts.',
-    'Captions: B1–B4 single-line;'
-  ],
-  'references/autopilot.md':[
-    'Resolve each setting in this order:',
-    'Font, text-effect and language presets are defaults',
-    'Shared B rules govern source fidelity',
-    '1. Resolve the source/topic, audience, purpose, target duration',
-    '- **Story-led casting:**',
-    '- Design scenes around meaning, not uniform three-second cuts.',
-    '- Identity and acting are separate:',
-    '- Micro-animation must advance the meaning:'
-  ],
-  'references/autopilot-production-qa.md':[
-    'Make actions, objects, diagrams and marks explain the spoken idea.',
-    'Give the **first 30 seconds**',
-    '- When writing copy, start with a short, concrete line',
-    '- Match each line to a specific principal action',
-    'If copy is supplied or already approved, preserve it;',
-    '- No **principal-picture inactivity longer than 2.5 seconds**',
-    '- Do not repeat compositions to fill time.',
-    '- Vary entry order by meaning:',
-    'Match icons, platform/company marks',
-    'B1–B4 styles, languages, previews and films use **semantic subtitles'
-  ],
-  'references/autopilot-sound-system.md':[
-    'Sound must communicate place, physical contact, information or emotion',
-    'Build three **functional layers**',
-    '1. **Place/continuity',
-    '2. **Physical/spatial events',
-    '3. **Emotional punctuation',
-    'These are available roles,',
-    'Every added cue must answer',
-    'Choose a palette from the particular story',
-    '**AUDIO CUT** is an intentional designed exception',
-    '“Low, breathy,”'
-  ],
-  'references/b1-minimal-handdrawn.md':[
-    '- Near-white warm paper',
-    '- Expressive hand-drawn stick figures',
-    '- Hand-drawn colored props',
-    '- Large, short in-scene text',
-    '- **Slender proportions:',
-    '- **More exaggerated expressions:',
-    '- **Act with the whole body:',
-    '- **New content, new acting:',
-    '- **Detailed enough, not cluttered:',
-    'Voice leads at native **1×** speed.',
-    'Use semantic match cuts, a prop carried between ideas'
-  ],
-  'references/b2-colorful-handdrawn.md':[
-    '- Warm paper, irregular fine ink contours',
-    '- Ordinary round-headed stickmen',
-    '- Handwritten scene headings',
-    '- Original restrained action SFX',
-    'Plan from the complete voice recording and actual pauses.',
-    'Keep the drawing language consistent, not the set.',
-    'Before drawing a new story, record a short scene map',
-    'Maintain physical contact and object ownership'
-  ],
-  'references/b3-television.md':[
-    'Reference priority is **explicit user choices',
-    'Use references as visual study, not as a reusable soundtrack',
-    'The established direction is a dark field',
-    'Plan the edit across shots as well as within them',
-    'When an animal carries the story',
-    'Use stable poses with bounded local animation.',
-    'If narration names a behavior, **show that behavior**',
-    'The following are **not** substitutes',
-    'Use varied story-specific environments, prop details'
-  ],
-  'references/b4-survival-storytelling.md':[
-    'The reference set and style prompt fix clear slightly organic black contours',
-    'Do **not** translate “refined,”',
-    'The current dispatcher specifically uses a bald round white head',
-    'Gloves have rounded palms',
-    '**Limb proportion and reach are a separate visual gate.',
-    '**Check the pelvis-to-leg fork,',
-    'For local expression or threat-state changes,',
-    'Scripted abnormal anatomy is a **named-character exception',
-    'For **B4 horror stories**',
-    '- **Name the visible evidence before generation.',
-    '- **Separate cast identity from menace.',
-    '- **Make the threat visible, not merely described.',
-    '- **Well-drawn held poses are a valid B4 baseline.',
-    "- B4's deliberate-hold exception takes precedence",
-    '- Read and execute the required [B4 audio contract]'
-  ],
-  'references/b4-opening-direction.md':[
-    '- **Earn attention with the story.',
-    '- **Reserve distinct opening artwork.',
-    '- **Progress, do not merely decorate.',
-    'Use a concise question, usually two short semantic groups',
-    'The first three seconds need a designed progression',
-    'Alongside the text, show at least one',
-    'For horror, the change must strengthen',
-    'Every B4 **narrative shot is at most 3.0 seconds**',
-    '**Show facts; do not label every fact.',
-    'Spot the immediate hearing hook'
-  ],
-  'references/b4-audio-direction.md':[
-    '1. **Cast only real roles.',
-    '3. **Act the scene, not a preset.',
-    '**Start with perceptible story-led sound',
-    'Fit picture to the approved voice',
-    'Intentional opening silence remains possible',
-    '**Subtle continuous bed, necessary SFX.',
-    '- **Hook and payoff follow genre.',
-    'Use an ending choice only when the brief or story calls'
-  ]
+const SCRIPT_AUTHOR_BLOB_SHA1:Record<string,string>={
+  'SKILL.md':'d49ecae27df011f1907eb45abd94123da1c6ec7b',
+  'references/autopilot.md':'c0f8eb0b7a00448cbc851fa276ad40c68ae3d06f',
+  'references/autopilot-production-qa.md':'9e15738e6e54b95b6d9eb968575ecf6cddee9d8f',
+  'references/autopilot-sound-system.md':'3c3b9dbeed43b9cf229e617315359c7d0e7317a1',
+  'references/b1-minimal-handdrawn.md':'1a2b0abadff0a8ecedc50e4f8af3f04a5dcfdb73',
+  'references/b2-colorful-handdrawn.md':'f2b38416743c166353324d45f10396dcdb9fc247',
+  'references/b3-television.md':'7ab242cf7751bf72de477fb53179cb62f1b58b64',
+  'references/b4-survival-storytelling.md':'271770dbe59f3fb74823012dae9a8c8363f1e944',
+  'references/b4-opening-direction.md':'8f2283ae23ceb52b0afc26a5eefce4cf0203c16d',
+  'references/b4-audio-direction.md':'9cada12dd379ba06f1a44311764a8bfc1b64b294'
 };
-/** Exact contiguous substrings of mixed-stage source paragraphs; never paraphrased. */
-const SCRIPT_AUTHOR_EXCERPT:Record<string,string>={
-  'Plan from the complete voice recording and actual pauses.':'Favor specific everyday action, amusing visual contradictions, explanatory object diagrams and a concrete payoff.',
-  '- Read and execute the required [B4 audio contract]':'Default to English and **fix the main narrator to Brian — Deep, Resonant and Comforting**',
-  'B1–B4 styles, languages, previews and films use **semantic subtitles':'B1–B4 styles, languages, previews and films use **semantic subtitles with at most one visible line at a time**.'
+/** Exact source spans selected by human review against the pinned original.
+ * Entire lines/paragraphs, subordinate bullets, conditions and exceptions remain
+ * intact; no mid-sentence excerpt is permitted. Mixed-stage paragraphs retain
+ * original wording; Script Author is explicitly told to defer execution duties.
+ */
+const SCRIPT_AUTHOR_BLOCKS:Record<string,Array<readonly [number,number]>>={
+  'SKILL.md':[[19,19],[21,23],[25,25]],
+  'references/autopilot.md':[[5,5],[11,15],[17,21],[25,26],[43,43],[49,52]],
+  'references/autopilot-production-qa.md':[[5,9],[19,27],[29,34],[36,42],[44,52]],
+  'references/autopilot-sound-system.md':[[5,7],[18,24],[45,49],[61,72],[74,80],[84,91]],
+  'references/b1-minimal-handdrawn.md':[[7,13],[15,23],[25,31]],
+  'references/b2-colorful-handdrawn.md':[[7,13],[15,19],[21,25]],
+  'references/b3-television.md':[[11,13],[29,39],[41,43],[47,57],[69,73]],
+  'references/b4-survival-storytelling.md':[[21,39],[41,47],[58,66]],
+  'references/b4-opening-direction.md':[[5,14],[16,34],[40,54],[56,60]],
+  'references/b4-audio-direction.md':[[5,9],[13,19],[24,34],[38,47],[49,55]]
 };
+export const SCRIPT_AUTHOR_EXTRACTION_REVISION='script-author-complete-blocks-v4';
 function extractScriptAuthor(full:string,relative:string){
-  const prefixes=SCRIPT_AUTHOR_REQUIREMENTS[relative];
-  if(!prefixes?.length)throw new Error('REBUILD_REQUIRED: missing Script Author authority selection: '+relative);
-  const lines=full.replace(/\r\n/g,'\n').split('\n');
-  const locations:string[]=[];
-  const sections=new Map<string,string[]>();
-  for(const prefix of prefixes){
-    const hits=lines.flatMap((line,i)=>line.trimStart().startsWith(prefix)?[i]:[]);
-    if(hits.length!==1)throw new Error('REBUILD_REQUIRED: Script Author source selector missing or ambiguous: '+relative+' '+prefix);
-    const index=hits[0],line=lines[index];
-    const heading=lines.slice(0,index+1).reverse().find(row=>/^#{2,5} /.test(row))??'# '+relative;
-    const excerpt=SCRIPT_AUTHOR_EXCERPT[prefix];
-    if(excerpt&&!line.includes(excerpt))throw new Error('REBUILD_REQUIRED: changed exact creative requirement: '+relative+' '+prefix);
-    const entries=sections.get(heading)??[];entries.push(excerpt??line);sections.set(heading,entries);
-    locations.push('L'+String(index+1));
+  const spans=SCRIPT_AUTHOR_BLOCKS[relative],expectedBlob=SCRIPT_AUTHOR_BLOB_SHA1[relative];
+  if(!spans?.length||!expectedBlob)throw new Error('REBUILD_REQUIRED: missing Script Author requirement inventory: '+relative);
+  const actualBlob=createHash('sha1').update('blob '+Buffer.byteLength(full,'utf8')+'\\0').update(full,'utf8').digest('hex');
+  if(actualBlob!==expectedBlob)throw new Error('REBUILD_REQUIRED: Script Author original authority changed: '+relative);
+  const lines=full.replace(/\\r\\n/g,'\\n').split('\\n'),locations:string[]=[],sections=new Map<string,string[]>();
+  let lastEnd=0;
+  for(const [start,end] of spans){
+    if(!Number.isInteger(start)||!Number.isInteger(end)||start<1||end<start||end>lines.length||start<=lastEnd)
+      throw new Error('REBUILD_REQUIRED: invalid or overlapping Script Author source range: '+relative+' L'+start+'-L'+end);
+    lastEnd=end;
+    const excerpt=lines.slice(start-1,end).join('\\n');
+    if(!excerpt.trim())throw new Error('REBUILD_REQUIRED: empty Script Author source block: '+relative);
+    const heading=lines.slice(0,start).reverse().find(row=>/^#{2,5} /.test(row))??'# '+relative;
+    const grouped=sections.get(heading)??[];grouped.push(excerpt);sections.set(heading,grouped);
+    locations.push('L'+start+'-L'+end);
   }
-  const text=[...sections].map(([heading,entries])=>heading+'\n'+entries.join('\n\n')).join('\n\n');
-  if(!text.trim())throw new Error('REBUILD_REQUIRED: empty Script Author authority for '+relative);
+  const text=[...sections].map(([heading,blocks])=>heading+'\\n'+blocks.join('\\n\\n')).join('\\n\\n');
   return{text,headings:[...sections.keys()],locations};
 }
 
@@ -199,7 +110,7 @@ function source(appPath:string,relative:string,style:string,stage:Stage,operatio
   const text=focused?.text??selectSections(full,headings,relative);
   if(!text.trim())throw new Error('REBUILD_REQUIRED: required authority is empty: '+relative);
   return {path:relative,sha256:sha(bytes),extractionSha256:sha(text),
-    extractionRevision:focused?'script-author-source-exact-v3':AUTHORITY_EXTRACTION_REVISION,
+    extractionRevision:focused?SCRIPT_AUTHOR_EXTRACTION_REVISION:AUTHORITY_EXTRACTION_REVISION,
     applicability:[style,stage,operation],disposition,
     headings:focused?.headings??headings,...(focused?{locations:focused.locations}:{}),text};
 }
@@ -255,7 +166,7 @@ export function compileAuthority(appPath:string,style:string,stage:Stage,operati
       'original CLI execution, actual preview/render verification and owner approval'],
     AGENT_ONLY:['automatic tool dispatch, local terminal/browser automation and unattended producer calls']
   }:undefined;
-  return {version:stage==='script'&&operation==='author'?'script-author-source-exact-v3':AUTHORITY_EXTRACTION_REVISION,style,stage,operation,rules,sources,
+  return {version:stage==='script'&&operation==='author'?SCRIPT_AUTHOR_EXTRACTION_REVISION:AUTHORITY_EXTRACTION_REVISION,style,stage,operation,rules,sources,
     ...(scriptAuthorClassification?{scriptAuthorClassification}:{}),
     matrix:{KEEP:sources.map(item=>item.path),
       MOVE_TO_NATIVE:stage==='script'?['references/autopilot-runtime.md','native project.json contract','native CLI validation and production approval']:[],
