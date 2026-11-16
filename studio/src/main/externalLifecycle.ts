@@ -207,23 +207,97 @@ export function stageLifecycleResult(appPath:string,root:string,stage:Stage,oper
   const responseSha256=sha(text),token=randomUUID();fs.mkdirSync(path.dirname(resultPath(root,task.id)),{recursive:true});fs.writeFileSync(resultPath(root,task.id),text,{encoding:'utf8',flag:'wx'});atomicJson(pendingPath(root),{token,projectId:state.project.id,taskId:task.id,stage,operation,responseSha256,payload,createdAt:new Date().toISOString()});return{token,before:current.value,after:payload,status:'STAGED'};
 }
 
-export function confirmLifecycleResult(appPathOrRoot:string,rootOrToken:string,maybeToken?:string){
-  const appPath=maybeToken?appPathOrRoot:path.resolve('.'),root=maybeToken?rootOrToken:appPathOrRoot,token=maybeToken??rootOrToken;
-  const pending=strictJson(fs.readFileSync(pendingPath(root),'utf8')) as Record<string,unknown>,state=readState(root);if(pending.token!==token||pending.projectId!==state.project.id)throw new Error('Lifecycle confirmation token/project mismatch.');
-  const key=`${pending.stage}:${pending.operation}`,task=state.lifecycle?.tasks[key];if(!task||task.id!==pending.taskId||task.status!=='FROZEN')throw new Error('Lifecycle task is stale or replayed.');
-  const payload=pending.payload as Record<string,unknown>;if(pending.operation==='correct'){
-    const artifact=(payload.artifact??{}) as Record<string,unknown>;
-    if(pending.stage==='script'){const sections=artifact.sections as Array<{id:string;text:string}>,text=sections.map(row=>row.text.trim()).join('\n\n');state.scriptCandidate={sections,text,sha256:sha(text),revision:(state.external.script?.revision??0)+1,importedAt:new Date().toISOString(),taskId:task.id,authoring:artifact.authoring as Record<string,unknown>};}
-    else atomicJson(path.join(lifecycleDir(root),'corrections',task.id+'.json'),artifact);
-  }
-  state.lifecycle!.artifacts[task.id]={taskId:task.id,stage:task.stage,operation:task.operation,artifactSha256:sha(JSON.stringify(payload)),value:payload,status:String(payload.status??'CORRECTION_PENDING'),createdAt:new Date().toISOString()};
-  task.status='IMPORTED';writeState(root,state);fs.unlinkSync(pendingPath(root));
-  if(pending.operation==='correct'&&pending.stage==='native'){
-    const authored=freezeTask(appPath,root,'native',true),artifact=((payload.artifact??{}) as Record<string,unknown>);
-    stageImport(appPath,root,'native',JSON.stringify({schema:'mode-b-external-result-v1',project_id:state.project.id,task_id:authored.id,revision:authored.revision,input_sha256:authored.inputSha256,stage:'native',payload:artifact}));
-    return readState(root);
-  }
+const nativeCorrectionJournal=(root:string)=>path.join(lifecycleDir(root),'native-publication.json');
+function finalizeLifecycle(root:string,pending:Record<string,unknown>,task:NonNullable<StudioState['lifecycle']>['tasks'][string]){
+  const state=readState(root),key=String(pending.stage)+':'+String(pending.operation);
+  if(!state.lifecycle?.tasks[key]||state.lifecycle.tasks[key].id!==task.id||
+    !['FROZEN','IMPORTED'].includes(state.lifecycle.tasks[key].status))throw new Error('Lifecycle finalization is stale.');
+  const payload=pending.payload as Record<string,unknown>;
+  state.lifecycle.artifacts[task.id]={taskId:task.id,stage:task.stage,operation:task.operation,
+    artifactSha256:sha(JSON.stringify(payload)),value:payload,status:String(payload.status??'CORRECTION_STAGED'),
+    createdAt:new Date().toISOString()};
+  state.lifecycle.tasks[key].status='IMPORTED';writeState(root,state);
+  if(fs.existsSync(pendingPath(root)))fs.unlinkSync(pendingPath(root));
+  if(fs.existsSync(nativeCorrectionJournal(root)))fs.unlinkSync(nativeCorrectionJournal(root));
   return state;
+}
+async function publishNativeCorrection(appPath:string,root:string,pending:Record<string,unknown>,task:NonNullable<StudioState['lifecycle']>['tasks'][string]){
+  const payload=pending.payload as {artifact:{manifest:Record<string,unknown>;shot_ledger:unknown[];sound_script:unknown[];asset_needs:unknown[]}};
+  const desiredSha256=sha(JSON.stringify(payload.artifact.manifest));
+  const manifestPath=path.join(root,'project.json');
+  const baselineSha256=sha(fs.readFileSync(manifestPath));
+  const journalFile=nativeCorrectionJournal(root);
+  const saved=fs.existsSync(journalFile)?strictJson(fs.readFileSync(journalFile,'utf8')) as Record<string,unknown>:null;
+  if(saved&&(saved.token!==pending.token||saved.taskId!==task.id||saved.desiredSha256!==desiredSha256))
+    throw new Error('RECOVERY_REQUIRED: another native correction publication is pending.');
+  const journal=saved??{token:pending.token,taskId:task.id,baselineSha256,desiredSha256,authorTaskId:null,status:'PENDING'};
+  if(saved&&baselineSha256!==journal.baselineSha256&&baselineSha256!==desiredSha256)
+    throw new Error('STALE: independent native manifest change prevents correction retry.');
+  if(!saved)atomicJson(journalFile,journal);
+  if(baselineSha256===desiredSha256){
+    const finished=readState(root);
+    if(!finished.external.native||!saved||saved.status!=='VALIDATED')
+      throw new Error('RECOVERY_REQUIRED: matching bytes alone do not establish a committed correction.');
+    return finalizeLifecycle(root,pending,task);
+  }
+  let authorTask;
+  const existing=readState(root).tasks?.native;
+  if(journal.authorTaskId&&existing?.id===journal.authorTaskId&&existing.status==='FROZEN')
+    authorTask=freezeTask(appPath,root,'native',false);
+  else {
+    authorTask=freezeTask(appPath,root,'native',true);
+    journal.authorTaskId=authorTask.id;atomicJson(journalFile,journal);
+  }
+  const newState=readState(root);
+  const result={schema:'mode-b-external-result-v1',project_id:newState.project.id,task_id:authorTask.id,
+    revision:authorTask.revision,input_sha256:authorTask.inputSha256,stage:'native',payload:payload.artifact};
+  const pendingImport=stageImport(appPath,root,'native',JSON.stringify(result));
+  try{
+    await confirmImport(appPath,root,pendingImport.token);
+  }catch(error){
+    journal.status='PENDING_RETRY';journal.detail=String(error);atomicJson(journalFile,journal);
+    throw error;
+  }
+  const current=readState(root);
+  if(sha(fs.readFileSync(manifestPath))!==desiredSha256||!current.external.native||!current.nativeReadiness?.sampleReady)
+    throw new Error('RECOVERY_REQUIRED: native publication is not the validated proposed manifest.');
+  journal.status='VALIDATED';journal.publishedRevision=current.external.native.revision;atomicJson(journalFile,journal);
+  return finalizeLifecycle(root,pending,task);
+}
+export function confirmLifecycleResult(appPathOrRoot:string,rootOrToken:string,maybeToken?:string):StudioState|Promise<StudioState>{
+  const appPath=maybeToken?appPathOrRoot:path.resolve('.'),root=maybeToken?rootOrToken:appPathOrRoot,token=maybeToken??rootOrToken;
+  const file=pendingPath(root);
+  if(!fs.existsSync(file))throw new Error('No pending lifecycle result.');
+  const pending=strictJson(fs.readFileSync(file,'utf8')) as Record<string,unknown>,state=readState(root);
+  if(pending.token!==token||pending.projectId!==state.project.id)throw new Error('Lifecycle confirmation token/project mismatch.');
+  const key=String(pending.stage)+':'+String(pending.operation),task=state.lifecycle?.tasks[key];
+  if(!task||task.id!==pending.taskId||task.status!=='FROZEN')throw new Error('Lifecycle task is stale or replayed.');
+  const frozenFile=resultPath(root,task.id);
+  if(!fs.existsSync(frozenFile)||sha(fs.readFileSync(frozenFile))!==pending.responseSha256)
+    throw new Error('Frozen lifecycle response bytes changed before publication.');
+  const frozen=strictJson(fs.readFileSync(frozenFile,'utf8')) as Record<string,unknown>;
+  if(canonical(frozen.payload)!==canonical(pending.payload))throw new Error('Lifecycle pending response is corrupt.');
+  const original=artifactFor(root,state,task.stage,task.operation);
+  if(original.sha256!==task.artifactSha256) {
+    const journal=nativeCorrectionJournal(root);
+    const saved=fs.existsSync(journal)?strictJson(fs.readFileSync(journal,'utf8')) as Record<string,unknown>:null;
+    if(!(pending.operation==='correct'&&pending.stage==='native'&&saved?.token===token&&
+      saved?.status==='VALIDATED'&&sha(fs.readFileSync(path.join(root,'project.json')))===saved.desiredSha256))
+      throw new Error('STALE: original lifecycle artifact changed before confirmation.');
+  }
+  if(pending.operation==='correct'&&pending.stage==='native')
+    return publishNativeCorrection(appPath,root,pending,task);
+  if(pending.operation==='correct'&&pending.stage==='script'){
+    const payload=pending.payload as {artifact:{sections:Array<{id:string;text:string}>;authoring:Record<string,unknown>}};
+    const checked=validateScript(payload.artifact as unknown as Record<string,unknown>);
+    const candidateText=checked.sections.map(row=>row.text).join('\n\n');
+    const revision=Math.max(state.scriptCandidate?.revision??0,state.external.script?.revision??0)+1;
+    state.scriptCandidate={sections:checked.sections,text:candidateText,sha256:sha(candidateText),revision,importedAt:new Date().toISOString(),taskId:task.id,authoring:checked.authoring};
+    state.external.script={revision,artifact:checked,importedAt:new Date().toISOString()};
+    atomicJson(path.join(root,'.studio','revisions','script-'+revision+'.json'),checked);
+    writeState(root,state);
+  }
+  return finalizeLifecycle(root,pending,task);
 }
 
 export function exportReviewPack(root:string,kind:'preview'|'film'|'voice'|'captions'){
