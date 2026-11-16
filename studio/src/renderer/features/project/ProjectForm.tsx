@@ -53,7 +53,7 @@ export function ProjectForm() {
         <Button type="button" disabled={busy||!window.studio} onClick={openProject}>Open project…</Button>
       </div>
       {error&&<div className="info error" role="alert">{error}</div>}
-      {native&&<div className="info success" title={native.project.root}><strong>{native.project.title}</strong> · {native.project.root}</div>}
+      {native&&<div className="info success" title={native.project.root}><strong>{native.project.title}</strong> · <span>{native.project.root}</span></div>}
     </Card>
     <Card className="project-style-card">
       <CardHeader title="Visual style" hint="Original B-style contracts"/>
