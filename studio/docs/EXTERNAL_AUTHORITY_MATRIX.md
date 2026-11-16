@@ -81,6 +81,13 @@ Windows acceptance against final HEAD. Mark NOT_RUN/BLOCKED when the runner or r
 voice/media/provider is unavailable. Neither this file nor offline fixtures are
 a claim of actual encoded video creative acceptance.
 
+Script Author now exposes an explicit four-way requirement inventory in
+`compileAuthority().scriptAuthorClassification`: `KEEP_SCRIPT` is a source-path
+and exact L-number list; `DEFER_NATIVE` identifies original runtime, render
+and final QA boundaries; `STUDIO_ONLY` covers provider/media execution and
+owner approval; `AGENT_ONLY` covers automatic tool orchestration. This metadata
+does not change Native Author or the other lifecycle contracts.
+
 ## Script Author mission and import contract
 
 Script Author produces only ordered spoken narration `sections[].text` plus flexible
