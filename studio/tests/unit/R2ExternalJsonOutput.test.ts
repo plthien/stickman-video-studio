@@ -53,6 +53,7 @@ describe('R2 frozen task JSON attachment delivery',()=>{
     }
     expect(all).toHaveLength(10);
     const seen=new Set<string>();
+    const frozenFilenameEvidence:Array<{stage:Stage;operation:ExternalOperation;shortId:string;filename:string}>=[];
     for(const row of all){
       const scope=row.operation==='correct'?
         {editableIds:[row.stage==='script'?'opening':'old-shot']}:
@@ -73,6 +74,7 @@ describe('R2 frozen task JSON attachment delivery',()=>{
       expect(task.prompt).toContain('never claim creation or fabricate a download link');
       expect(task.prompt).toContain('"task_id": "'+task.id+'"');
       seen.add(row.stage+':'+row.operation);
+      frozenFilenameEvidence.push({stage:row.stage,operation:row.operation,shortId,filename});
       const same=row.operation==='author'?
         freezeTask(appPath,root,row.stage):
         freezeLifecycleTask(appPath,root,row.stage,row.operation,scope);
@@ -80,6 +82,7 @@ describe('R2 frozen task JSON attachment delivery',()=>{
       expect(externalOutputFilename(row.stage,row.operation,same.revision,same.id,row.media)).toBe(filename);
     }
     expect(seen.size).toBe(10);
+    console.info('R2_TEN_FROZEN_JSON_OUTPUTS',JSON.stringify(frozenFilenameEvidence));
 
     const before=freezeLifecycleTask(appPath,root,'script','review');
     const rebuilt=freezeLifecycleTask(appPath,root,'script','review',{},true);
