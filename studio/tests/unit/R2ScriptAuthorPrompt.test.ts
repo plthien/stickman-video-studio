@@ -224,9 +224,22 @@ describe('R2 focused source-exact Script Author handoff',()=>{
   });
   it('REG-07 / REG-08: freezing Script cannot change Native task or previously approved assets',()=>{
     const {root}=fixture({style:'B1'});
+    const original=readState(root);
+    const creativeSnapshot=JSON.stringify({
+      approvedScript:original.approvedScript,voice:original.voice,
+      alignment:original.alignment,media:original.media??[]
+    });
+    const acceptedWavSha=sha(fs.readFileSync(path.join(root,original.voice!.path)));
     const nativeBefore=freezeTask(appPath,root,'native');
     const nativeSha=nativeBefore.promptSha256;
     freezeTask(appPath,root,'script');
+    freezeTask(appPath,root,'script',true);
+    const preserved=readState(root);
+    expect(JSON.stringify({
+      approvedScript:preserved.approvedScript,voice:preserved.voice,
+      alignment:preserved.alignment,media:preserved.media??[]
+    })).toBe(creativeSnapshot);
+    expect(sha(fs.readFileSync(path.join(root,preserved.voice!.path)))).toBe(acceptedWavSha);
     const nativeAfter=freezeTask(appPath,root,'native');
     expect(nativeAfter.id).toBe(nativeBefore.id);
     expect(nativeAfter.prompt).toBe(nativeBefore.prompt);
