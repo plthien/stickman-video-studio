@@ -1,7 +1,6 @@
 // @vitest-environment node
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import {createHash} from 'node:crypto';
-import {approveScriptCandidate} from '../../src/main/externalTasks';
 import {afterEach,describe,expect,it} from 'vitest';
 import {confirmLifecycleResult,freezeLifecycleTask,stageLifecycleResult} from '../../src/main/externalLifecycle';
 import {projectId,readState,writeState,type StudioState} from '../../src/main/services';
@@ -52,7 +51,7 @@ describe('External creative lifecycle',()=>{
     expect(first.token).toBe(second.token);
     expect(()=>stageLifecycleResult(appPath,root,'script','review',response.replace('REVIEWED_NO_FINDINGS','INSUFFICIENT_EVIDENCE'))).toThrow(/PENDING_LIFECYCLE_CONFLICT/);
   });
-  it('corrected Script cannot approve until exact-current-candidate Recheck resolves original findings',()=>{
+  it('corrected Script auto-activates only after exact-current-candidate clean Recheck',()=>{
     const root=fixture(),project_id=readState(root).project.id;
     const review=freezeLifecycleTask(appPath,root,'script','review');
     const finding=(status:string)=>({id:'F-001',severity:'major',status,target_ids:['opening'],
@@ -75,14 +74,15 @@ describe('External creative lifecycle',()=>{
       finding_ids:['F-001'],editable_ids:['opening'],editable_paths:[],
       artifact:{schema:'mode-b-script-v1',sections:modified,authoring:candidate.authoring}}));
     confirmLifecycleResult(root,result.token);
-    expect(()=>approveScriptCandidate(root,'Accept repaired narration')).toThrow(/RECHECK_REQUIRED/);
+    expect(readState(root).approvedScript).toBeUndefined();
     const recheck=freezeLifecycleTask(appPath,root,'script','recheck',{findingIds:['F-001']});
     const reviewed=stageLifecycleResult(appPath,root,'script','recheck',wrap(recheck,'recheck',{
       schema:'mode-b-review-v1',artifact_sha256:recheck.artifactSha256,
       status:'REVIEWED_NO_FINDINGS',coverage:{target_ids:['opening','payoff'],modalities:[],ranges:[]},
       findings:[finding('resolved')]}));
     confirmLifecycleResult(root,reviewed.token);
-    const accepted=approveScriptCandidate(root,'Owner checked corrected narration and evidence');
+    const accepted=readState(root);
+    expect(accepted.approvedScript?.approvedBy).toBe('AUTO');
     expect(accepted.approvedScript?.sections[0].text).toContain('forcing');
     expect(accepted.approvedScript?.sections[1]).toEqual(candidate.sections[1]);
   });
