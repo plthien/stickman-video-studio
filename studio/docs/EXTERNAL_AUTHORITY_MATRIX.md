@@ -34,21 +34,21 @@ STUDIO_ONLY and AGENT_ONLY never authorize the external model to simulate actual
 ## Source extraction and fail-closed operation
 
 Implementation: studio/src/main/externalAuthority.ts.
-Extraction revisions: `script-author-complete-blocks-v4` for Script → Author; `stage-exact-v2` remains unchanged for Native Author and Script/Native Review, Correct, Recheck and Media Review.
+Extraction revisions: `script-author-complete-blocks-v4` is shared by Script Author, Review, Correct and Recheck; `stage-exact-v2` remains unchanged for Script Media Review and all Native operations.
 
-- Script → Author uses source-byte-pinned, version-controlled, inclusive original line
+- Script text-only Author/Review/Correct/Recheck use source-byte-pinned, version-controlled, inclusive original line
   ranges to extract complete continuous normative blocks (including sub-bullets, numeric
   conditions and style-specific exceptions), grouped under original headings. Sixteen
   mixed-stage cases use exact complete contiguous original sentences, never rewrites,
   with verified line/column bounds. Source hash changes (after normalizing Windows CRLF to original Git line endings), invalid ranges or incomplete sentence boundaries fail closed.
   It retains the B1–B4 creative/continuity rules while deferring provider, CLI,
   actual media timing, Native execution and encoded QA to their existing owners.
-- Native and all other operations retain their existing section-level or full-file
+- Native and Script Media Review retain existing section-level or full-file
   authority extraction and original task contract.
 - Native receives the full installed B style, autopilot, runtime, QA and sound
   references, plus the complete B4 opening/audio/repeatability references if selected.
 - Every source records installed relative path, original SHA-256, extraction SHA-256,
-  extraction revision, applicability and selected heading inventory. Script Author additionally
+  extraction revision, applicability and selected heading inventory. Script text-only operations additionally
   records exact original line/column ranges, each contiguous block's literal text,
   and provides all extracted text inline.
 - Missing, renamed or empty mandatory selectors fail closed. Frozen original author
@@ -60,8 +60,8 @@ Extraction revisions: `script-author-complete-blocks-v4` for Script → Author; 
 Only these three shared references changed. Every listed range is one-based and inclusive.
 Complete selected lines preserve original text; entries marked with parentheses below
 use source-exact sentence boundaries and provenance including columns. All
-B1/B2/B3/B4-specific reference selections, Native Author and lifecycle authority
-extraction remain unchanged.
+B1/B2/B3/B4-specific reference selections and all Native authority
+extraction remain unchanged. Script Review/Correct/Recheck now reuse this focused inventory.
 
 | Source | Previous Script selection | Current Script selection | Deferred from Script (stage) | Creative rules retained |
 |---|---|---|---|---|
@@ -71,7 +71,7 @@ extraction remain unchanged.
 
 The sound system suspense/apocalypse module stays available to Native in the
 complete original source but is never injected unconditionally into Script
-Author for B1–B4. No genre inference or project schema field is introduced.
+Author/Review/Correct/Recheck for B1–B4. No genre inference or project schema field is introduced.
 Actual accepted WAV timing, audio mixes, approved speech and caption validations
 remain downstream responsibilities. Script Author duration guidance does not
 provide a guessed WPM.
@@ -82,6 +82,45 @@ already begins with that heading. It never mutates `blocks[].text`.
 The selected source line ranges, the six previously selected excerpts,
 and ten additional owner-authorized shared excerpts retain source/column
 provenance and original Git-blob fail-closed identity.
+
+## Independent Script Review and JSON file handoff
+
+Script Review, Correct and Recheck now reuse the original Script Author source-pinned,
+complete-sentence creative inventory; Native remains full-source and Script Media
+Review retains its media-evidence-specific rules. No new authority compiler exists.
+
+Script Review uses the A–H structure: A independent mission; B concise brief;
+C one canonical immutable current Script candidate (id, SHA, sections, authoring);
+D CR-01 through CR-12 creative dimensions and sourced hashes/line provenance;
+E prior findings; F exact section and text evidence coverage; G frozen response
+contract with status and finding rules; H original immutable SHA-bound Author task.
+Source blocks are not duplicated outside H, and its original authoring commands
+and fictional format example do not authorize a new author response.
+
+Text-only reviews use coverage.modalities=["script"], ranges=[], media_sha256s=[].
+Missing WAV or MP4 is not by itself INSUFFICIENT_EVIDENCE. Complete textual
+coverage plus real unresolved findings is REVIEWED_WITH_FINDINGS; complete
+coverage and none is REVIEWED_NO_FINDINGS. Missing required text is
+INSUFFICIENT_EVIDENCE; an unestablished specific verification is NOT_VERIFIED.
+Existing findings enums, target checks and evidence validators are preserved.
+
+All ten Script/Native x Author/Review/Correct/Recheck/Media Review prompts
+require a real downloadable UTF-8 JSON file containing the unchanged frozen
+response envelope. Naming is deterministic:
+
+    mode_b_<stage>_<operation>_r<revision>_<shortId>.json
+
+Here shortId = task_id.replace(/-/g, '').slice(0, 8).toLowerCase().
+Media Review uses media_review and includes the explicit review kind before
+the revision token. Same frozen task = same filename; Rebuild = new task ID and
+new filename. No filename/path/download metadata enters the JSON contract.
+No fabricated attachments/links are permitted, and no local CLI/media access
+or paid provider work is authorized by file-delivery instructions.
+
+Studio's existing manual import, Validate and Confirm flow remains unchanged.
+Author import still activates the Script automatically; scoped corrections
+activate only on a clean current-candidate Recheck. No manual Script approval
+action or new JSON import UI is introduced by this repair.
 
 ## Workflow, correction scope and media truthfulness
 
