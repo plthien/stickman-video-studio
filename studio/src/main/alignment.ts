@@ -14,19 +14,19 @@ function canonicalCharacterWords(raw:Record<string,unknown>,transcript:string,du
   if(!Array.isArray(raw.characters)||!raw.characters.length)
     throw new Error('ELEVENLABS_CHARACTER_TIMING_INVALID: no character evidence.');
   const characters:Array<{begin:number;finish:number;start:number;end:number}>=[];
-  let reconstructed='',previous=0;
+  let reconstructed='',previousStart=0,previousEnd=0;
   for(const [index,item] of raw.characters.entries()){
     if(!item||typeof item!=='object'||Array.isArray(item))
       throw new Error('ELEVENLABS_CHARACTER_TIMING_INVALID: index='+index+' invalid object.');
     const value=item as Record<string,unknown>,text=value.text??value.character;
     const start=value.start,end=value.end;
     if(typeof text!=='string'||!text.length||typeof start!=='number'||typeof end!=='number'||
-      !Number.isFinite(start)||!Number.isFinite(end)||start<previous||end<start||
+      !Number.isFinite(start)||!Number.isFinite(end)||start<previousStart||end<previousEnd||end<start||
       end>duration+1/24000)
       throw new Error('ELEVENLABS_CHARACTER_TIMING_INVALID: index='+index+' invalid timing/text.');
     const begin=reconstructed.length;reconstructed+=text;
     characters.push({begin,finish:reconstructed.length,start,end});
-    previous=end;
+    previousStart=start;previousEnd=end;
   }
   if(reconstructed!==transcript)
     throw new Error('ELEVENLABS_CHARACTER_TEXT_MISMATCH: character evidence must exactly reconstruct approved transcript.');
@@ -87,16 +87,16 @@ export function validateAlignment(raw:unknown,transcript:string,duration:number)
 function validateCharacters(raw:Record<string,unknown>,duration:number){
   if(raw.characters===undefined)return undefined;
   if(!Array.isArray(raw.characters))throw new Error('ElevenLabs characters evidence is invalid.');
-  let previous=0;
+  let previousStart=0,previousEnd=0;
   return raw.characters.map((item,index)=>{
     if(!item||typeof item!=='object'||Array.isArray(item))
       throw new Error('ElevenLabs character evidence is invalid at index '+index);
     const value=item as Record<string,unknown>,character=value.text??value.character;
     if(typeof character!=='string'||!character.length||typeof value.start!=='number'||
       typeof value.end!=='number'||!Number.isFinite(value.start)||!Number.isFinite(value.end)||
-      value.start<previous||value.end<value.start||value.end>duration+1/24000)
+      value.start<previousStart||value.end<previousEnd||value.end<value.start||value.end>duration+1/24000)
       throw new Error('ElevenLabs character timing is invalid at index '+index);
-    previous=value.end;
+    previousStart=value.start;previousEnd=value.end;
     return {...value,character};
   });
 }
@@ -122,11 +122,11 @@ export async function publishAlignment(appPath: string, root: string, raw: Recor
     const original=originalWords[index];
     if(!original||typeof original.start!=='number'||typeof original.end!=='number'||
       (original.start===word.start&&original.end===word.end))return [];
-    return [{index,reason:'POSITIVE_CHARACTER_TIMING_FOR_ZERO_DURATION_WORD',
+    return [{index,reason:'CHARACTER_FIRST_CANONICAL_DERIVATION',
       provider_start:original.start,provider_end:original.end,
       character_start:word.start,character_end:word.end}];
   });
-  const evidence = { schema: 'mode-b-word-alignment-v1', origin, transcript, audio_sha256: wav.sha256, script_sha256: sha(transcript), words, ...(characters ? { characters } : {}), ...(raw.loss === undefined ? {} : { loss: raw.loss }), ...(timingRepairs.length ? {timing_repairs:timingRepairs}: {}) };
+  const evidence = { schema: 'mode-b-word-alignment-v1', origin, transcript, audio_sha256: wav.sha256, script_sha256: sha(transcript), words, ...(characters ? { characters } : {}), ...(typeof raw.loss === 'number' && Number.isFinite(raw.loss) ? { loss: raw.loss } : {}), ...(timingRepairs.length ? {timing_repairs:timingRepairs}: {}) };
   const target = resolveProjectFile(root, relative), captionsTarget = resolveProjectFile(root, captionsRelative),staging=resolveProjectFile(root,`.studio/alignment/.staging-${stamp}`),stagedWords=path.join(staging,'words.json'),stagedCaptions=path.join(staging,'captions.json');
   fs.mkdirSync(staging,{recursive:true});
   try{atomicJson(stagedWords,evidence);assertAlignmentPin(root,expectedPin);
@@ -173,7 +173,8 @@ export function persistAlignmentResponse(root:string,pin:AlignmentPin,raw:Record
 export function eligibleAlignmentResponse(root:string,pin=captureAlignmentPin(root)){
   const dir=resolveProjectFile(root,'.studio/alignment');
   if(!fs.existsSync(dir))return null;
-  const candidates=fs.readdirSync(dir).filter(x=>/^provider-[\w-]+\.json$/.test(x)).sort().reverse();
+  const candidates=fs.readdirSync(dir).filter(x=>/^provider-[\w-]+\.json$/.test(x))
+    .sort((a,b)=>fs.statSync(path.join(dir,b)).mtimeMs-fs.statSync(path.join(dir,a)).mtimeMs);
   for(const name of candidates){
     const value=strictJson(fs.readFileSync(resolveProjectFile(root,'.studio/alignment/'+name),'utf8')) as Record<string,unknown>;
     if(value.schema!=='elevenlabs-response-evidence-v1'||JSON.stringify(value.pin)!==JSON.stringify(pin))
