@@ -38,7 +38,7 @@ Extraction revisions: `script-author-complete-blocks-v4` for Script → Author; 
 
 - Script → Author uses source-byte-pinned, version-controlled, inclusive original line
   ranges to extract complete continuous normative blocks (including sub-bullets, numeric
-  conditions and style-specific exceptions), grouped under original headings. Six
+  conditions and style-specific exceptions), grouped under original headings. Sixteen
   mixed-stage cases use exact complete contiguous original sentences, never rewrites,
   with verified line/column bounds. Source hash changes (after normalizing Windows CRLF to original Git line endings), invalid ranges or incomplete sentence boundaries fail closed.
   It retains the B1–B4 creative/continuity rules while deferring provider, CLI,
@@ -54,6 +54,34 @@ Extraction revisions: `script-author-complete-blocks-v4` for Script → Author; 
 - Missing, renamed or empty mandatory selectors fail closed. Frozen original author
   tasks and lifecycle review prompts bind to current source/brief/artifact identity.
 - The original skills/directing-stickman-videos/** tree is never modified.
+
+## PR #2 deterministic Script Author source selection (owner-approved)
+
+Only these three shared references changed. Every listed range is one-based and inclusive.
+Complete selected lines preserve original text; entries marked with parentheses below
+use source-exact sentence boundaries and provenance including columns. All
+B1/B2/B3/B4-specific reference selections, Native Author and lifecycle authority
+extraction remain unchanged.
+
+| Source | Previous Script selection | Current Script selection | Deferred from Script (stage) | Creative rules retained |
+|---|---|---|---|---|
+| `references/autopilot.md` | `[[5,5],[11,15],[17,19],[25,25],[43,43],[49,52]]` | `[[5,5],[11,11],[13,13],[21,21],[25,25],[43,43]]` | B3-only runtime description L17 and shot/keyframe/ref sheet L49–52 → Native; provider catalog execution in L43 and aspect ratio runtime checks in L25 → Studio/Native | Independent B style contracts, user-choice priority, conditional genre/palette, topic/audience/duration/ratio/language, role-based casting |
+| `references/autopilot-production-qa.md` | `[[5,9],[19,27],[29,34],[40,42],[44,46],[48,48]]` | `[[9,9],[21,21],[23,24],[27,27],[33,34],[42,42],[48,48]]` | Ledger, word timing, timed SFX mix and sample/encoded QA L7/L25/L27/L31–32/L40/L46/L48 remainder → Native/Studio | Visual meaning and identity, first-30-second hook/body bridge, copy/factual fidelity, non-repetitive compositions, relevant diagrams and semantic one-line B1–B4 subtitle rule |
+| `references/autopilot-sound-system.md` | `[[5,7],[18,24],[61,72],[80,80],[84,91]]` | `[[7,7],[18,24],[61,61],[63,63],[72,72]]` | Cue IDs/rights manifest, sound routing/source acquisition, TTS settings and conditional suspense/apocalypse module L84–91 → Native/Studio | Motivated story-led sound, three functional roles, non-simultaneous layers, genre-specific palette without guessing, intentional silence |
+
+The sound system suspense/apocalypse module stays available to Native in the
+complete original source but is never injected unconditionally into Script
+Author for B1–B4. No genre inference or project schema field is introduced.
+Actual accepted WAV timing, audio mixes, approved speech and caption validations
+remain downstream responsibilities. Script Author duration guidance does not
+provide a guessed WPM.
+
+The presentation renderer omits synthetic file-heading fallbacks and avoids
+duplicating an original Markdown heading if its first selected source block
+already begins with that heading. It never mutates `blocks[].text`.
+The selected source line ranges, the six preexisting style-specific excerpts,
+and ten additional owner-authorized shared excerpts retain source/column
+provenance and original Git-blob fail-closed identity.
 
 ## Workflow, correction scope and media truthfulness
 
