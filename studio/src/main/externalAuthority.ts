@@ -30,7 +30,7 @@ const B4_SCRIPT:Record<string,string[]>={
   'references/b4-audio-direction.md':['## Fixed main narrator','## Automatic character casting and performance','## Automatic SFX direction and source gate']
 };
 
-/** Original Core blob identities; Script Author must be explicitly re-reviewed
+/** Original Core blob identities; Script creative tasks must be explicitly re-reviewed
  * if ANY installed source bytes change. Native/lifecycle extraction remains unchanged.
  * Ranges are 1-based inclusive source line spans, preserving complete Markdown blocks.
  */
@@ -155,7 +155,7 @@ function source(appPath:string,relative:string,style:string,stage:Stage,operatio
   const target=path.join(nativeSkillRoot(appPath).root,relative);
   if(!fs.existsSync(target)||!fs.statSync(target).isFile())throw new Error('Required Mode B authority is missing: '+relative);
   const bytes=fs.readFileSync(target),full=bytes.toString('utf8');
-  const focused=stage==='script'&&operation==='author'?extractScriptAuthor(full,relative):null;
+  const focused=stage==='script'&&(['author','review','correct','recheck'] as ExternalOperation[]).includes(operation)?extractScriptAuthor(full,relative):null;
   const text=focused?.text??selectSections(full,headings,relative);
   if(!text.trim())throw new Error('REBUILD_REQUIRED: required authority is empty: '+relative);
   return {path:relative,sha256:sha(bytes),extractionSha256:sha(text),
@@ -215,7 +215,7 @@ export function compileAuthority(appPath:string,style:string,stage:Stage,operati
       'original CLI execution, actual preview/render verification and owner approval'],
     AGENT_ONLY:['automatic tool dispatch, local terminal/browser automation and unattended producer calls']
   }:undefined;
-  return {version:stage==='script'&&operation==='author'?SCRIPT_AUTHOR_EXTRACTION_REVISION:AUTHORITY_EXTRACTION_REVISION,style,stage,operation,rules,sources,
+  return {version:stage==='script'&&(['author','review','correct','recheck'] as ExternalOperation[]).includes(operation)?SCRIPT_AUTHOR_EXTRACTION_REVISION:AUTHORITY_EXTRACTION_REVISION,style,stage,operation,rules,sources,
     ...(scriptAuthorClassification?{scriptAuthorClassification}:{}),
     matrix:{KEEP:sources.map(item=>item.path),
       MOVE_TO_NATIVE:stage==='script'?['references/autopilot-runtime.md','native project.json contract','native CLI validation and production approval']:[],
