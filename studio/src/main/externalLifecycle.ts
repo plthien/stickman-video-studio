@@ -397,7 +397,7 @@ function dedicatedLifecyclePrompt(
       'For EACH required frozen finding ID provide its own finding with a supported status resolved, open or uncertain; account for possible new causal or continuity regressions. Missing WAV/MP4 does not automatically mean INSUFFICIENT_EVIDENCE.',
       'Choose REVIEWED_NO_FINDINGS only if all frozen findings are demonstrably resolved, full requested textual coverage is complete and no newly supported unresolved finding exists. Do not rewrite Script or trigger approval yourself.'
     ],
-    'media-review':kindInstructions[mediaKind as 'voice'|'captions']
+    'media-review':kindInstructions[mediaKind as 'voice'|'captions'|'preview'|'film']
   }[operation]:{
     review:[
       'NATIVE REVIEW — independently review the CURRENT complete Native manifest, shot ledger, sound script and asset needs against the original B-style requirements.',
@@ -413,7 +413,7 @@ function dedicatedLifecyclePrompt(
       'Account for EACH frozen finding ID with supported resolved/open/uncertain evidence. Verify manifest feasibility from supplied Native JSON, but do not claim actual movement, synchronized sound, rendered frames or original CLI PASS without observed media.',
       'Select a review status only after independent evaluation. Do not authorize or auto-approve an encoded film.'
     ],
-    'media-review':kindInstructions[mediaKind as 'voice'|'captions']
+    'media-review':kindInstructions[mediaKind as 'voice'|'captions'|'preview'|'film']
   }[operation];
   const statusContract=[
     'payload.status is REQUIRED and NOT PRESELECTED. Choose independently after reviewing actual evidence:',
