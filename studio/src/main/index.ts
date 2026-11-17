@@ -64,7 +64,12 @@ function registerIpc() {
   ipcMain.handle('voice:playbackUrl', (_event,id:string) => acceptedNarrationPlaybackUrl(rootFor(id)));
   ipcMain.handle('voice:narrationAction', (_event,id:string)=>narrationAction(rootFor(id)));
   ipcMain.handle('voice:repairTiming', (_event,id:string)=>repairAlignmentTiming(app.getAppPath(),rootFor(id)));
-  ipcMain.handle('voice:timingEvidence', (_event,id:string)=>Boolean(eligibleAlignmentResponse(rootFor(id))));
+  ipcMain.handle('voice:timingEvidence', (_event,id:string)=>{
+    const root=rootFor(id),state=readState(root);
+    if(!state.approvedScript||!state.voice||state.voice.stale)return false;
+    try{return Boolean(eligibleAlignmentResponse(root));}
+    catch{return false;} // Invalid/missing local evidence cannot authorize timing recovery.
+  });
   ipcMain.handle('voice:longformStatus', () => longformStatus());
   ipcMain.handle('voice:longformRun', (_event, id: string, input: {voice?:string;resume?:boolean;retryUncertain?:boolean;regenerate?:boolean}) => runLongform(rootFor(id), input));
   ipcMain.handle('voice:importWav', async (_event, id: string) => { const result=await dialog.showOpenDialog({properties:['openFile'],filters:[{name:'PCM WAV',extensions:['wav']}]}); return result.canceled?null:importApprovedWav(rootFor(id),result.filePaths[0]); });
