@@ -157,6 +157,13 @@ export function ExternalWorkspace(){
         await window.studio.freezeLifecycle(session.projectId,expectedStage,lifecycleOperation,snapshot,rebuild);
       if(sequence!==requests.current.freeze||!isCurrentProjectSession(session)||
         expectedStage!==stage||expectedOperation!==operation||activeKey.current!==sessionKey)return;
+      if(!rebuild&&frozenTaskId&&task.id===frozenTaskId){
+        // An unchanged Build reuses the frozen identity. Never clear its
+        // pasted JSON, staged diff or previously selected history.
+        setPrompt(task.prompt);setFrozenScopeKey(key);setError('');
+        showNotice('Current frozen task retained.');
+        return;
+      }
       setPrompt(task.prompt);setFrozenTaskId(task.id);setFrozenScopeKey(key);
       setPending(null);setNativeMediaStatus(null);setResult('idle');setJson('');setError('');
       patch(sessionKey,{history:[],historySelectedId:''});
