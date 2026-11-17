@@ -91,6 +91,13 @@ describe('R2 frozen task JSON attachment delivery',()=>{
         sha256:sha(task.prompt),bytes:Buffer.byteLength(task.prompt,'utf8'),
         lines:task.prompt.split('\n').length,filename
       }));
+      const snapshotDir=process.env.R2_PROMPT_SNAPSHOT_DIR;
+      if(snapshotDir){
+        fs.mkdirSync(snapshotDir,{recursive:true});
+        const destination=path.join(snapshotDir,filename.replace(/\.json$/,'.prompt.md'));
+        fs.writeFileSync(destination,task.prompt,'utf8');
+        expect(sha(fs.readFileSync(destination))).toBe(sha(task.prompt));
+      }
       const same=row.operation==='author'?
         freezeTask(appPath,root,row.stage):
         freezeLifecycleTask(appPath,root,row.stage,row.operation,scope);
