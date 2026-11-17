@@ -1,17 +1,8 @@
 import fs from 'node:fs';
 import {readState,resolveProjectFile,sha,strictJson,type ExternalOperation,type Stage,type StudioState} from './services.js';
+import type {ExternalHistoryRecord} from '../shared/externalHistory.js';
 
 type TaskRecord=Record<string,unknown>;
-export interface ExternalHistoryRecord{
-  id:string;revision:number;stage:Stage;operation:ExternalOperation;
-  status:'FROZEN'|'IMPORTED'|'STALE';
-  mediaKind?:'voice'|'captions'|'preview'|'film';
-  prompt:string|null;confirmedJson:string|null;
-  findings:Array<{id:string;status:string;severity:string;target_ids:string[];requirement:string}>;
-  errors:string[];integrity:'OK'|'PARTIAL'|'ERROR';
-  editableIds?:string[];editablePaths?:string[];targetIds?:string[];findingIds?:string[];
-  mediaTransferAttested?:boolean;
-}
 function canonical(value:unknown):string{
   if(Array.isArray(value))return '['+value.map(canonical).join(',')+']';
   if(value&&typeof value==='object')return '{'+Object.entries(value as Record<string,unknown>)
