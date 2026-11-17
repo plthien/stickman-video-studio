@@ -143,7 +143,7 @@ describe('REG-TAB navigation persistence, read-only history and async isolation'
     bridge({readFrozen:async()=>null,readHistory});
     render(<AppStateProvider><Harness><ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider></Harness></AppStateProvider>);
     fireEvent.click(await screen.findByRole('button',{name:'Review'}));
-    await waitFor(()=>expect(readHistory).toHaveBeenCalledWith('A','script','review',undefined));
+    await waitFor(()=>expect(readHistory).toHaveBeenCalledWith('A','script','review'));
     fireEvent.click(screen.getByRole('button',{name:'Correct'}));
     fireEvent.click(screen.getByRole('button',{name:'Switch B'}));
     gate.resolve([record('A-review','review')]);
@@ -230,7 +230,12 @@ describe('REG-TAB navigation persistence, read-only history and async isolation'
     fireEvent.click(screen.getByRole('button',{name:'Build Task'}));
     await waitFor(()=>expect(freezeLifecycle).toHaveBeenCalledTimes(1));
     expect(freezeLifecycle.mock.calls[0][4]).toBe(false);
-    expect(screen.getByTestId('external-task-prompt')).toHaveTextContent('CURRENT REVIEW PROMPT');
+    // Reusing the current frozen task must not hijack an explicitly selected
+    // historical record. Prompt, confirmed JSON and findings stay on that ID.
+    expect(screen.getByTestId('external-task-prompt')).toHaveTextContent('Saved prompt old-imported');
+    expect(screen.getByLabelText('Confirmed JSON history')).toHaveTextContent('old-imported');
+    expect(screen.getByTestId('external-history-status')).toHaveTextContent('IMPORTED');
+    expect(screen.getByRole('button',{name:'Validate import'})).toBeDisabled();
     fireEvent.click(screen.getByRole('button',{name:'Rebuild Task'}));
     await waitFor(()=>expect(freezeLifecycle).toHaveBeenCalledTimes(2));
     expect(freezeLifecycle.mock.calls[1][4]).toBe(true);
