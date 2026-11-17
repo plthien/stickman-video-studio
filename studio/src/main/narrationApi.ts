@@ -128,7 +128,15 @@ export function narrationAction(root:string):{action:NarrationAction;reason:stri
   });
   const uncertain=files.some(x=>/^part-\d+\.inflight\.json$/.test(x))||incomplete;
   if(uncertain)return{action:'retry',reason:'A pending or partial Nano request requires explicit owner-authorized replay.',...progress};
-  if(job.status==='UNCERTAIN')return blocked('Uncertain job has no identifiable pending request; inspect saved evidence before retry.');
+  if(job.status==='UNCERTAIN'){
+    const stored=strictJson(fs.readFileSync(resolveProjectFile(root,job.manifestPath),'utf8')) as Record<string,unknown>;
+    const count=Array.isArray(stored.parts)?stored.parts.length:0;
+    const allPresent=count>0&&Array.from({length:count},(_,index)=>{
+      const stem='part-'+String(index).padStart(4,'0');
+      return files.includes(stem+'.wav')&&files.includes(stem+'.json');
+    }).every(Boolean);
+    if(!allPresent)return blocked('Uncertain job has missing parts but no pending request identity; inspect evidence before replay.');
+  }
   return{action:'resume',reason:'Recover the saved attempt; verified parts will be reused.',...progress};
 }
 
