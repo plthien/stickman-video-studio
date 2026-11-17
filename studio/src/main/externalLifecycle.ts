@@ -54,7 +54,7 @@ type Lineage={correctTaskId:string;reviewTaskId:string;findingIds:string[];prior
 /** Exact persisted correction-to-review ancestry. Stage-wide review history is
  * never an authorization to resolve a different or retired artifact. */
 function correctionLineage(state:StudioState,stage:Stage,current:Artifact):Lineage{
-  const correct=state.lifecycle?.tasks[stage+':correct];
+  const correct=state.lifecycle?.tasks[stage+':correct'];
   if(!correct||correct.status!=='IMPORTED')throw new Error('RECHECK_LINEAGE_REQUIRED: a confirmed current Correct task is required.');
   const record=state.lifecycle?.artifacts[correct.id];
   const payload=record?.value as {schema?:string;artifact_sha256?:string;finding_ids?:string[];artifact?:unknown}|undefined;
