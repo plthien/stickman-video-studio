@@ -525,6 +525,8 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
     (typeof mediaDuration!=='number'||!Number.isFinite(mediaDuration)||mediaDuration<=0))
     throw new Error('MEDIA_COVERAGE_INVALID: partial Preview requires a verified sample duration.');
   if(operation==='media-review'&&stage==='native'&&scope.media==='film'){
+    if(!state.nativeReadiness?.fullReady)
+      throw new Error('MEDIA_COVERAGE_INVALID: Film requires current FULL_READY native publication.');
     const shots=(artifact.value as {manifest:{shots:Array<{end:number}>}}).manifest.shots??[];
     const timelineEnd=shots.length?shots[shots.length-1].end:0;
     if(typeof mediaDuration!=='number'||!Number.isFinite(mediaDuration)||
