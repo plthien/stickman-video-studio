@@ -58,7 +58,7 @@ export function ExternalWorkspace(){
   const setFrozenScopeKey=field('frozenScopeKey');
   const setFrozenTaskId=field('frozenTaskId');
   const selectedHistory=historySelectedId?history.find(item=>item.id===historySelectedId):history[0];
-  const showingHistory=Boolean(historySelectedId)||(Boolean(selectedHistory)&&(!frozenTaskId||selectedHistory.id!==frozenTaskId));
+  const showingHistory=historySelectedId!==''||(selectedHistory!==undefined&&(!frozenTaskId||selectedHistory.id!==frozenTaskId));
   const visibleHistory=showingHistory?selectedHistory:null;
   // Do not substitute the current prompt when a historical file is missing or corrupt.
   const visiblePrompt=showingHistory?(selectedHistory?.prompt??''):prompt;
