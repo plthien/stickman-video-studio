@@ -161,6 +161,8 @@ export async function generateApiNarration(root:string,input:JobInput){
         throw new Error('NARRATION_RECOVERY_INCOMPATIBLE: Script, endpoint or Nano profile changed.');
       jobId=previous.jobId;
     }else if(input.regenerate){
+      if(!previous||previous.status!=='PASS')
+        throw new Error('NARRATION_REGENERATE_INELIGIBLE: resolve the existing attempt before requesting a new generation.');
       jobId=sourceSha256.slice(0,16)+'-'+randomUUID().slice(0,12);
     }else if(previous&&previous.sourceSha256===sourceSha256){
       if(previous.status!=='PASS')throw new Error('NARRATION_RECOVERY_REQUIRED: Resume or Explicit Retry before generating anew.');
