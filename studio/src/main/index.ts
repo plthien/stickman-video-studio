@@ -1,7 +1,9 @@
-import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, net, protocol, safeStorage, shell } from 'electron';
 import fs from 'node:fs';
 import path, { join } from 'node:path';
 import { alignWithElevenLabs } from './alignment.js';
+import {elevenLabsStatus,saveElevenLabsKey,clearElevenLabsKey,resolveElevenLabsKey} from './elevenlabsCredentials.js';
+import {acceptedNarrationPlaybackUrl} from './voicePlayback.js';
 import { reconcileScriptActivation, confirmImport, freezeTask, stageImport, getPendingMedia, fulfillMedia, importMediaFile } from './externalTasks.js';
 import {confirmLifecycleResult,freezeLifecycleTask,readFrozenExternalTask,stageLifecycleResult} from './externalLifecycle.js';
 import {readExternalHistory} from './externalHistory.js';
@@ -36,6 +38,9 @@ function registerIpc() {
   ipcMain.handle('project:open', (_event, root: string) => { const state = reconcileScriptActivation(root); registerRoot(root); saveRecent(state.project); reconcileJob(root); return projectSnapshot(root,app.getAppPath()); });
   ipcMain.handle('project:state', (_event, id: string) => { const root=rootFor(id); reconcileScriptActivation(root); return projectSnapshot(root,app.getAppPath()); });
   ipcMain.handle('project:saveBrief', (_event, id: string, brief: StudioState['brief'] & { title: string }) => { const root = rootFor(id), state = readState(root); state.project.title = brief.title.trim(); state.brief = { topic: brief.topic, language: brief.language, ratio: '9:16', targetDuration: brief.targetDuration, audience: brief.audience, purpose: brief.purpose }; state.project.updatedAt = new Date().toISOString(); writeState(root, state); saveRecent(state.project); return projectSnapshot(root,app.getAppPath()); });
+  ipcMain.handle('settings:elevenlabsStatus', () => elevenLabsStatus(app.getPath('userData'),safeStorage));
+  ipcMain.handle('settings:elevenlabsSave', (_event,key:string) => saveElevenLabsKey(app.getPath('userData'),safeStorage,key));
+  ipcMain.handle('settings:elevenlabsClear', () => clearElevenLabsKey(app.getPath('userData'),safeStorage));
   ipcMain.handle('settings:setNano', (_event, id: string, endpoint: string) => { const root = rootFor(id), state = readState(root); state.nano = { ...state.nano, endpoint: nanoBase(endpoint).toString().replace(/\/$/, '') }; writeState(root, state); return projectSnapshot(root,app.getAppPath()); });
   ipcMain.handle('external:freeze', (_event, id: string, stage: Stage, rebuild = false) => freezeTask(app.getAppPath(), rootFor(id), stage, rebuild));
   ipcMain.handle('external:exportPrompt', async (_event, id: string, stage: Stage, operation: 'author'|'review'|'correct'|'recheck'|'media-review' = 'author', _scope:Record<string,unknown>={}) => { if(operation==='media-review')throw new Error('MEDIA_REVIEW_DISABLED: legacy history is read-only.'); const root = rootFor(id), task = readFrozenExternalTask(app.getAppPath(),root,stage,operation); if(!task)throw new Error('Build a frozen task before exporting its prompt.'); const result = await dialog.showSaveDialog({ defaultPath: path.join(root, '.studio', 'external', `${stage}-prompt.md`), filters: [{ name: 'Markdown', extensions: ['md'] }] }); if (result.canceled || !result.filePath) return null; fs.copyFileSync(path.join(root, task.promptPath), result.filePath); return result.filePath; });
@@ -53,7 +58,10 @@ function registerIpc() {
   ipcMain.handle('voice:captionApprove', (_event, id: string, note: string) => approveCaptionReview(rootFor(id),note));
   ipcMain.handle('voice:nanoDiscover', (_event, endpoint: string) => discoverNano(endpoint));
   ipcMain.handle('voice:nanoGenerate', async (_event, id: string, request: { voice: string; speed: number; seed: number }) => { const root = rootFor(id), state = readState(root); return generateNano(root, { ...request, endpoint: state.nano?.endpoint ?? 'http://127.0.0.1:3901' }); });
-  ipcMain.handle('voice:align', (_event, id: string, authorized: boolean) => alignWithElevenLabs(app.getAppPath(), rootFor(id), authorized));
+  ipcMain.handle('voice:align', (_event, id: string, authorized: boolean) => alignWithElevenLabs(
+    app.getAppPath(),rootFor(id),authorized,
+    authorized?resolveElevenLabsKey(app.getPath('userData'),safeStorage):undefined));
+  ipcMain.handle('voice:playbackUrl', (_event,id:string) => acceptedNarrationPlaybackUrl(rootFor(id)));
   ipcMain.handle('voice:longformStatus', () => longformStatus());
   ipcMain.handle('voice:longformRun', (_event, id: string, input: {voice?:string;resume?:boolean;retryUncertain?:boolean}) => runLongform(rootFor(id), input));
   ipcMain.handle('voice:importWav', async (_event, id: string) => { const result=await dialog.showOpenDialog({properties:['openFile'],filters:[{name:'PCM WAV',extensions:['wav']}]}); return result.canceled?null:importApprovedWav(rootFor(id),result.filePaths[0]); });
