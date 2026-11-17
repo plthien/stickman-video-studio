@@ -699,7 +699,11 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   const inputSha256=sha(JSON.stringify({...snapshot,sourceContextSha256,authorityFingerprint}));
   if(!rebuild&&prior?.status==='FROZEN'&&prior.inputSha256===inputSha256&&fs.existsSync(resolveProjectFile(root,prior.promptPath)))
     return{...prior,prompt:fs.readFileSync(resolveProjectFile(root,prior.promptPath),'utf8')};
-  if(prior)prior.status='STALE';
+  if(prior){
+    state.externalTaskArchive??=[];
+    state.externalTaskArchive.push({stage,operation,task:{...prior,status:prior.status==='IMPORTED'?'IMPORTED':'STALE'}});
+    prior.status='STALE';
+  }
   const id=randomUUID(),revision=(prior?.revision??0)+1;
   const contract=operation==='correct'?
     {schema:'mode-b-correction-v1',artifact_sha256:artifact.sha256,finding_ids:findingIds,
@@ -903,6 +907,7 @@ function finalizeLifecycle(root:string,pending:Record<string,unknown>,task:NonNu
     artifactSha256:sha(JSON.stringify(payload)),value:payload,status:String(payload.status??'CORRECTION_STAGED'),
     createdAt:new Date().toISOString()};
   state.lifecycle.tasks[key].status='IMPORTED';
+  state.lifecycle.tasks[key].confirmedResponseSha256=String(pending.responseSha256);
   if(task.stage==='script'&&task.operation==='recheck'&&payload.status==='REVIEWED_NO_FINDINGS'&&
     scriptCorrectionRechecked(state))activateScriptCandidate(root,state,'RECHECK');
   writeState(root,state);
@@ -1075,7 +1080,7 @@ export function confirmLifecycleResult(appPathOrRoot:string,rootOrToken:string,m
     state.external.script={revision,artifact:checked,importedAt:new Date().toISOString()};
     atomicJson(path.join(root,'.studio','revisions','script-'+revision+'.json'),checked);
     state.lifecycle!.artifacts[task.id]={taskId:task.id,stage:task.stage,operation:task.operation,artifactSha256:sha(JSON.stringify(pending.payload)),value:pending.payload,status:'CORRECTION_STAGED',createdAt:new Date().toISOString()};
-    task.status='IMPORTED';
+    task.status='IMPORTED';task.confirmedResponseSha256=String(pending.responseSha256);
     writeState(root,state);
     if(fs.existsSync(file))fs.unlinkSync(file);
     return state;
