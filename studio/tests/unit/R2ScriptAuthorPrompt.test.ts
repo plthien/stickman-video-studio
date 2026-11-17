@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {afterEach,describe,expect,it} from 'vitest';
 import {compileAuthority,extractScriptAuthor,renderScriptAuthorGroups,SCRIPT_AUTHOR_EXTRACTION_REVISION} from '../../src/main/externalAuthority';
-import {freezeTask,sourceFingerprint,stageImport,validateScript} from '../../src/main/externalTasks';
+import {freezeTask,sourceFingerprint,stageImport,validateScript,externalOutputFilename} from '../../src/main/externalTasks';
 import {nativeSkillRoot,readState,sha,writeState} from '../../src/main/services';
 import {appPath,cleanup,fixture} from './SixIssueFixtures';
 
@@ -93,6 +93,9 @@ describe('R2 focused source-exact Script Author handoff',()=>{
     expect(task.prompt).not.toContain('Ground every shot in the approved script and actual word/caption timing');
     expect(task.prompt).not.toContain('## REQUIRED RESPONSE ENVELOPE');
     expect(task.prompt).toContain('mode-b-script-v1');
+    expect(task.prompt).toContain('JSON FILE DELIVERY — REQUIRED');
+    expect(task.prompt).toContain(externalOutputFilename('script','author',task.revision,task.id));
+    expect(task.prompt).toContain('actual attachment/download artifact');
     expect(task.prompt).not.toContain('REQUIRED_NONEMPTY_ARRAY');
     expect(task.prompt).not.toContain('REPLACE_WITH_ACTUAL_SECTION_ID');
     expect(task.prompt).toContain('source SHA256');
