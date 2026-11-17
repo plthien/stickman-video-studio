@@ -205,6 +205,26 @@ describe('REG-TAB read-only external history and integrity',()=>{
     expect(rejected.confirmedJson).toBeNull();
     expect(rejected.errors).toContain('LEGACY_RESPONSE_NOT_VERIFIABLE');
   });
+  it('REG-STALE-04 legacy Native Author needs an imported task snapshot, not just a staged response file',async()=>{
+    const {root}=fixture({style:'B1'});
+    const native=stageNative(root,nativePayload(root));
+    await confirmImport(appPath,root,native.response.token,{validator:validator().run});
+    const state=readState(root),old=state.tasks!.native!;
+    const imported={...old,status:'IMPORTED' as const};
+    old.status='STALE';
+    delete old.confirmedResponseSha256;delete old.confirmedResponsePath;
+    // Legacy Native revision metadata lacks the task ID. Preserve an exact
+    // independently imported snapshot to establish its publication identity.
+    state.externalTaskArchive=[{stage:'native',operation:'author',task:imported}];
+    writeState(root,state);
+    const recovered=readExternalHistory(root,'native','author')[0];
+    expect(recovered.status).toBe('STALE');
+    expect(recovered.confirmedJson).toContain('"task_id":"'+native.envelope.task_id+'"');
+    const unproven=readState(root);
+    delete unproven.externalTaskArchive;
+    writeState(root,unproven);
+    expect(readExternalHistory(root,'native','author')[0].confirmedJson).toBeNull();
+  });
   it('REG-STALE-04 lifecycle STALE review needs its confirmed artifact record and original response',async()=>{
     const {root}=await fullScriptHistory();
     const state=readState(root);
