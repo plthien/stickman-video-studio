@@ -207,71 +207,25 @@ describe('P-01 through P-14 lifecycle prompt, lock, evidence and ancestry contra
     expect(recheck.prompt).not.toContain('F-FOREIGN-5');
   });
 
-  it('P-07/P-08 Voice and Captions reviews retain actual SHA and reject untransferred media modalities',()=>{
+  it('REG-F04-02/05 disables new Voice/Captions review tasks without affecting verified media packing',()=>{
     const {root}=fixture();freezeTask(appPath,root,'script');
     const voicePack=exportReviewPack(root,'voice');
     expect((voicePack.pack.attachments as Array<{sha256:string}>)
       .some(item=>item.sha256===readState(root).voice!.sha256)).toBe(true);
-    const voice=freezeLifecycleTask(appPath,root,'script','media-review',{media:'voice'});
-    expect(voice.prompt).toContain('VOICE MEDIA REVIEW');
-    expect(voice.prompt).not.toMatch(/"status"\s*:\s*"INSUFFICIENT_EVIDENCE"/);
-    const voiceClaim={schema:'mode-b-review-v1',artifact_sha256:voice.artifactSha256,
-      status:'REVIEWED_WITH_FINDINGS',
-      coverage:{target_ids:voice.targetIds,modalities:['sound'],ranges:[],media_sha256s:[]},
-      findings:[finding('F-VOICE','opening')]};
-    expect(()=>stageLifecycleResult(appPath,root,'script','media-review',
-      result(root,voice,'media-review',voiceClaim))).toThrow(/NOT_VERIFIED/);
     exportReviewPack(root,'captions');
-    const captions=freezeLifecycleTask(appPath,root,'script','media-review',{media:'captions'});
-    expect(captions.prompt).toContain('CAPTIONS MEDIA REVIEW');
-    snapshotPrompt(captions);
-    const captionClaim={...voiceClaim,artifact_sha256:captions.artifactSha256,
-      coverage:{target_ids:captions.targetIds,modalities:['captions'],ranges:[],media_sha256s:[]}};
-    expect(()=>stageLifecycleResult(appPath,root,'script','media-review',
-      result(root,captions,'media-review',captionClaim))).toThrow(/NOT_VERIFIED/);
-    const receipt=readState(root).alignment!.captionReview!;
-    expect(captions.prompt).toContain(receipt.sha256);
-    // A frozen attested captions package permits text/manifest coverage; this
-    // synthetic unit test does NOT claim real audio or rendered-frame inspection.
-    const attested=freezeLifecycleTask(appPath,root,'script','media-review',
-      {media:'captions',transferAcknowledged:true});
-    const captionReview={schema:'mode-b-review-v1',artifact_sha256:attested.artifactSha256,
-      status:'REVIEWED_WITH_FINDINGS',
-      coverage:{target_ids:attested.targetIds,modalities:['captions'],ranges:[],
-        media_sha256s:attested.mediaSha256s??[]},
-      findings:[finding('F-CAPTION','opening')]};
-    expect(()=>stageLifecycleResult(appPath,root,'script','media-review',
-      result(root,attested,'media-review',captionReview))).not.toThrow();
+    for(const kind of ['voice','captions'] as const)
+      expect(()=>freezeLifecycleTask(appPath,root,'script','media-review',{media:kind}))
+        .toThrow(/MEDIA_REVIEW_DISABLED/);
+    expect(readState(root).alignment!.captionReview?.sha256).toBeTruthy();
   });
 
-  it('P-10 Film review refuses partial Native sample and accepts only full-duration registered scope',async()=>{
-    const root=await nativeBaseline(),state=readState(root);
-    const file='output/synthetic-film.mp4',report='output/synthetic-film-report.json';
-    fs.mkdirSync(path.join(root,'output'),{recursive:true});
-    // Contract-only synthetic bytes; NOT a claim of playable or watched film.
-    fs.writeFileSync(path.join(root,file),'SYNTHETIC_NOT_PLAYABLE');
-    fs.writeFileSync(path.join(root,report),JSON.stringify({duration:30}));
-    state.render={path:file,sha256:sha(fs.readFileSync(path.join(root,file))),
-      reportPath:report,reportSha256:sha(fs.readFileSync(path.join(root,report))),
-      verifiedAt:new Date().toISOString()};
-    state.nativeReadiness={...state.nativeReadiness!,fullReady:false};
-    writeState(root,state);
-    expect(()=>freezeLifecycleTask(appPath,root,'native','media-review',
-      {media:'film'})).toThrow(/FULL_READY/);
-    const updated=readState(root);
-    updated.nativeReadiness={...updated.nativeReadiness!,fullReady:true};
-    writeState(root,updated);
-    const film=freezeLifecycleTask(appPath,root,'native','media-review',{media:'film'});
-    expect(film.targetIds).toEqual(['shot-1','shot-2']);
-    expect(film.prompt).toContain('FILM MEDIA REVIEW');
-    snapshotPrompt(film);
-    expect(film.prompt).not.toContain('SYNTHETIC_NOT_PLAYABLE');
-    const unsupported={schema:'mode-b-review-v1',artifact_sha256:film.artifactSha256,
-      status:'REVIEWED_WITH_FINDINGS',
-      coverage:{target_ids:film.targetIds,modalities:['picture'],ranges:[],media_sha256s:[]},
-      findings:[finding('F-FILM','shot-1')]};
-    expect(()=>stageLifecycleResult(appPath,root,'native','media-review',
-      result(root,film,'media-review',unsupported))).toThrow(/NOT_VERIFIED/);
+  it('REG-F04-02/05 rejects Native Film/Preview Media Review tasks independently of Native readiness',async()=>{
+    const root=await nativeBaseline(),before=readState(root);
+    for(const kind of ['preview','film'] as const)
+      expect(()=>freezeLifecycleTask(appPath,root,'native','media-review',{media:kind}))
+        .toThrow(/MEDIA_REVIEW_DISABLED/);
+    expect(readState(root).nativeReadiness).toEqual(before.nativeReadiness);
+    expect(readState(root).external.native).toEqual(before.external.native);
   });
 
   it('P-12/P-13 lifecycle response examples contain frozen identity but never preset review outcomes',async()=>{
