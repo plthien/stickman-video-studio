@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {getCaptionReview} from './captionReview.js';
+import {suggestedCorrectScope} from './externalLifecycle.js';
 import {verifyPersistedNativeEvidence,type NativeVerificationAdapter} from './nativeEvidence.js';
 import {assertLocalRoot,readState,resolveProjectFile,sha,strictJson} from './services.js';
 
@@ -29,5 +30,6 @@ export async function projectSnapshot(root:string,appPath:string,verifier?:Nativ
   const ambience=(Array.isArray(manifest.ambience)?manifest.ambience as Array<Record<string,unknown>>:[]).map((value,index)=>clip(typeof value.id==='string'&&value.id.trim()?value.id:text(value.path,`ambience ${index+1} path`),finite(value.start,`ambience ${index+1} start`),finite(value.end,`ambience ${index+1} end`)));
   const tracks={Scenes:shots.map(item=>clip(item.id,item.start,item.end)),Layers:layers,Captions:captions.map(item=>clip(item.text,item.start,item.end)),Narration:state.voice&&!state.voice.stale?[clip(state.voice.origin??state.voice.path,0,state.voice.duration!)]:[],SFX:sfx,Ambience:ambience};
   const jobPath=path.join(projectRoot,'.studio','jobs','latest.json'),job=fs.existsSync(jobPath)?strictJson(fs.readFileSync(jobPath,'utf8')):null;
-  return{...state,manifest,projection:{shots,duration,tracks,captionReady,captionStatus,demo:false as const},job};
+  return{...state,manifest,projection:{shots,duration,tracks,captionReady,captionStatus,demo:false as const},job,
+    suggestedCorrectScope:{script:suggestedCorrectScope(projectRoot,state,'script'),native:suggestedCorrectScope(projectRoot,state,'native')}};
 }
