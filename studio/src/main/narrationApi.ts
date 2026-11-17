@@ -27,7 +27,7 @@ export function narrationParts(sections:ReadonlyArray<{id:string;text:string}>):
       // Split at an existing whitespace boundary; preserve the original bytes
       // exactly and never fabricate a pause or spoken word.
       let cut=-1;
-      const boundaries=/\\s+/g;
+      const boundaries=/\s+/g;
       for(const match of remaining.slice(0,API_MAX_CHARS).matchAll(boundaries)){
         const end=(match.index??0)+match[0].length;
         if(end>API_MAX_CHARS/2&&end<=API_MAX_CHARS)cut=end;
@@ -101,7 +101,7 @@ export async function generateApiNarration(root:string,input:JobInput){
     if(!script||!voice)throw new Error('Approved Script and a selected Nano voice profile are required.');
     if(!['en','english'].includes(initial.brief.language.toLowerCase()))
       throw new Error('Pinned Nano API supports English only; import an approved WAV for this language.');
-    if(sha(script.text)!==script.sha256||script.sections.map(x=>x.text).join('\\n\\n')!==script.text)
+    if(sha(script.text)!==script.sha256||script.sections.map(x=>x.text).join('\n\n')!==script.text)
       throw new Error('NARRATION_SOURCE_MISMATCH: approved Script sections are inconsistent.');
     const endpoint=nanoBase(initial.nano?.endpoint??'http://127.0.0.1:3901').toString();
     const segments=narrationParts(script.sections);
@@ -203,7 +203,7 @@ export async function generateApiNarration(root:string,input:JobInput){
     const published=acceptNarration(root,{wav:finalWav,expectedScriptSha256:script.sha256,
       voice:{origin:'NANO_LONGFORM',profileId:voice,profileVersion:version,referenceBinding:binding,
         receipt:{schema:'nano-api-assembled-receipt-v1',sourceSha256,summary}},
-      nano:{endpoint:endpoint.replace(/\\/$/,''),profileId:voice},longform});
+      nano:{endpoint:endpoint.replace(/\/$/,''),profileId:voice},longform});
     return {jobId,path:published.path,sha256:info.sha256,duration:info.duration,summary};
   }catch(error){
     const message=error instanceof Error?error.message:String(error);
