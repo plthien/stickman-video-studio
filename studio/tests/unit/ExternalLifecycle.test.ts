@@ -3,7 +3,7 @@ import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {afterEach,describe,expect,it} from 'vitest';
 import {confirmLifecycleResult,freezeLifecycleTask,stageLifecycleResult,suggestedCorrectScope} from '../../src/main/externalLifecycle';
-import {freezeTask,stageImport,confirmImport,externalOutputFilename} from '../../src/main/externalTasks';
+import {freezeTask,stageImport,confirmImport,externalOutputFilename,validateScript} from '../../src/main/externalTasks';
 import {compileAuthority,SCRIPT_AUTHOR_EXTRACTION_REVISION} from '../../src/main/externalAuthority';
 import {projectId,readState,writeState,type StudioState} from '../../src/main/services';
 
@@ -234,6 +234,61 @@ describe('External creative lifecycle',()=>{
     expect(rebuilt.prompt).toContain(nextFilename);
     expect(()=>stageLifecycleResult(appPath,root,'script','review',oldResult)).toThrow(/binding mismatch/i);
   });
+  it('REG-F01-01 / REG-F01-02: generated Script Correct prompt specifies only schema, sections and authoring, excluding candidate metadata',()=>{
+    const root=fixture();
+    const task=freezeLifecycleTask(appPath,root,'script','correct',{editableIds:['opening']});
+    const contract=task.prompt.split('SCRIPT CORRECT — EXACT ARTIFACT CONTRACT')[1]
+      ?.split('## JSON FILE DELIVERY — REQUIRED')[0]??'';
+    expect(contract).toContain('payload.artifact must be a COMPLETE mode-b-script-v1 object');
+    expect(contract).toContain('containing EXACTLY these three top-level fields:');
+    expect([...contract.matchAll(/^([1-3])\\. (schema|sections|authoring)$/gm)]
+      .map(match=>match[2])).toEqual(['schema','sections','authoring']);
+    expect(contract).toContain('Must equal "mode-b-script-v1"');
+    expect(contract).toContain('Each section must contain EXACTLY:');
+    expect(contract).toContain('- id: unchanged existing section ID');
+    expect(contract).toContain('- text: spoken narration');
+    expect(contract).toContain('Preserve all section IDs and their original order.');
+    expect(contract).toContain('Modify text ONLY for explicitly authorized editable section IDs.');
+    expect(contract).toContain('Preserve every locked section text exactly.');
+    expect(contract).toContain('Preserve it unchanged unless a specific authoring field path');
+    expect(contract).toContain('Return the complete corrected artifact, not a partial patch.');
+    for(const field of ['text','sha256','revision','importedAt','taskId',
+      'approvedAt','approvedBy','approvalNote'])
+      expect(contract).toContain('- '+field+'\\n');
+    expect(contract).toContain('but they are NOT fields of mode-b-script-v1.');
+    expect(task.prompt.split('SCRIPT CORRECT — EXACT ARTIFACT CONTRACT').length).toBe(2);
+  });
+
+  it('REG-F01-05: exact corrected Script artifact imports; candidate metadata stays rejected by existing validator',()=>{
+    const root=fixture(),task=freezeLifecycleTask(appPath,root,'script','correct',{editableIds:['opening']});
+    const candidate=readState(root).scriptCandidate!;
+    const artifact={schema:'mode-b-script-v1',
+      sections:candidate.sections.map(row=>row.id==='opening'
+        ?{id:row.id,text:'The real storm now forces a clear decision.'}
+        :{id:row.id,text:row.text}),
+      authoring:candidate.authoring!};
+    expect(Object.keys(artifact)).toEqual(['schema','sections','authoring']);
+    expect(validateScript(artifact)).toEqual(artifact);
+    const envelope=(payloadArtifact:Record<string,unknown>)=>JSON.stringify({
+      schema:'mode-b-lifecycle-result-v1',
+      project_id:readState(root).project.id,task_id:task.id,revision:task.revision,
+      input_sha256:task.inputSha256,stage:'script',operation:'correct',
+      payload:{schema:'mode-b-correction-v1',artifact_sha256:task.artifactSha256,
+        finding_ids:task.findingIds??[],editable_ids:task.editableIds??[],
+        editable_paths:task.editablePaths??[],artifact:payloadArtifact}
+    });
+    for(const field of ['text','sha256','revision','importedAt','taskId',
+      'approvedAt','approvedBy','approvalNote']){
+      const malformed={...artifact,[field]:'unapproved candidate metadata'};
+      expect(()=>validateScript(malformed)).toThrow();
+      expect(()=>stageLifecycleResult(appPath,root,'script','correct',envelope(malformed))).toThrow();
+    }
+    expect(()=>stageLifecycleResult(appPath,root,'script','correct',
+      envelope({...artifact,sections:[{...artifact.sections[0],sha256:'not a section field'},artifact.sections[1]]}))).toThrow();
+    const staged=stageLifecycleResult(appPath,root,'script','correct',envelope(artifact));
+    expect(staged.token).toBeTruthy();
+  });
+
   it('CONTRACT REG-06: other stage/operation prompts retain their separate response contracts',()=>{
     const root=fixture();
     const correct=freezeLifecycleTask(appPath,root,'script','correct',{editableIds:['opening']});
