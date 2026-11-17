@@ -55,8 +55,7 @@ export function ExternalWorkspace(){
   const setPending=field('pending'),setNativeMediaStatus=field('nativeMediaStatus');
   const setError=field('error'),setPreviewSeconds=field('previewSeconds');
   const setDraftConsent=field('draftConsent'),setReviewTargets=field('reviewTargets');
-  const setEditable=field('editable'),setEditablePaths=field('editablePaths');
-  const setFindingScope=field('findingScope'),setFrozenScopeKey=field('frozenScopeKey');
+  const setFrozenScopeKey=field('frozenScopeKey');
   const setFrozenTaskId=field('frozenTaskId');
   const selectedHistory=historySelectedId?history.find(item=>item.id===historySelectedId):history[0];
   const showingHistory=Boolean(selectedHistory&&(Boolean(historySelectedId)||!frozenTaskId||selectedHistory.id!==frozenTaskId));
