@@ -511,6 +511,83 @@ Return the complete corrected artifact, not a partial patch.`
       'Required exact finding IDs: '+JSON.stringify(findingIds),
       'Every required finding ID must appear with supported resolved/open/uncertain status. A clean recheck requires all required findings resolved and all requested current targets covered.'
     ]:[]),
+    ...(stage==='script'&&operation==='recheck'?[
+      `SCRIPT RECHECK — TEXT COVERAGE CONTRACT
+
+For a complete text-only Script Recheck:
+
+payload.coverage.target_ids:
+- Include every frozen target ID actually reviewed.
+- A reviewed status requires complete frozen target coverage.
+- Preserve real target IDs; do not invent or duplicate IDs.
+
+payload.coverage.modalities: ["script"]
+payload.coverage.ranges: []
+payload.coverage.media_sha256s: []
+
+The empty modalities array in ACTUAL EVIDENCE TRANSFER STATUS
+is not the Script review coverage.
+
+The supplied Script and authoring constitute inspectable
+textual evidence. Missing WAV/MP4 does not automatically make
+a text-only Script Recheck INSUFFICIENT_EVIDENCE.
+
+Do not claim verified audio, motion, frames, captions or
+actual spoken duration without genuinely supplied media.`,
+      `SCRIPT RECHECK — REQUIRED HISTORICAL FINDINGS
+
+Every required finding ID from the frozen correction lineage
+MUST appear exactly once in payload.findings.
+
+For each required finding, independently determine:
+- resolved
+- open
+- uncertain
+
+REVIEWED_NO_FINDINGS means there are no unresolved findings.
+It does NOT require payload.findings to be empty.
+
+When required finding IDs are non-empty,
+payload.findings: [] is invalid.
+
+A clean Script Recheck requires:
+- Every required historical finding is resolved.
+- Complete requested Script text coverage.
+- No newly supported unresolved finding.
+
+Never preset resolved status or REVIEWED_NO_FINDINGS.
+Choose the result only after actual independent evaluation.`,
+      `SCRIPT RECHECK — CURRENT CANDIDATE EVIDENCE
+
+Evaluate the exact CURRENT corrected Script candidate,
+not the previous Review artifact or the original Author Script.
+
+For every required historical finding:
+
+1. Read the original requirement, evidence and recommendation.
+2. Inspect the relevant current sections and authoring.
+3. Determine whether the original defect remains.
+4. Support the current finding status using concrete evidence
+   from the CURRENT corrected candidate.
+5. Explain why the finding is resolved, open or uncertain.
+
+Do not copy the previous Review conclusion or evidence
+as if it were a fresh Recheck observation.
+
+Review the complete requested Script for regressions
+introduced by the correction, including:
+- narration coherence
+- causal progression
+- continuity
+- story structure
+- creative direction
+- selected style fit
+
+Report newly supported problems using valid distinct finding IDs.
+
+Do not invent defects, media observations or verification results.
+Do not modify the Script during Recheck.`
+    ]:[]),
     '## JSON FILE DELIVERY — REQUIRED',fileDelivery.replace(/^## JSON FILE DELIVERY — REQUIRED\n/,''),
     '## H — ORIGINAL FROZEN AUTHOR TASK — IMMUTABLE REFERENCE APPENDIX',
     'Original Author task SHA256: '+sha(originalTask),
