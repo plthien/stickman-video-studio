@@ -40,3 +40,9 @@
 .project-output-card .button{flex:none}
 @media(max-width:1180px){.project-setup-layout{grid-template-columns:repeat(2,minmax(0,1fr))}.project-style-card{grid-column:1/-1}}
 @media(max-width:700px){.project-setup-layout{grid-template-columns:1fr}.project-style-card{grid-column:auto}.project-setup-layout .project-output-card{flex-wrap:wrap}}
+
+/* External ChatGPT task: build/export actions share a toolbar; only the prompt scrolls. */
+.external-task-toolbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 14px;margin-bottom:12px}
+.external-task-toolbar .actions{margin-top:0;min-width:0}
+.external-task-prompt{height:360px;min-height:360px;max-height:360px;overflow:auto;overscroll-behavior:contain;overflow-wrap:anywhere;margin:0 0 12px}
+.external-task-media-actions{margin-top:10px}
