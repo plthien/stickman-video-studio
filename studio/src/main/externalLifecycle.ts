@@ -49,6 +49,72 @@ export function suggestedCorrectScope(root:string,state:StudioState,stage:Stage)
   };
 }
 
+
+type Lineage={correctTaskId:string;reviewTaskId:string;findingIds:string[];prior:Array<{taskId:string;operation:ExternalOperation;value:unknown}>};
+/** Exact persisted correction-to-review ancestry. Stage-wide review history is
+ * never an authorization to resolve a different or retired artifact. */
+function correctionLineage(state:StudioState,stage:Stage,current:Artifact):Lineage{
+  const correct=state.lifecycle?.tasks[stage+':correct];
+  if(!correct||correct.status!=='IMPORTED')throw new Error('RECHECK_LINEAGE_REQUIRED: a confirmed current Correct task is required.');
+  const record=state.lifecycle?.artifacts[correct.id];
+  const payload=record?.value as {schema?:string;artifact_sha256?:string;finding_ids?:string[];artifact?:unknown}|undefined;
+  if(!record||record.operation!=='correct'||record.stage!==stage||payload?.schema!=='mode-b-correction-v1'||
+    payload.artifact_sha256!==correct.artifactSha256||!Array.isArray(payload.finding_ids))
+    throw new Error('RECHECK_LINEAGE_REQUIRED: confirmed Correct payload does not match its frozen baseline.');
+  if(stage==='script'){
+    const candidate=state.scriptCandidate;
+    if(!candidate||candidate.taskId!==correct.id||
+      canonical({schema:'mode-b-script-v1',sections:candidate.sections,authoring:candidate.authoring})!==canonical(payload.artifact))
+      throw new Error('RECHECK_LINEAGE_REQUIRED: current Script is not the exact confirmed correction.');
+  }else if(canonical(payload.artifact)!==canonical(current.value)){
+    throw new Error('RECHECK_LINEAGE_REQUIRED: current Native artifact differs from the published correction.');
+  }
+  const reviews=Object.values(state.lifecycle?.artifacts??{}).filter(row=>row.stage===stage&&
+    row.operation==='review'&&(row.value as {artifact_sha256?:string})?.artifact_sha256===correct.artifactSha256)
+    .sort((a,b)=>b.createdAt.localeCompare(a.createdAt)||b.taskId.localeCompare(a.taskId));
+  const source=reviews.find(row=>{
+    const items=(row.value as {findings?:Array<{id:string;status:string}>}).findings??[];
+    return payload.finding_ids!.every(id=>items.some(f=>f.id===id&&(f.status==='open'||f.status==='uncertain')));
+  });
+  if(!source)throw new Error('RECHECK_LINEAGE_REQUIRED: no confirmed Review supports the exact correction finding IDs.');
+  const ids=[...new Set(payload.finding_ids)];
+  if(ids.length!==payload.finding_ids.length||ids.some(id=>typeof id!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(id)))
+    throw new Error('RECHECK_LINEAGE_REQUIRED: correction finding identity is invalid.');
+  return {correctTaskId:correct.id,reviewTaskId:source.taskId,findingIds:ids,
+    prior:[{taskId:source.taskId,operation:'review',value:source.value},
+      {taskId:correct.id,operation:'correct',value:record.value}]};
+}
+/** Restrict optional JSON-pointer edits to existing, specific data. */
+function checkEditablePaths(stage:Stage,artifact:unknown,paths:string[]){
+  const structural=stage==='script'?
+    new Set(['/sections','/authoring','/schema']):
+    new Set(['/manifest','/manifest/shots','/shot_ledger','/sound_script','/asset_needs','/schema']);
+  const forbidden=new Set(['/manifest/voice','/manifest/captions']);
+  for(const pointer of paths){
+    if(typeof pointer!=='string'||!/^\/[A-Za-z0-9_~/-]+$/.test(pointer)||pointer.endsWith('/')||
+      structural.has(pointer)||forbidden.has(pointer))throw new Error('INVALID_EDITABLE_PATH: whole-root/collection or immutable field is not an authorized edit: '+pointer);
+    const parts=pointer.slice(1).split('/').map(segment=>segment.replace(/~1/g,'/').replace(/~0/g,'~'));
+    if(parts.some(segment=>!segment||segment==='__proto__'||segment==='prototype'||segment==='constructor'))
+      throw new Error('INVALID_EDITABLE_PATH: unsafe pointer segment: '+pointer);
+    if(stage==='script'){
+      if(parts[0]==='sections'){
+        if(parts.length!==3||!/^(0|[1-9]\d*)$/.test(parts[1])||parts[2]!=='text')
+          throw new Error('INVALID_EDITABLE_PATH: Script section edits require an existing /sections/<index>/text.');
+      }else if(parts[0]==='authoring'){
+        if(parts.length<2)throw new Error('INVALID_EDITABLE_PATH: Script authoring requires a concrete existing field.');
+      }else throw new Error('INVALID_EDITABLE_PATH: Script can edit only concrete sections or authoring fields.');
+    }else if(parts[0]==='manifest'&&
+      (parts[1]==='voice'||parts[1]==='captions'||(parts[1]==='shots'&&parts.length<4)))
+      throw new Error('INVALID_EDITABLE_PATH: immutable timing or broad shot tree.');
+    let node:unknown=artifact;
+    for(const segment of parts){
+      if(!node||typeof node!=='object'||!Object.prototype.hasOwnProperty.call(node,segment))
+        throw new Error('INVALID_EDITABLE_PATH: pointer does not exist in current artifact: '+pointer);
+      node=(node as Record<string,unknown>)[segment];
+    }
+  }
+}
+
 function evidence(root:string,state:StudioState,scope:Scope){
   const selected=scope.media;if(!selected)return{status:'NOT_VERIFIED',modalities:[],ranges:[],files:[]};
   const row=selected==='preview'?state.preview:selected==='film'?state.render:undefined;
@@ -67,8 +133,20 @@ function evidence(root:string,state:StudioState,scope:Scope){
       duration_source:observedDuration!==null?'REGISTERED_NATIVE_QA_REPORT':sampleDuration!==null?'ORIGINAL_SAMPLE_VALIDATION':'NOT_VERIFIED',
       files:[{path:row.path,sha256:row.sha256,reportPath:row.reportPath,reportSha256:row.reportSha256}]};
   }
-  if(selected==='voice'){if(!state.voice||state.voice.stale)throw new Error('NOT_VERIFIED: current voice evidence is unavailable.');return{status:'AVAILABLE_LOCALLY_NOT_TRANSFERRED',modalities:[],ranges:[{start:0,end:state.voice.duration??null}],files:[{path:state.voice.path,sha256:state.voice.sha256}]};}
-  if(!state.alignment?.captionReview)throw new Error('NOT_VERIFIED: owner-reviewed captions are unavailable.');return{status:'AVAILABLE_LOCALLY_NOT_TRANSFERRED',modalities:[],ranges:[],files:[{path:state.alignment.captionsPath,sha256:state.alignment.captionReview.sha256}]};
+  if(selected==='voice'){
+    if(!state.voice||state.voice.stale)throw new Error('NOT_VERIFIED: current voice evidence is unavailable.');
+    const file=resolveProjectFile(root,state.voice.path);
+    if(!fs.existsSync(file)||sha(fs.readFileSync(file))!==state.voice.sha256)
+      throw new Error('BLOCKED: accepted voice WAV bytes changed.');
+    return{status:'AVAILABLE_LOCALLY_NOT_TRANSFERRED',modalities:[],ranges:[{start:0,end:state.voice.duration??null}],files:[{path:state.voice.path,sha256:state.voice.sha256}]};
+  }
+  const captions=state.alignment?.captionReview;
+  if(!captions)throw new Error('NOT_VERIFIED: owner-reviewed captions are unavailable.');
+  const file=resolveProjectFile(root,captions.path);
+  if(!fs.existsSync(file)||sha(fs.readFileSync(file))!==captions.sha256)
+    throw new Error('BLOCKED: approved caption-review evidence changed.');
+  return{status:'AVAILABLE_LOCALLY_NOT_TRANSFERRED',modalities:[],ranges:[],
+    files:[{path:captions.path,sha256:captions.sha256}]};
 }
 
 function lifecycleSourceContext(state:StudioState,stage:Stage,operation:ExternalOperation){
