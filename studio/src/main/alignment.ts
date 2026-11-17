@@ -150,23 +150,23 @@ export async function alignWithElevenLabs(appPath: string, root: string, authori
   if (!response.ok) throw new Error(`ElevenLabs forced alignment failed (${response.status}).`);
   const body=await response.text();
   if(Buffer.byteLength(body,'utf8')>2*1024*1024)throw new Error('ELEVENLABS_RESPONSE_TOO_LARGE');
+  persistAlignmentResponse(root,pin,body); // Preserve the exact successful HTTP text before JSON parsing.
   const raw=JSON.parse(body) as Record<string,unknown>;
-  persistAlignmentResponse(root,pin,raw);
   const words=validateAlignment(raw,transcript,wav.duration);
   assertAlignmentPin(root,pin);return publishAlignment(appPath,root,raw,words,transcript,'ELEVENLABS',pin);
 }
 
 /** Persist successful vendor evidence before normalization so timing can be
  * repaired locally without a second billable upload. No API key is stored. */
-export function persistAlignmentResponse(root:string,pin:AlignmentPin,raw:Record<string,unknown>){
-  const payload=JSON.stringify(raw);
+export function persistAlignmentResponse(root:string,pin:AlignmentPin,raw:Record<string,unknown>|string){
+  const payload=typeof raw==='string'?raw:JSON.stringify(raw);
   if(Buffer.byteLength(payload,'utf8')>2*1024*1024)throw new Error('ELEVENLABS_RESPONSE_TOO_LARGE');
   const requestId=randomUUID();
   const relative='.studio/alignment/provider-'+requestId+'.json';
   atomicJson(resolveProjectFile(root,relative),{
     schema:'elevenlabs-response-evidence-v1',requestId,projectId:pin.projectId,
     approvedTranscriptSha256:pin.transcriptSha256,approvedScriptSha256:pin.scriptSha256,
-    acceptedWavSha256:pin.audioSha256,pin,responseSha256:sha(payload),raw
+    acceptedWavSha256:pin.audioSha256,pin,responseSha256:sha(payload),responseText:payload
   });
   return relative;
 }
@@ -179,9 +179,13 @@ export function eligibleAlignmentResponse(root:string,pin=captureAlignmentPin(ro
     const value=strictJson(fs.readFileSync(resolveProjectFile(root,'.studio/alignment/'+name),'utf8')) as Record<string,unknown>;
     if(value.schema!=='elevenlabs-response-evidence-v1'||JSON.stringify(value.pin)!==JSON.stringify(pin))
       continue;
-    const raw=value.raw;
-    if(!raw||typeof raw!=='object'||Array.isArray(raw)||sha(JSON.stringify(raw))!==value.responseSha256)
+    const body=value.responseText;
+    if(typeof body!=='string'||Buffer.byteLength(body,'utf8')>2*1024*1024||sha(body)!==value.responseSha256)
       throw new Error('ELEVENLABS_RESPONSE_EVIDENCE_CORRUPT');
+    let raw:unknown;
+    try{raw=JSON.parse(body);}catch{throw new Error('ELEVENLABS_RESPONSE_EVIDENCE_MALFORMED_JSON');}
+    if(!raw||typeof raw!=='object'||Array.isArray(raw))
+      throw new Error('ELEVENLABS_RESPONSE_EVIDENCE_INVALID_JSON');
     return raw as Record<string,unknown>;
   }
   return null;
