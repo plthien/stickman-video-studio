@@ -151,6 +151,26 @@ describe('REG-TAB navigation persistence, read-only history and async isolation'
     expect(screen.getByLabelText('active-project')).toHaveTextContent('B');
     expect(screen.queryByText('Saved prompt A-review')).not.toBeInTheDocument();
   });
+  it('REG-TAB-06 validates pending Review only in its captured tab; late result cannot appear in Correct',async()=>{
+    const gate=deferred<StudioStagedImport>();
+    bridge({readFrozen:async()=>null,readHistory:async()=>[],
+      freezeLifecycle:async()=>({id:'review-frozen',revision:1,prompt:'Review frozen prompt'}),
+      stageLifecycle:()=>gate.promise});
+    render(<AppStateProvider><Harness><ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider></Harness></AppStateProvider>);
+    fireEvent.click(await screen.findByRole('button',{name:'Review'}));
+    fireEvent.click(screen.getByRole('button',{name:'Build Task'}));
+    await waitFor(()=>expect(screen.getByTestId('external-task-prompt')).toHaveTextContent('Review frozen prompt'));
+    fireEvent.change(screen.getByLabelText('Import JSON'),{target:{value:'{"review":"pending"}'}});
+    fireEvent.click(screen.getByRole('button',{name:'Validate import'}));
+    fireEvent.click(screen.getByRole('button',{name:'Correct'}));
+    gate.resolve({token:'old-review',stage:'script',status:'STAGED',before:{},after:{},changes:1,missing:[]});
+    await flush();
+    expect(screen.queryByText(/Schema valid/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/BEFORE/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:'Review'}));
+    expect(screen.getByLabelText('Import JSON')).toHaveValue('{"review":"pending"}');
+    expect(screen.queryByText(/Schema valid/)).not.toBeInTheDocument();
+  });
   it('REG-TAB-08 never reconstructs corrupt/missing history from unrelated state',async()=>{
     bridge({readFrozen:async()=>null,
       readHistory:async()=>[{...record('damaged','review'),prompt:null,confirmedJson:null,
