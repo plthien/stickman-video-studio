@@ -75,7 +75,9 @@ describe('REG-TAB read-only external history and integrity',()=>{
       expect(rows[0].confirmedJson).toContain('"task_id":"'+task.id+'"');
       expect(rows[0].integrity).toBe('OK');
     }
+    expect(readExternalHistory(root,'script','review')[0].reviewStatus).toBe('REVIEWED_WITH_FINDINGS');
     expect(readExternalHistory(root,'script','review')[0].findings[0].status).toBe('open');
+    expect(readExternalHistory(root,'script','recheck')[0].reviewStatus).toBe('REVIEWED_NO_FINDINGS');
     expect(readExternalHistory(root,'script','recheck')[0].findings[0].status).toBe('resolved');
     // Reopen = new disk read. No in-memory UI or new task freezing needed.
     expect(readExternalHistory(root,'script','recheck')[0].confirmedJson).toContain('"resolved"');
