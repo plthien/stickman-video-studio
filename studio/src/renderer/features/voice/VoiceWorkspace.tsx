@@ -4,12 +4,12 @@ import { Badge, Button, Card, CardHeader, Field, Input, Select, Textarea } from 
 
 export function VoiceWorkspace() {
   const { native, captureProjectSession,isCurrentProjectSession,setNativeIfSessionCurrent, showNotice, nanoEndpoint, setNanoEndpoint } = useAppState();
-  const [profiles, setProfiles] = useState<Array<Record<string, unknown>>>([]), [voice, setVoice] = useState(native?.nano?.profileId ?? '');
+  const [profiles, setProfiles] = useState<Array<Record<string, unknown>>>([]), [voice, setVoice] = useState(native?.nano?.profileId ?? native?.longform?.profileId ?? '');
   const [status, setStatus] = useState<'idle'|'ready'|'busy'|'error'|'cancelled'>('idle'), [message, setMessage] = useState(''), [authorized, setAuthorized] = useState(false);
   const [jobAction,setJobAction]=useState<null|{action:'generate'|'regenerate'|'resume'|'retry'|'running'|'blocked';reason:string;completed:number;total:number;currentPart?:number;status:string;detail?:string}>(null);
   const [timingEvidence,setTimingEvidence]=useState(false);
   const id = native?.project.id, script = native?.approvedScript?.text ?? '';
-  useEffect(()=>{setVoice(native?.nano?.profileId??'');setProfiles([]);setAuthorized(false);},[id,native?.nano?.profileId]);
+  useEffect(()=>{setVoice(native?.nano?.profileId??native?.longform?.profileId??'');setProfiles([]);setAuthorized(false);},[id,native?.nano?.profileId,native?.longform?.profileId]);
   const [playbackUrl,setPlaybackUrl]=useState(''),[playbackError,setPlaybackError]=useState(''),[playbackRetry,setPlaybackRetry]=useState(0);
   const audioSha=native?.voice?.sha256,voiceStale=native?.voice?.stale;
   useEffect(()=>setPlaybackRetry(0),[id,audioSha]);
@@ -92,7 +92,7 @@ export function VoiceWorkspace() {
   return <div className="grid wide-left"><div className="stack"><Card>
     <CardHeader title="VoiceStudio Chatterbox Nano" hint="Direct owner API · localhost:3901" action={<Badge tone={status==='ready'?'mint':status==='error'?'amber':'neutral'}>{status.toUpperCase()}</Badge>}/>
     <Field label="Local endpoint"><Input value={nanoEndpoint} onChange={event=>setNanoEndpoint(event.target.value)}/></Field>
-    <Field label="Confirmed voice profile"><Select value={voice} onChange={event=>setVoice(event.target.value)}><option value="">Select discovered profile</option>{profiles.map(item=><option key={String(item.id)} value={String(item.id)}>{String(item.name??item.id)} · v{String(item.version)}</option>)}</Select></Field>
+    <Field label="Confirmed voice profile"><Select value={voice} onChange={event=>setVoice(event.target.value)}><option value="">Select discovered profile</option>{voice&&!profiles.some(item=>String(item.id)===voice)&&<option value={voice}>{voice} · saved attempt profile</option>}{profiles.map(item=><option key={String(item.id)} value={String(item.id)}>{String(item.name??item.id)} · v{String(item.version)}</option>)}</Select></Field>
     <Field label="Approved narration (project source, read only)"><Textarea readOnly value={script}/></Field>
     <div className="actions"><Button disabled={!window.studio||status==='busy'} onClick={async()=>{const scope=captureProjectSession();if(!scope)return;setStatus('busy');try{const result=await window.studio!.nanoDiscover(nanoEndpoint);if(!isCurrentProjectSession(scope))return;setProfiles(result.profiles);setStatus(result.ready?'ready':'error');setMessage(result.ready?`${result.profiles.length} confirmed profile(s); producer ready.`:'Producer readiness failed.')}catch(reason){if(isCurrentProjectSession(scope))fail(reason)}}}>Discover producer</Button>
       <Button variant="primary" disabled={!id||!script||!voice||status==='busy'||!jobAction||(jobAction.action==='running'||jobAction.action==='blocked')} onClick={()=>void runNarration()}>{jobAction?.action==='generate'?'Generate narration':jobAction?.action==='regenerate'?'Regenerate narration':jobAction?.action==='resume'?'Resume narration':jobAction?.action==='retry'?'Explicit Retry uncertain part':jobAction?.action==='running'?'Generation running':jobAction?.action==='blocked'?'Recovery blocked — refresh status':'Checking job state...'}</Button>
