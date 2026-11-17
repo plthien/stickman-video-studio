@@ -38,8 +38,10 @@ export function ExternalWorkspace(){
   const {tab,setTab,tabs,patch}=useSession();
   const {native,captureProjectSession,isCurrentProjectSession,setNativeIfSessionCurrent,showNotice}=useAppState();
   const [operation,setOperation]=useState<Operation>('Author');
-  const [reviewMediaKind,setReviewMediaKind]=useState<MediaKind>('voice');
   const stage=tab.toLowerCase();
+  const [mediaByStage,setMediaByStage]=useState<{script:MediaKind;native:MediaKind}>({script:'voice',native:'preview'});
+  const reviewMediaKind=stage==='script'?mediaByStage.script:mediaByStage.native;
+  const setReviewMediaKind=(value:MediaKind)=>setMediaByStage(prev=>({...prev,[stage]:value}));
   const lifecycleOperation=operation.toLowerCase().replace(' ','-') as 'review'|'correct'|'recheck'|'media-review';
   const mediaKind:MediaKind|undefined=operation==='Media review'?
     (stage==='script'?(reviewMediaKind==='captions'?'captions':'voice'):
@@ -51,7 +53,7 @@ export function ExternalWorkspace(){
   const {json,result,prompt,pending,nativeMediaStatus,error,previewSeconds,draftConsent,
     reviewTargets,editable,editablePaths,findingScope,reviewFolder,transferAcknowledged,
     frozenScopeKey,frozenTaskId,history,historySelectedId,historyLoading}=local;
-  const field=<K extends keyof TabValues>(name:K)=>(value:TabValues[K])=>
+  const field=<K extends keyof TabValues,>(name:K)=>(value:TabValues[K])=>
     patch(sessionKey,{[name]:value} as Pick<TabValues,K>);
   const setJson=field('json'),setResult=field('result'),setPrompt=field('prompt');
   const setPending=field('pending'),setNativeMediaStatus=field('nativeMediaStatus');
@@ -134,12 +136,13 @@ export function ExternalWorkspace(){
   },[projectId,stage,operation,mediaKind]);
   const reloadHistory=(project:string,expectedKey=sessionKey)=>{
     if(!window.studio?.readHistory)return;
+    const session=captureProjectSession();
     const op=operation==='Author'?'author':lifecycleOperation;
     void window.studio.readHistory(project,stage,op,mediaKind).then(rows=>{
-      if(activeKey.current===expectedKey&&projectId===project)
+      if(activeKey.current===expectedKey&&session&&isCurrentProjectSession(session)&&projectId===project)
         patch(expectedKey,{history:rows,historyLoading:false});
     }).catch(reason=>{
-      if(activeKey.current===expectedKey)patch(expectedKey,{error:'History read: '+String(reason)});
+      if(activeKey.current===expectedKey&&session&&isCurrentProjectSession(session))patch(expectedKey,{error:'History read: '+String(reason)});
     });
   };
   const buildTask=async(forceRebuild=false)=>{
@@ -156,6 +159,7 @@ export function ExternalWorkspace(){
         expectedStage!==stage||expectedOperation!==operation||activeKey.current!==sessionKey)return;
       setPrompt(task.prompt);setFrozenTaskId(task.id);setFrozenScopeKey(key);
       setPending(null);setNativeMediaStatus(null);setResult('idle');setJson('');setError('');
+      patch(sessionKey,{history:[],historySelectedId:''});
       reloadHistory(session.projectId,sessionKey);
       showNotice(rebuild?'Task rebuilt. Previous exported responses are now stale.':'Frozen task ready to export.');
     }catch(reason){if(sequence===requests.current.freeze&&isCurrentProjectSession(session))setError(String(reason));}
@@ -180,7 +184,7 @@ export function ExternalWorkspace(){
   const validate=async()=>{const scope=captureProjectSession(),expectedStage=stage,expectedOperation=operation,sequence=++requests.current.validate;try{if(!native||!scope||!window.studio||!canImport)throw new Error('A current FROZEN task is required to validate an import.');const value=operation==='Author'?await window.studio.stageImport(native.project.id,expectedStage,json):await window.studio.stageLifecycle(native.project.id,expectedStage,lifecycleOperation,json);if(!isCurrentProjectSession(scope)||expectedStage!==stage||expectedOperation!==operation||sequence!==requests.current.validate)return;setPending(value);setNativeMediaStatus(null);setResult('valid');}catch(reason){if(scope&&(!isCurrentProjectSession(scope)||expectedStage!==stage||sequence!==requests.current.validate))return;setResult('invalid');setError(reason instanceof Error?reason.message:String(reason));}};
   const copy=()=>{const scope=captureProjectSession(),expectedStage=stage;if(!scope||!visiblePrompt)return;void navigator.clipboard.writeText(visiblePrompt).then(()=>{if(isCurrentProjectSession(scope)&&expectedStage===stage)showNotice(`${tab} prompt copied.`)}).catch(reason=>{if(isCurrentProjectSession(scope)&&expectedStage===stage)setError('Clipboard ERROR: '+String(reason))})};
   const exportFile=async()=>{if(!native||!window.studio)return;const scope=captureProjectSession(),expectedStage=stage,sequence=++requests.current.export;if(!scope)return;try{const file=await window.studio.exportPrompt(native.project.id,expectedStage,operation==='Author'?'author':lifecycleOperation);if(file&&isCurrentProjectSession(scope)&&expectedStage===stage&&sequence===requests.current.export)showNotice('Prompt exported: '+file);}catch(reason){if(isCurrentProjectSession(scope)&&expectedStage===stage&&sequence===requests.current.export)setError(String(reason));}};
-  const exportMediaPack=async()=>{if(!native||!window.studio)return;const scope=captureProjectSession();if(!scope)return;try{const kind=reviewMediaKind;const value=await window.studio.reviewPack(scope.projectId,kind);if(isCurrentProjectSession(scope))setReviewFolder(value.folder??value.path);}catch(reason){if(isCurrentProjectSession(scope))setError(String(reason));}};
+  const exportMediaPack=async()=>{if(!native||!window.studio)return;const scope=captureProjectSession(),expectedKey=sessionKey;if(!scope||!mediaKind)return;try{const value=await window.studio.reviewPack(scope.projectId,mediaKind);if(isCurrentProjectSession(scope)&&activeKey.current===expectedKey)setReviewFolder(value.folder??value.path);}catch(reason){if(isCurrentProjectSession(scope)&&activeKey.current===expectedKey)setError(String(reason));}};
   const taskReadOnly=Boolean(selectedHistory&&selectedHistory.status!=='FROZEN'&&
     (!frozenTaskId||selectedHistory.id!==frozenTaskId));
   const displayedStatus=taskReadOnly?selectedHistory!.status:historyStatus;
@@ -189,7 +193,7 @@ export function ExternalWorkspace(){
     {history.length>1&&<Field label="Saved task history"><select aria-label="Saved task history" value={selectedHistory?.id??''} onChange={event=>patch(sessionKey,{historySelectedId:event.target.value})}>{history.map(item=><option key={item.id} value={item.id}>revision {item.revision} · {item.status} · {item.id.slice(0,8)}</option>)}</select></Field>}
     {taskReadOnly&&<div className="info" data-testid="external-history-status">Saved {displayedStatus} task · read-only history. Build a new task to import a new response.</div>}
     {selectedHistory?.errors.length?<div className="info error" role="alert">History integrity: {selectedHistory.errors.join(', ')}. Missing or unverifiable data is not reconstructed.</div>:null}
-    {selectedHistory?.confirmedJson&&<div className="info" data-testid="external-confirmed-history"><strong>Confirmed JSON · read-only</strong><pre className="prompt" aria-label="Confirmed JSON history">{selectedHistory.confirmedJson}</pre></div>{!native&&<div className="info">EMPTY — Create/open a project to freeze a real ChatGPT task. No sample prompt is available.</div>}{operation==='Media review'&&<div className="actions external-task-media-actions"><Field label="Review media scope"><select value={reviewMediaKind} onChange={event=>{setReviewMediaKind(event.target.value as 'preview'|'film'|'voice'|'captions');setReviewFolder('');setTransferAcknowledged(false);}}>{stage==='native'?<><option value="preview">Actual preview</option><option value="film">Encoded full film</option></>:<><option value="voice">Accepted narration WAV</option><option value="captions">Accepted captions</option></>}</select></Field><Button disabled={!native} onClick={exportMediaPack}>Export actual media pack</Button><label className="check"><input type="checkbox" checked={transferAcknowledged} onChange={event=>setTransferAcknowledged(event.target.checked)}/> I manually transferred this project's actual MP4/WAV and review JSON to External ChatGPT. This attestation is not proof the model inspected them.</label></div>}{reviewFolder&&<div className="info">Transfer the actual files in {reviewFolder} together with review-package.json. Local files and hashes alone do not establish audiovisual inspection.</div>}{lastReview&&<div className="info"><strong>Saved {lastReview.operation}: {lastReview.status}</strong>{reviewFindings.length?reviewFindings.map(item=><div key={item.id}>{item.id} · {item.severity} · {item.status} · {item.target_ids.join(', ')} · {item.requirement}</div>):<div>{stage==='script'?'No reported findings; corrected Script activation still requires a clean Recheck.':'No reported findings; this does not approve the native film.'}</div>}</div>}</Card>
+    {selectedHistory?.confirmedJson&&<div className="info" data-testid="external-confirmed-history"><strong>Confirmed JSON · read-only</strong><pre className="prompt" aria-label="Confirmed JSON history">{selectedHistory.confirmedJson}</pre></div>{!native&&<div className="info">EMPTY — Create/open a project to freeze a real ChatGPT task. No sample prompt is available.</div>}{operation==='Media review'&&<div className="actions external-task-media-actions"><Field label="Review media scope"><select value={mediaKind??reviewMediaKind} onChange={event=>setReviewMediaKind(event.target.value as MediaKind)}>{stage==='native'?<><option value="preview">Actual preview</option><option value="film">Encoded full film</option></>:<><option value="voice">Accepted narration WAV</option><option value="captions">Accepted captions</option></>}</select></Field><Button disabled={!native} onClick={exportMediaPack}>Export actual media pack</Button><label className="check"><input type="checkbox" checked={transferAcknowledged} onChange={event=>setTransferAcknowledged(event.target.checked)}/> I manually transferred this project's actual MP4/WAV and review JSON to External ChatGPT. This attestation is not proof the model inspected them.</label></div>}{reviewFolder&&<div className="info">Transfer the actual files in {reviewFolder} together with review-package.json. Local files and hashes alone do not establish audiovisual inspection.</div>}{lastReview&&<div className="info"><strong>Saved {lastReview.operation}: {lastReview.status}</strong>{reviewFindings.length?reviewFindings.map(item=><div key={item.id}>{item.id} · {item.severity} · {item.status} · {item.target_ids.join(', ')} · {item.requirement}</div>):<div>{stage==='script'?'No reported findings; corrected Script activation still requires a clean Recheck.':'No reported findings; this does not approve the native film.'}</div>}</div>}</Card>
     <Card><CardHeader title="Import JSON workspace" hint="Strict schema · diff · explicit confirmation"/><Textarea aria-label="Import JSON" value={json} onChange={event=>change(event.target.value)} placeholder="Paste the returned JSON here…"/><div className="actions"><input ref={jsonFilePicker} type="file" accept=".json,application/json" aria-label="Choose JSON file" hidden onChange={event=>{const file=event.currentTarget.files?.[0];event.currentTarget.value='';if(file)importJsonFile(file);}}/><Button disabled={!native} onClick={()=>jsonFilePicker.current?.click()}>Import .json</Button><Button disabled={!json} onClick={()=>change('')}>Clear</Button><Button variant="primary" disabled={!native||!json||!canImport} onClick={validate}>Validate import</Button></div>
       {result==='valid'&&<div className="info success">Schema valid. Review the staged diff before import.</div>}{result==='invalid'&&<div className="info error" role="alert">Invalid import. {error}</div>}
       {pending&&<><div className="diff-grid"><pre className="prompt">BEFORE{`\n`}{JSON.stringify(pending.before,null,2)}</pre><pre className="prompt">AFTER{`\n`}{JSON.stringify(pending.after,null,2)}</pre></div>
