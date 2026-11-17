@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {afterEach,describe,expect,it} from 'vitest';
 import {freezeTask,externalOutputFilename} from '../../src/main/externalTasks';
-import {freezeLifecycleTask} from '../../src/main/externalLifecycle';
+import {freezeLifecycleTask,stageLifecycleResult,confirmLifecycleResult} from '../../src/main/externalLifecycle';
 import {readState,sha,writeState,type ExternalOperation,type Stage} from '../../src/main/services';
 import {appPath,cleanup,fixture} from './SixIssueFixtures';
 
@@ -80,6 +80,42 @@ describe('R2 frozen task JSON attachment delivery',()=>{
         freezeLifecycleTask(appPath,root,row.stage,row.operation,scope);
       expect(same.id).toBe(task.id);
       expect(externalOutputFilename(row.stage,row.operation,same.revision,same.id,row.media)).toBe(filename);
+      if(row.operation==='review'){
+        // Truly confirm a stage-specific review before freezing Correct/Recheck.
+        const life=task as ReturnType<typeof freezeLifecycleTask>;
+        const target=row.stage==='script'?'opening':'old-shot';
+        const findingId=row.stage==='script'?'F-SCRIPT':'F-NATIVE';
+        const response={schema:'mode-b-lifecycle-result-v1',project_id:readState(root).project.id,
+          task_id:life.id,revision:life.revision,input_sha256:life.inputSha256,
+          stage:row.stage,operation:'review',
+          payload:{schema:'mode-b-review-v1',artifact_sha256:life.artifactSha256,
+            status:'REVIEWED_WITH_FINDINGS',
+            coverage:{target_ids:[target],modalities:[row.stage==='script'?'script':'manifest'],ranges:[],media_sha256s:[]},
+            findings:[{id:findingId,status:'open',severity:'major',target_ids:[target],
+              requirement:'An explicitly supplied stage-specific test requirement.',
+              evidence:{kind:'manifest',detail:'Synthetic test-only finding attached to the exact current artifact.'},
+              recommendation:'Make an authorized scoped repair.'}]}
+        };
+        const pending=stageLifecycleResult(appPath,root,row.stage,'review',JSON.stringify(response));
+        confirmLifecycleResult(root,pending.token);
+      }
+      if(row.operation==='correct'){
+        const life=task as ReturnType<typeof freezeLifecycleTask>;
+        const state=readState(root);
+        const artifact=row.stage==='script'?
+          {schema:'mode-b-script-v1',sections:[{id:'opening',text:'Repaired narration for this isolated Script test.'}],
+            authoring:state.approvedScript!.authoring??{}}:
+          {manifest:JSON.parse(fs.readFileSync(path.join(root,'project.json'),'utf8')),
+            shot_ledger:[],sound_script:[],asset_needs:[]};
+        const response={schema:'mode-b-lifecycle-result-v1',project_id:state.project.id,
+          task_id:life.id,revision:life.revision,input_sha256:life.inputSha256,
+          stage:row.stage,operation:'correct',payload:{
+            schema:'mode-b-correction-v1',artifact_sha256:life.artifactSha256,
+            finding_ids:life.findingIds??[],editable_ids:life.editableIds??[],editable_paths:life.editablePaths??[],
+            artifact}};
+        const staged=stageLifecycleResult(appPath,root,row.stage,'correct',JSON.stringify(response));
+        confirmLifecycleResult(root,staged.token);
+      }
     }
     expect(seen.size).toBe(10);
     console.info('R2_TEN_FROZEN_JSON_OUTPUTS',JSON.stringify(frozenFilenameEvidence));
