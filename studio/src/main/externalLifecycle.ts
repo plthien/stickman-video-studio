@@ -70,7 +70,8 @@ function correctionLineage(state:StudioState,stage:Stage,current:Artifact):Linea
     throw new Error('RECHECK_LINEAGE_REQUIRED: current Native artifact differs from the published correction.');
   }
   const reviews=Object.values(state.lifecycle?.artifacts??{}).filter(row=>row.stage===stage&&
-    row.operation==='review'&&(row.value as {artifact_sha256?:string})?.artifact_sha256===correct.artifactSha256)
+    row.operation==='review'&&row.createdAt<=correct.createdAt&&
+    (row.value as {artifact_sha256?:string})?.artifact_sha256===correct.artifactSha256)
     .sort((a,b)=>b.createdAt.localeCompare(a.createdAt)||b.taskId.localeCompare(a.taskId));
   const source=reviews.find(row=>{
     const items=(row.value as {findings?:Array<{id:string;status:string}>}).findings??[];
