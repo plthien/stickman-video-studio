@@ -289,6 +289,12 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
     'PRIOR FINDINGS AND UNCERTAINTY',JSON.stringify(relevantPrior,null,2),
     'EDITABLE SCOPE AND GLOBAL LOCKS',JSON.stringify({editableIds,editablePaths,locked:'all other section/shot IDs, fields and auxiliary ledgers',findingIds:findingIds},null,2),
     'ACTUAL EVIDENCE TRANSFER STATUS',JSON.stringify(evidencePack,null,2),
+    ...(stage==='script'&&operation==='recheck'?[
+      'SCRIPT RECHECK — TEXT EVIDENCE AND ACTIVATION GATE',
+      'Evaluate the CURRENT corrected Script against every requested previous finding ID '+JSON.stringify(findingIds)+'. Include every requested finding ID in findings with its supported resolved, open or uncertain status. Cross-check non-adjacent narration and creative direction; do not silently revise any section.',
+      'The supplied Script text is sufficient to assess textual causality, coherence, style fit and continuity. Missing WAV/MP4 does not automatically mean INSUFFICIENT_EVIDENCE. Choose REVIEWED_NO_FINDINGS only if all requested findings are demonstrably resolved and full requested textual coverage is complete; this clean current-candidate Recheck is the existing Script activation gate. Otherwise report supported unresolved findings/status honestly. Never assert verified voice duration, audio mixing or encoded-frame observations without real media evidence.',
+      'The JSON response below is a shape example, not a default status. Return the original mode-b-review-v1 schema and exact frozen identity; do not request owner approval.'
+    ]:[]),
     'JSON RESPONSE CONTRACT | replace the example status/findings with supported results only',JSON.stringify(envelope,null,2),
     fileDelivery
   ].join('\n\n')+'\n';
