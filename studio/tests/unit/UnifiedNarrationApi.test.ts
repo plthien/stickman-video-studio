@@ -128,6 +128,16 @@ describe('one verified Nano HTTP narration pipeline',()=>{
     expect(combined.readUInt32LE(40)).toBe(
       inspectWavBuffer(sample).frames*2*2);
   });
+  it('uses the same one-button API pipeline for a single approved section',async()=>{
+    const api=producer();const endpoint=await api.start();
+    try{
+      const root=project(endpoint,[{id:'only',text:'One complete section.'}]);
+      const result=await runLongform(root,{voice:'voice'});
+      expect(result.sha256).toBe(readState(root).voice?.sha256);
+      expect(api.get().speechCalls).toBe(1);
+      expect(readState(root).longform?.status).toBe('PASS');
+    }finally{await api.close();}
+  });
   it('generates all sections over HTTP, publishes once and reuses completed proof without deleting captions',async()=>{
     const api=producer();const endpoint=await api.start();
     try{
