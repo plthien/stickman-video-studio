@@ -2,7 +2,7 @@
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {afterEach,describe,expect,it} from 'vitest';
-import {confirmLifecycleResult,freezeLifecycleTask,stageLifecycleResult} from '../../src/main/externalLifecycle';
+import {confirmLifecycleResult,freezeLifecycleTask,stageLifecycleResult,suggestedCorrectScope} from '../../src/main/externalLifecycle';
 import {freezeTask,stageImport,confirmImport,externalOutputFilename} from '../../src/main/externalTasks';
 import {compileAuthority,SCRIPT_AUTHOR_EXTRACTION_REVISION} from '../../src/main/externalAuthority';
 import {projectId,readState,writeState,type StudioState} from '../../src/main/services';
@@ -301,6 +301,41 @@ describe('External creative lifecycle',()=>{
       expect(compileAuthority(appPath,style,'script','media-review').version).toBe('stage-exact-v2');
       expect(compileAuthority(appPath,style,'native','review').version).toBe('stage-exact-v2');
     }
+  });
+
+  it('AUTO-CORRECT-01: confirmed current-review findings become the Correct scope without manual IDs',()=>{
+    const root=fixture(),state=readState(root),review=freezeLifecycleTask(appPath,root,'script','review');
+    const response={
+      schema:'mode-b-lifecycle-result-v1',project_id:state.project.id,
+      task_id:review.id,revision:review.revision,input_sha256:review.inputSha256,
+      stage:'script',operation:'review',payload:{
+        schema:'mode-b-review-v1',artifact_sha256:review.artifactSha256,
+        status:'REVIEWED_WITH_FINDINGS',
+        coverage:{target_ids:['opening','payoff'],modalities:['script'],ranges:[],media_sha256s:[]},
+        findings:[
+          {id:'F-open',severity:'major',status:'open',target_ids:['opening'],
+            requirement:'Establish a readable causal hook.',evidence:{kind:'manifest',detail:'The opening has a factual causal gap.'},recommendation:'Clarify opening.'},
+          {id:'F-resolved',severity:'minor',status:'resolved',target_ids:['payoff'],
+            requirement:'Preserve payoff consistency.',evidence:{kind:'manifest',detail:'The payoff remains coherent.'},recommendation:'No change required.'}
+        ]
+      }
+    };
+    const staged=stageLifecycleResult(appPath,root,'script','review',JSON.stringify(response));
+    confirmLifecycleResult(root,staged.token);
+    const suggested=suggestedCorrectScope(root,readState(root),'script');
+    expect(suggested).toMatchObject({findingIds:['F-open'],editableIds:['opening'],reviewTaskId:review.id});
+    const correct=freezeLifecycleTask(appPath,root,'script','correct');
+    expect(correct.findingIds).toEqual(['F-open']);
+    expect(correct.editableIds).toEqual(['opening']);
+    expect(correct.prompt).toContain('F-open');
+    expect(correct.prompt).toContain('"opening"');
+    const updated=readState(root);
+    updated.scriptCandidate!.sections[0].text='A completely new Script version.';
+    updated.scriptCandidate!.text=updated.scriptCandidate!.sections.map(x=>x.text).join('\n\n');
+    updated.scriptCandidate!.sha256=awaitHash(updated.scriptCandidate!.text);
+    writeState(root,updated);
+    expect(suggestedCorrectScope(root,readState(root),'script').findingIds).toEqual([]);
+    expect(()=>freezeLifecycleTask(appPath,root,'script','correct')).toThrow(/requires unresolved findings/);
   });
 
   it('binds independent review to the exact candidate and never approves it',()=>{const root=fixture(),task=freezeLifecycleTask(appPath,root,'script','review');expect(task.prompt).toContain('causal');expect(task.prompt).toContain('B4');const result={schema:'mode-b-lifecycle-result-v1',project_id:readState(root).project.id,task_id:task.id,revision:task.revision,input_sha256:task.inputSha256,stage:'script',operation:'review',payload:{schema:'mode-b-review-v1',artifact_sha256:task.artifactSha256,status:'REVIEWED_WITH_FINDINGS',coverage:{target_ids:['opening','payoff'],modalities:[],ranges:[]},findings:[{id:'F-1',severity:'major',status:'open',target_ids:['opening'],requirement:'opening threat',evidence:{kind:'manifest',detail:'threat lacks consequence'},recommendation:'strengthen causal consequence'}]}};const pending=stageLifecycleResult(appPath,root,'script','review',JSON.stringify(result));confirmLifecycleResult(root,pending.token);expect(readState(root).approvedScript).toBeUndefined();expect(readState(root).lifecycle?.artifacts[task.id].status).toBe('REVIEWED_WITH_FINDINGS')});
