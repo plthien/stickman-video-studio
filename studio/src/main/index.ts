@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path, { join } from 'node:path';
 import { alignWithElevenLabs } from './alignment.js';
 import {elevenLabsStatus,saveElevenLabsKey,clearElevenLabsKey,resolveElevenLabsKey} from './elevenlabsCredentials.js';
-import {acceptedNarrationPlaybackUrl} from './voicePlayback.js';
+import {acceptedNarrationPlaybackUrl,verifyAcceptedNarrationRequest} from './voicePlayback.js';
 import { reconcileScriptActivation, confirmImport, freezeTask, stageImport, getPendingMedia, fulfillMedia, importMediaFile } from './externalTasks.js';
 import {confirmLifecycleResult,freezeLifecycleTask,readFrozenExternalTask,stageLifecycleResult} from './externalLifecycle.js';
 import {readExternalHistory} from './externalHistory.js';
@@ -86,8 +86,10 @@ app.whenReady().then(() => {
     if(!root)return new Response('Unknown project',{status:404});
     try{
       const relative=assertMediaRelative(decodeURIComponent(url.pathname.slice(1)));
-      if(relative==='assets/audio/narration.wav'&&request.url!==acceptedNarrationPlaybackUrl(root))
-        return new Response('Accepted narration authorization changed',{status:409});
+      if(relative==='assets/audio/narration.wav'){
+        try{verifyAcceptedNarrationRequest(root,request.url);}
+        catch{return new Response('Accepted narration authorization changed',{status:409});}
+      }
       return net.fetch(fileFetchUrl(root,relative),{headers:request.headers});
     }catch{return new Response('Forbidden',{status:403});}
   });
