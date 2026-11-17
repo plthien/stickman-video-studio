@@ -85,10 +85,13 @@ provenance and original Git-blob fail-closed identity.
 
 ## Workflow, correction scope and media truthfulness
 
-Script: Author → Import candidate → Review → Correct selected IDs → Recheck
-→ explicit Owner Approve. Corrected candidates require a matching independent
-recheck before approval. Approved script remains separate from the candidate;
-approved text changes invalidate dependent narration/alignment/preview.
+Script: Author → Confirm import → automatically activate the exact imported Script for Voice.
+Optional independent Review → scoped Correct → Recheck remains available.
+Corrected candidates are not activated until an exact-current-candidate independent
+REVIEWED_NO_FINDINGS Recheck is imported. No separate owner approval/note/button exists.
+Approved Script remains separate from pending corrections; changed content invalidates
+old narration/alignment/preview. Previously imported author candidates are activated
+idempotently on project reopen; unresolved corrections remain pending.
 
 Native corrections require the complete existing manifest v1 plus shot_ledger,
 sound_script and asset_needs arrays. All unlisted shots and global/auxiliary fields
