@@ -32,7 +32,7 @@ function safeRead(root:string,relative:string,expectedSha:string,errors:string[]
  */
 function legacyAuthorResponse(root:string,state:StudioState,stage:Stage,task:TaskRecord,errors:string[]):string|null{
   const folder='.studio/external/responses';
-  let names:string[];
+  let names:string[]=[];
   try{
     const dir=resolveProjectFile(root,folder);
     if(!fs.existsSync(dir)){errors.push('LEGACY_RESPONSE_NOT_VERIFIABLE');return null;}
