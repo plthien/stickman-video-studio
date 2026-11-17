@@ -147,6 +147,70 @@ than treating a local path in JSON as proof of visual/audio inspection.
 Real ChatGPT file transfer and audiovisual observation require separate
 human activity; imported creative review never auto-approves a film.
 
+## Full lifecycle prompt/evidence repair — Script/Native × five operations
+
+Original Author and independent Script Review remain source-baseline prompts. All
+other lifecycle operations now use explicit **operation-specific** missions instead
+of an executable copy of the original Author task. One immutable current
+Script/Native artifact is shown; the original frozen Author task is a
+**subordinate, SHA-bound authority appendix**, not a request to author again.
+Outside the appendix, source requirements are represented by original/extracted
+SHA and provenance instead of duplicated full normative text.
+
+| Stage / operation | Evidence boundary | Response contract | Protection |
+|---|---|---|---|
+| Script Author | project brief + B1–B4 creative source | existing `mode-b-external-result-v1` / `mode-b-script-v1` | automatic activation after confirmed import |
+| Script Review | current narration + authoring | `mode-b-review-v1` | CR-01–CR-12, no default verdict |
+| Script Correct | current Script + confirmed findings | complete `mode-b-correction-v1` | editable section text/authorized existing paths only; unresolved no-op blocked |
+| Script Recheck | **exact confirmed correction candidate** + original linked Review | `mode-b-review-v1` / each required finding status | no fabricated media checks; only an independently clean exact-candidate Recheck activates |
+| Script Media Review (voice) | accepted WAV bytes and actual external listening if supplied | `mode-b-review-v1` | no text-only voice-quality claims |
+| Script Media Review (captions) | approved caption-review bytes; WAV if separately supplied/listened | `mode-b-review-v1` | no audiovisual-sync or frame-legibility claims from text alone |
+| Native Author | full original Mode B Native authority + actual voice/alignment dependencies | existing `mode-b-external-result-v1` / Native manifest | unchanged Native CLI and production validation |
+| Native Review | current manifest + ledgers + original source | `mode-b-review-v1` | manifest feasibility is not encoded-media verification |
+| Native Correct | complete current manifest/shot/sound/asset ledgers | complete `mode-b-correction-v1` | exact shot/path locks; Native no-op and transactional recovery preserved |
+| Native Recheck | published exact Native correction + original confirmed Review | `mode-b-review-v1` | no automatic filmed-media approval |
+| Native Media Review (preview) | actual frozen sample interval and real overlapping shot IDs | `mode-b-review-v1` | out-of-sample targets fail closed |
+| Native Media Review (film) | registered full-duration Film and FULL_READY Native evidence | `mode-b-review-v1` | no full-film claims from only a sample |
+
+For Script/Native Recheck, source finding IDs are resolved from the confirmed
+current Correct task's immutable stored correction, its previous artifact SHA,
+and a confirmed original Review that existed before the correction freeze.
+Foreign-stage records, old artifact revisions, later unrelated reviews and
+Media Review findings never create correction lineage. The entire unresolved
+finding inventory is required; no arbitrary most-recent-three-history rule.
+If the correction/review lineage is missing, Recheck is blocked rather than
+inventing prior evidence.
+
+Only explicit existing Script fields or narrowly authorized Native fields may
+be edited. Whole-root/collection pointers (`/sections`, `/authoring`,
+`/manifest/shots`, `/shot_ledger`, `/sound_script`, `/asset_needs`) are
+rejected. A Native auxiliary array may be appended using its **exact next
+index pointer**, such as `/sound_script/0` when empty. The original Native
+no-op/recovery journal is not forced to generate a meaningless change.
+
+Media Review enforces Script voice/captions and Native preview/film at the
+backend boundary. Local byte verification and owner transfer attestation do
+NOT imply external observation. Preview target IDs are derived from verified
+sample duration and intersecting Native shot boundaries; Film requires
+FULL_READY and registered full duration. A locally exported caption-review
+artifact is checked against its actual approved file SHA (not an unrelated
+alignment-cue SHA). An untransferred media package cannot claim picture,
+motion, sound **or captions** review modalities. Explicit observed media
+evidence remains subject to existing real SHA and supported duration limits.
+
+All lifecycle response prompts provide immutable frozen identity plus a
+separate field-level output contract; no preselected review verdict, dummy
+finding ID or unchanged complete correction artifact is presented as the
+recommended response. They retain the unchanged deterministic downloadable
+`.json` filename rule and manual Validate → Confirm workflow.
+
+The regression suite exercises prompt contracts, real frozen test tasks,
+scoped corrections, linked Recheck activation, native no-op/recovery,
+stage/kind restrictions, partial-preview coverage, untransferred media
+negative cases and old-result/identity rejection. **Source/test existence is
+not a claim that the tests were executed**; run the Windows gates against the
+final HEAD and report actual outputs independently.
+
 ## Measurement and verification policy
 
 Compare actual frozen Script Task byte sizes on identical project inputs before
