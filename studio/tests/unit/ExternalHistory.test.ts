@@ -211,6 +211,7 @@ describe('REG-TAB read-only external history and integrity',()=>{
     await confirmImport(appPath,root,native.response.token,{validator:validator().run});
     const state=readState(root),old=state.tasks!.native!;
     const imported={...old,status:'IMPORTED' as const};
+    delete imported.confirmedResponseSha256;delete imported.confirmedResponsePath;
     old.status='STALE';
     delete old.confirmedResponseSha256;delete old.confirmedResponsePath;
     // Legacy Native revision metadata lacks the task ID. Preserve an exact
