@@ -225,8 +225,15 @@ export async function generateApiNarration(root:string,input:JobInput){
       parts:segments.length,verifiedParts:wavs.length,finalSha256:info.sha256,
       duration:info.duration,voice,version,binding};
     const finalPath=resolveProjectFile(root,relativeBase+'/output/final.wav');
-    atomicBytes(finalPath,finalWav);
-    atomicJson(resolveProjectFile(root,relativeBase+'/output/summary.json'),summary);
+    const summaryPath=resolveProjectFile(root,relativeBase+'/output/summary.json');
+    if(fs.existsSync(finalPath)){
+      if(sha(fs.readFileSync(finalPath))!==info.sha256)
+        throw new Error('NARRATION_FINAL_CONFLICT: existing assembled WAV differs.');
+    }else atomicBytes(finalPath,finalWav);
+    if(fs.existsSync(summaryPath)){
+      if(JSON.stringify(strictJson(fs.readFileSync(summaryPath,'utf8')))!==JSON.stringify(summary))
+        throw new Error('NARRATION_SUMMARY_CONFLICT: saved final proof differs.');
+    }else atomicJson(summaryPath,summary);
     const longform={jobId,manifestPath:relativeBase+'/source.json',outputPath:relativeBase+'/output',
       status:'PASS' as const,sourceSha256,profileId:voice,profileVersion:version,
       resume:Boolean(input.resume),updatedAt:new Date().toISOString()};
