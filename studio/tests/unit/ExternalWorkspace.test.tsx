@@ -33,10 +33,11 @@ describe('External workspace never offers a fake frozen prompt',()=>{
     expect(toolbar.compareDocumentPosition(prompt)&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     const css=fs.readFileSync(path.resolve('src/renderer/styles/global.css'),'utf8');
     expect(css).toMatch(/\.external-task-prompt\{[^}]*height:360px;[^}]*overflow:auto/);
-    fireEvent.click(screen.getByRole('button',{name:'Media review'}));
-    expect(within(screen.getByRole('toolbar',{name:'External task controls'}))
-      .queryByRole('button',{name:'Export actual media pack'})).not.toBeInTheDocument();
-    expect(screen.getByRole('button',{name:'Export actual media pack'})).toBeInTheDocument();
+    for(const name of ['Author','Review','Correct','Recheck'])
+      expect(screen.getByRole('button',{name})).toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:'Media review'})).not.toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:'Export actual media pack'})).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Review media scope')).not.toBeInTheDocument();
   });
   it('shows EMPTY and disables import/copy/export without a real opened project',()=>{
     render(<AppStateProvider><ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider></AppStateProvider>);
