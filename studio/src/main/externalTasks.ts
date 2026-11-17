@@ -396,6 +396,7 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
   let promoted=false;let stateCommitted=false;let tmp='';let committedState:StudioState|undefined;
   let externalNativeBefore:StudioState['external']['native'];let ownedBefore:Pick<StudioState,'nativeReadiness'|'preview'|'approval'|'render'>|undefined;
   let oldTaskStatus:'FROZEN'|'IMPORTED'|'STALE'|undefined;
+  let oldConfirmedResponseSha:string|undefined,oldConfirmedResponsePath:string|undefined;
   atomicJson(candidate,resolved.manifest);
   try{
     const {cli}=nativeSkillRoot(appPath),cwd=path.dirname(cli);
@@ -430,6 +431,8 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
     externalNativeBefore=fresh.external.native?structuredClone(fresh.external.native):undefined;
     ownedBefore={nativeReadiness:fresh.nativeReadiness,preview:fresh.preview,approval:fresh.approval,render:fresh.render};
     oldTaskStatus=fresh.tasks!.native!.status;
+    oldConfirmedResponseSha=fresh.tasks!.native!.confirmedResponseSha256;
+    oldConfirmedResponsePath=fresh.tasks!.native!.confirmedResponsePath;
     fresh.external.native={revision,artifact:{...again,missing:again.missing},importedAt:new Date().toISOString()};
     fresh.nativeReadiness=readiness;fresh.preview=undefined;fresh.approval=undefined;fresh.render=undefined;fresh.tasks!.native!.status='IMPORTED';fresh.tasks!.native!.confirmedResponseSha256=pending.responseSha256;fresh.tasks!.native!.confirmedResponsePath=pending.responsePath;
     committedState=fresh;writeState(root,fresh);stateCommitted=true;
@@ -453,8 +456,11 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
         JSON.stringify(rollback.approval)===JSON.stringify(committedState.approval)){
         rollback.external.native=externalNativeBefore;rollback.nativeReadiness=ownedBefore.nativeReadiness;
         rollback.preview=ownedBefore.preview;rollback.approval=ownedBefore.approval;rollback.render=ownedBefore.render;
-        if(rollback.tasks?.native&&rollback.tasks.native.id===committedState.tasks?.native?.id&&oldTaskStatus)
+        if(rollback.tasks?.native&&rollback.tasks.native.id===committedState.tasks?.native?.id&&oldTaskStatus){
           rollback.tasks.native.status=oldTaskStatus;
+          rollback.tasks.native.confirmedResponseSha256=oldConfirmedResponseSha;
+          rollback.tasks.native.confirmedResponsePath=oldConfirmedResponsePath;
+        }
         writeState(root,rollback);
       }else conflict=true;
     }
