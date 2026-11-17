@@ -48,10 +48,18 @@ describe('R2 explicit external reservation identity',()=>{
       target:{files:[new File([response],'response.json',{type:'application/json'})]}
     });
     await waitFor(()=>expect(screen.getByRole('textbox',{name:'Import JSON'})).toHaveValue(response));
-    expect(screen.getByRole('button',{name:'Validate import'})).toBeEnabled();
+    // Loading a file is not proof of a current FROZEN task. Keep the imported
+    // bytes intact and reject validation until a real task identity exists.
+    expect(screen.getByRole('button',{name:'Validate import'})).toBeDisabled();
     expect(harness.stageImport).not.toHaveBeenCalled();
     expect(harness.stageLifecycle).not.toHaveBeenCalled();
     expect(screen.queryByRole('button',{name:/Confirm reviewed import/})).not.toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText('S03, S04'),{target:{value:'shot-1'}});
+    fireEvent.click(screen.getByRole('button',{name:'Build Task'}));
+    await waitFor(()=>expect(screen.getByRole('button',{name:'Validate import'})).toBeEnabled());
+    expect(screen.getByRole('textbox',{name:'Import JSON'})).toHaveValue('');
+    // Explicit Build creates a new frozen response identity and clears the
+    // JSON that belonged to the earlier, unfrozen context.
   });
   it('rejects malformed .json without replacing existing pasted JSON or staging an import',async()=>{
     showCorrect();
