@@ -221,10 +221,19 @@ describe('REG-TAB read-only external history and integrity',()=>{
     const recovered=readExternalHistory(root,'native','author')[0];
     expect(recovered.status).toBe('STALE');
     expect(recovered.confirmedJson).toContain('"task_id":"'+native.envelope.task_id+'"');
-    const unproven=readState(root);
-    delete unproven.externalTaskArchive;
-    writeState(root,unproven);
-    expect(readExternalHistory(root,'native','author')[0].confirmedJson).toBeNull();
+    // The current retired task is also identifiable through the exact
+    // committed Native revision/authoring files, even without a modern receipt.
+    const oldPublication=readState(root);
+    delete oldPublication.externalTaskArchive;
+    writeState(root,oldPublication);
+    expect(readExternalHistory(root,'native','author')[0].confirmedJson)
+      .toContain('"task_id":"'+native.envelope.task_id+'"');
+    const revision=readState(root).external.native!.revision;
+    const revisionFile=path.join(root,'.studio/revisions/native-'+revision+'.json');
+    fs.appendFileSync(revisionFile,'CORRUPTED_PUBLICATION');
+    const unproven=readExternalHistory(root,'native','author')[0];
+    expect(unproven.confirmedJson).toBeNull();
+    expect(unproven.errors).toContain('LEGACY_RESPONSE_NOT_VERIFIABLE');
   });
   it('REG-STALE-04 lifecycle STALE review needs its confirmed artifact record and original response',async()=>{
     const {root}=await fullScriptHistory();
