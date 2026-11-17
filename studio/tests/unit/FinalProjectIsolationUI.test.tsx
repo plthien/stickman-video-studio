@@ -236,6 +236,21 @@ describe('REG-TAB navigation persistence, read-only history and async isolation'
     expect(freezeLifecycle.mock.calls[1][4]).toBe(true);
     await waitFor(()=>expect(screen.getByTestId('external-task-prompt')).toHaveTextContent('REBUILT REVIEW PROMPT'));
   });
+  it('REG-F03-03 stale frozen reservation requires explicit Rebuild even when readFrozen rejects the old prompt',async()=>{
+    const freezeLifecycle=vi.fn(async()=>({id:'explicit-rebuilt',prompt:'New frozen task prompt'}));
+    bridge({readFrozen:async()=>{throw new Error('STALE frozen source');},
+      readHistory:async(_id:string,_stage:string,op:string)=>op==='review'?
+        [{...record('stale-review','review','FROZEN'),prompt:null,
+          errors:['PROMPT_HASH_MISMATCH'],integrity:'PARTIAL'}]:[],
+      freezeLifecycle});
+    render(<AppStateProvider><Harness><ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider></Harness></AppStateProvider>);
+    fireEvent.click(await screen.findByRole('button',{name:'Review'}));
+    await waitFor(()=>expect(screen.getByRole('button',{name:'Rebuild Task'})).toBeEnabled());
+    expect(screen.getByRole('button',{name:'Validate import'})).toBeDisabled();
+    fireEvent.click(screen.getByRole('button',{name:'Rebuild Task'}));
+    await waitFor(()=>expect(freezeLifecycle).toHaveBeenCalledTimes(1));
+    expect(freezeLifecycle.mock.calls[0][4]).toBe(true);
+  });
   it('REG-F04-01/REG-TAB-09 exposes only Author/Review/Correct/Recheck with isolated Script/Native drafts',async()=>{
     bridge({readFrozen:async()=>null,readHistory:async()=>[]});
     render(<AppStateProvider><Harness><ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider></Harness></AppStateProvider>);
