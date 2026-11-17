@@ -302,18 +302,16 @@ describe('External creative lifecycle',()=>{
     const scripted=freezeLifecycleTask(appPath,root,'script','review');
     expect(scripted.prompt).toContain('Frozen identity (immutable fields, NOT a complete review result):');
     expect(scripted.prompt).not.toContain('SCRIPT CORRECT — EXACT ARTIFACT CONTRACT');
-    // Native and media remain separately checked by the existing ten-task regression suite.
+    // Native remains separately checked by the active four-operation regression suite.
   });
 
-  it('REG-F01-04: Native Correct and Script Media Review retain their distinct contracts',async()=>{
+  it('REG-F01-04/REG-F04-04: Native Correct keeps its independent contract; no active Script Media Review',async()=>{
     const {root}=mediaFixture({style:'B1'});
     freezeTask(appPath,root,'script');
-    const voice=freezeLifecycleTask(appPath,root,'script','media-review',{media:'voice'});
-    const captions=freezeLifecycleTask(appPath,root,'script','media-review',{media:'captions'});
-    expect(voice.prompt).toContain('VOICE MEDIA REVIEW');
-    expect(captions.prompt).toContain('CAPTIONS MEDIA REVIEW');
-    expect(voice.prompt).not.toContain('SCRIPT CORRECT — EXACT ARTIFACT CONTRACT');
-    expect(captions.prompt).not.toContain('SCRIPT CORRECT — EXACT ARTIFACT CONTRACT');
+    expect(()=>freezeLifecycleTask(appPath,root,'script','media-review',{media:'voice'}))
+      .toThrow(/MEDIA_REVIEW_DISABLED/);
+    expect(()=>freezeLifecycleTask(appPath,root,'script','media-review',{media:'captions'}))
+      .toThrow(/MEDIA_REVIEW_DISABLED/);
     const pending=stageNative(root,nativePayload(root));
     await confirmImport(appPath,root,pending.response.token,{validator:validator().run});
     const nativeCorrect=freezeLifecycleTask(appPath,root,'native','correct',{editableIds:['shot-1']});
@@ -549,12 +547,11 @@ describe('External creative lifecycle',()=>{
     expect(accepted.approvedScript?.sections[0].text).toContain('forcing');
     expect(accepted.approvedScript?.sections[1]).toEqual(candidate.sections[1]);
   });
-  it('REG-RCK-05: new Script Recheck instructions never enter Script Review/Correct, Media Review or Native Recheck',async()=>{
+  it('REG-RCK-05: Script Recheck instructions never enter Script Review/Correct or Native Recheck',async()=>{
     const {root}=mediaFixture({style:'B1'});
     freezeTask(appPath,root,'script');
     const scriptReview=freezeLifecycleTask(appPath,root,'script','review');
     const scriptCorrect=freezeLifecycleTask(appPath,root,'script','correct',{editableIds:['opening']});
-    const scriptMedia=freezeLifecycleTask(appPath,root,'script','media-review',{media:'voice'});
     const nativeImport=stageNative(root,nativePayload(root));
     await confirmImport(appPath,root,nativeImport.response.token,{validator:validator().run});
     const nativeReview=freezeLifecycleTask(appPath,root,'native','review');
@@ -585,7 +582,7 @@ describe('External creative lifecycle',()=>{
     }));
     await Promise.resolve(confirmLifecycleResult(root,stagedCorrect.token));
     const nativeRecheck=freezeLifecycleTask(appPath,root,'native','recheck');
-    for(const task of [scriptReview,scriptCorrect,scriptMedia,nativeCorrect,nativeRecheck]){
+    for(const task of [scriptReview,scriptCorrect,nativeCorrect,nativeRecheck]){
       for(const heading of ['SCRIPT RECHECK — TEXT COVERAGE CONTRACT',
         'SCRIPT RECHECK — REQUIRED HISTORICAL FINDINGS',
         'SCRIPT RECHECK — CURRENT CANDIDATE EVIDENCE'])
@@ -595,5 +592,5 @@ describe('External creative lifecycle',()=>{
     expect(nativeRecheck.findingIds).toEqual(['NATIVE-HISTORY']);
   });
 
-  it('fails closed when a media review has no verified transferable media',()=>{const root=fixture();expect(()=>freezeLifecycleTask(appPath,root,'script','media-review',{media:'voice'})).toThrow(/NOT_VERIFIED/)})
+  it('REG-F04-02 rejects new Script Media Review before evaluating media evidence',()=>{const root=fixture();expect(()=>freezeLifecycleTask(appPath,root,'script','media-review',{media:'voice'})).toThrow(/MEDIA_REVIEW_DISABLED/)})
 });
