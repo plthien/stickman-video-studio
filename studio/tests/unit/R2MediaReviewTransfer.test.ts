@@ -147,6 +147,25 @@ describe('R2 disabled External Media Review and preserved technical media QA',()
       expect(fs.existsSync(archives)?fs.readdirSync(archives):[]).toHaveLength(0);
     }
   });
+  it('REG-LEGACY-02 blocks unverified archival state or concurrent Native publication without clearing pending',async()=>{
+    const {root}=await previewFixture(),seed=seedLegacyPending(root);
+    const raw=fs.readFileSync(seed.pendingPath),digest=sha(raw);
+    const journal=path.join(root,'.studio/external/lifecycle/native-publication.json');
+    atomicJson(journal,{token:randomUUID(),status:'PENDING'});
+    expect(()=>stageNativeReview(root,seed.review))
+      .toThrow(/LEGACY_MEDIA_REVIEW_PENDING_RECOVERY_REQUIRED/);
+    expect(fs.readFileSync(seed.pendingPath)).toEqual(raw);
+    fs.unlinkSync(journal);
+    const archiveDir=path.join(root,'.studio/external/lifecycle/archived-pending');
+    fs.mkdirSync(archiveDir,{recursive:true});
+    const archive=path.join(archiveDir,'media-review-'+digest+'.json');
+    fs.writeFileSync(archive,'WRONG_BYTES');
+    expect(()=>stageNativeReview(root,seed.review))
+      .toThrow(/LEGACY_MEDIA_REVIEW_PENDING_RECOVERY_REQUIRED/);
+    expect(fs.readFileSync(archive,'utf8')).toBe('WRONG_BYTES');
+    expect(fs.readFileSync(seed.pendingPath)).toEqual(raw);
+    expect(readState(root).lifecycle!.tasks['native:media-review']).toEqual(seed.legacy);
+  });
   it('REG-LEGACY-03 retains active lifecycle pending idempotency and conflict handling unchanged',async()=>{
     const {root}=await previewFixture();
     const task=freezeLifecycleTask(appPath,root,'native','review');
