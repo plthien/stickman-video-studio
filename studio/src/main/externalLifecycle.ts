@@ -7,6 +7,10 @@ import {rejectNativeUnsafePaths,validateAuthoring} from './sourceCitations.js';
 import {activateScriptCandidate,scriptCorrectionRechecked,freezeTask,sourceFingerprint,stageImport,confirmImport,validateScript,validateManifest,externalJsonFileDelivery,type ConfirmOptions} from './externalTasks.js';
 
 type Scope={targetIds?:string[];editableIds?:string[];editablePaths?:string[];findingIds?:string[];media?:'preview'|'film'|'voice'|'captions';transferAcknowledged?:boolean};
+/** Active execution boundary; persisted Media Review types remain readable for legacy projects. */
+function requireActiveLifecycleOperation(operation:Exclude<ExternalOperation,'author'>):void{
+  if(operation==='media-review')throw new Error('MEDIA_REVIEW_DISABLED: legacy history is read-only.');
+}
 type Artifact={value:unknown;sha256:string;id:string};
 const exact=(value:Record<string,unknown>,keys:string[])=>{const extra=Object.keys(value).filter(key=>!keys.includes(key));if(extra.length)throw new Error(`Unknown field: ${extra[0]}`)};
 const lifecycleDir=(root:string)=>resolveProjectFile(root,'.studio/external/lifecycle');
@@ -597,7 +601,7 @@ Do not modify the Script during Recheck.`
 }
 
 export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,operation:Exclude<ExternalOperation,'author'>,scope:Scope={},rebuild=false){
-  if(operation==='media-review')throw new Error('MEDIA_REVIEW_DISABLED: legacy history is read-only.');
+  requireActiveLifecycleOperation(operation);
   if(!['review','correct','recheck'].includes(operation))throw new Error('Unsupported lifecycle operation.');
   if(operation==='media-review'&&!(stage==='script'&&(scope.media==='voice'||scope.media==='captions')||
     stage==='native'&&(scope.media==='preview'||scope.media==='film')))
@@ -847,7 +851,7 @@ function validateReview(payload:Record<string,unknown>,task:NonNullable<StudioSt
     throw new Error('INSUFFICIENT_EVIDENCE: no-findings media review needs user-attested actual attachments and explicit observed coverage.');
 }
 export function stageLifecycleResult(appPath:string,root:string,stage:Stage,operation:Exclude<ExternalOperation,'author'>,text:string){
-  if(operation==='media-review')throw new Error('MEDIA_REVIEW_DISABLED: legacy history is read-only.');
+  requireActiveLifecycleOperation(operation);
   const state=readState(root),task=state.lifecycle?.tasks[`${stage}:${operation}`];if(!task||task.status!=='FROZEN')throw new Error('No current frozen lifecycle task exists.');
   const current=artifactFor(root,state,stage,operation);if(current.sha256!==task.artifactSha256)throw new Error('Lifecycle artifact is stale.');assertLifecycleFresh(appPath,root,state,task);
   const value=strictJson(text) as Record<string,unknown>;exact(value,['schema','project_id','task_id','revision','input_sha256','stage','operation','payload']);
