@@ -217,7 +217,10 @@ describe('REG-TAB navigation persistence, read-only history and async isolation'
         {id:current.id,prompt:current.prompt});
     bridge({readFrozen:async(_id:string,_stage:string,op:string)=>
       op==='review'?{id:current.id,prompt:current.prompt,targetIds:[],editableIds:[],editablePaths:[],findingIds:[]}:null,
-      readHistory:async(_id:string,_stage:string,op:string)=>op==='review'?[current,prior]:[],
+      readHistory:async(_id:string,_stage:string,op:string)=>op!=='review'?[]:
+        freezeLifecycle.mock.calls.some(call=>call[4]===true)?
+          [{...record('replaced-by-owner','review','FROZEN'),prompt:'REBUILT REVIEW PROMPT'},current,prior]:
+          [current,prior],
       freezeLifecycle});
     render(<AppStateProvider><Harness><ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider></Harness></AppStateProvider>);
     fireEvent.click(await screen.findByRole('button',{name:'Review'}));
