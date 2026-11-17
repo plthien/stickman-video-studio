@@ -882,7 +882,7 @@ function recoverDisabledMediaReviewPending(root:string,state:StudioState):void{
   const historical=state.externalTaskArchive?.find(row=>row.stage===stage&&row.operation==='media-review'&&row.task.id===taskId)?.task;
   const task=current?.id===taskId?current:historical;
   if(!task||task.stage!==stage||task.operation!=='media-review'||
-    task.id!==taskId||!Number.isInteger(task.revision)||
+    task.id!==taskId||typeof task.revision!=='number'||!Number.isInteger(task.revision)||
     typeof task.inputSha256!=='string'||!['FROZEN','STALE'].includes(String(task.status))||
     state.lifecycle?.artifacts[taskId])
     blocked('legacy task cannot be linked or publication status is uncertain');
