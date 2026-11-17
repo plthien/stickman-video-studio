@@ -40,14 +40,76 @@ export function decodeProducerReceipt(token:string,proof:string,wav:Buffer,expec
 
 export function verifyProducerHeaders(response:Response,receipt:Record<string,unknown>){const expected:Record<string,string>={'Content-Type':'audio/wav','X-TTS-Engine':String(receipt.model),'X-TTS-Backend':String(receipt.backend),'X-TTS-Model-Revision':String(receipt.model_revision),'X-TTS-Voice-Version':String(receipt.voice_version),'X-TTS-Requested-Speed':String(receipt.requested_speed),'X-TTS-Effective-Speed':String(receipt.effective_speed),'X-TTS-Audio-S':frameSeconds(Number(receipt.audio_frames)),'X-Lite-Audio-S':frameSeconds(Number(receipt.audio_frames)),'X-Lite-Speech-S':frameSeconds(Number(receipt.speech_frames)),'X-Lite-Pause-S':frameSeconds(Number(receipt.authored_pause_frames)),'X-Lite-Pause-Count':String(receipt.pause_count),'X-Lite-Speech-Segments':String(receipt.speech_span_count),'X-TTS-Native-Chunks':String(receipt.native_chunk_count),'X-TTS-Segmentation-Policy':String(receipt.segmentation_policy)};for(const[name,value]of Object.entries(expected)){const actual=name==='Content-Type'?(requiredHeader(response,name).split(';')[0].trim().toLowerCase()):requiredHeader(response,name);if(actual!==value)throw new Error(`Nano response header mismatch: ${name}`)}}
 
-async function profileProof(base:URL,voice:string,profile:Record<string,unknown>){const detailResponse=await fetchLocal(base,`/profiles/${encodeURIComponent(voice)}`),proofResponse=await fetchLocal(base,`/profiles/${encodeURIComponent(voice)}/integrity/verify`,{method:'POST',headers:{accept:'application/json'}});if(!detailResponse.ok||!proofResponse.ok)throw new Error('Nano profile detail/integrity verification failed.');const detail=await readJson(detailResponse),proof=await readJson(proofResponse);if(detail.id!==profile.id||detail.version!==profile.version||detail.ref_sha256!==profile.ref_sha256||detail.source_sha256!==profile.source_sha256||detail.consent!=='confirmed'||proof.verified!==true||proof.voice_id!==voice||proof.voice_version!==profile.version||proof.reference_sha256!==profile.ref_sha256||typeof proof.binding!=='string'||!HEX64.test(proof.binding))throw new Error('Nano profile detail/integrity binding mismatch.');return{detail,proof}}
+async function profileProof(base:URL,voice:string,profile:Record<string,unknown>){const detailResponse=await fetchLocal(base,`/profiles/${encodeURIComponent(voice)}`),proofResponse=await fetchLocal(base,`/profiles/${encodeURIComponent(voice)}/integrity/verify`,{method:'POST',headers:{accept:'application/json'}});if(!detailResponse.ok||!proofResponse.ok){const bad=!detailResponse.ok?detailResponse:proofResponse;let reason='';try{const value=await readJson(bad);reason=String(value.code??value.error??'').slice(0,96);}catch{/* Safe status is still available. */}throw new Error('Nano profile detail/integrity verification failed: HTTP '+bad.status+(reason?' '+reason:''));}const detail=await readJson(detailResponse),proof=await readJson(proofResponse);if(detail.id!==profile.id||detail.version!==profile.version||detail.ref_sha256!==profile.ref_sha256||detail.source_sha256!==profile.source_sha256||detail.consent!=='confirmed'||proof.verified!==true||proof.voice_id!==voice||proof.voice_version!==profile.version||proof.reference_sha256!==profile.ref_sha256||typeof proof.binding!=='string'||!HEX64.test(proof.binding))throw new Error('Nano profile detail/integrity binding mismatch.');return{detail,proof}}
 
-export async function generateNano(root:string,request:{endpoint:string;voice:string;speed:number;seed:number}){
-  const state=readState(root);if(!state.approvedScript)throw new Error('An approved script is required.');const input=state.approvedScript.text,language=state.brief.language.toLowerCase();if(!['en','english'].includes(language))throw new Error('Nano producer pin supports English only; import an approved WAV for this project language.');if(input.length<1||input.length>4096)throw new Error('Single Nano request input must be 1..4096 characters; use the owner assembler for long-form.');
-  const discovered=await discoverNano(request.endpoint);if(!discovered.ready)throw new Error('Nano producer is not generation-ready.');const profile=discovered.profiles.find(item=>(item as Record<string,unknown>).id===request.voice)as Record<string,unknown>|undefined;if(!profile)throw new Error('Selected confirmed Nano profile does not exist.');const base=nanoBase(request.endpoint),first=await profileProof(base,request.voice,profile);
-  const requestId=randomUUID(),cancelToken=randomBytes(24).toString('base64url');let response:Response;try{response=await fetchLocal(base,'/v1/audio/speech',{method:'POST',signal:AbortSignal.timeout(10*60_000),headers:{'content-type':'application/json',accept:'audio/wav','X-TTS-Request-Id':requestId,'X-TTS-Cancel-Token':cancelToken},body:JSON.stringify({model:'chatterbox-nano',voice:request.voice,input,response_format:'wav',language:'en',speed:request.speed,seed:request.seed})})}catch{throw new Error('NANO_UNCERTAIN: transport outcome may have been admitted; inspect producer status before owner-authorized retry.')}
-  if(!response.ok){if([403,404,409,422].includes(response.status)||(response.status===429&&(discovered.capabilities.model as Record<string,unknown>).definite_429_nonadmission===true))throw new Error(`NANO_NOT_ADMITTED_${response.status}`);throw new Error(`NANO_UNCERTAIN_${response.status}: do not automatically replay.`)}
-  const wav=Buffer.from(await response.arrayBuffer()),expected:NanoExpected={input,voice:request.voice,speed:request.speed,seed:request.seed,profile:{id:String(profile.id),version:Number(profile.version),ref_sha256:String(profile.ref_sha256)},binding:String(first.proof.binding)},verified=decodeProducerReceipt(requiredHeader(response,'X-TTS-Execution-Receipt'),requiredHeader(response,'X-TTS-Execution-Proof'),wav,expected);verifyProducerHeaders(response,verified.receipt);
-  const finalProof=await profileProof(base,request.voice,profile);if(finalProof.proof.binding!==first.proof.binding)throw new Error('Nano reference changed during generation; accepted audio was not published.');
-  const voice=acceptNarration(root,{wav,expectedScriptSha256:state.approvedScript.sha256,voice:{receipt:verified.receipt,profileId:request.voice,profileVersion:Number(profile.version),referenceBinding:String(first.proof.binding),origin:'NANO_GENERATED'},nano:{endpoint:nanoBase(request.endpoint).toString().replace(/\/$/,''),profileId:request.voice}});return{...verified.wavInfo,path:voice.path,receipt:verified.receipt};
+/** Strict profile/reference proof, read directly from the localhost producer. */
+export async function verifiedNanoProfile(endpoint:string,voice:string) {
+  const discovered=await discoverNano(endpoint);
+  if(!discovered.ready)throw new Error('Nano producer is not generation-ready.');
+  const profile=discovered.profiles.find(item=>(item as Record<string,unknown>).id===voice) as Record<string,unknown>|undefined;
+  if(!profile)throw new Error('Selected confirmed Nano profile does not exist.');
+  const verified=await profileProof(nanoBase(endpoint),voice,profile);
+  return {profile,binding:String(verified.proof.binding)};
+}
+
+/** One complete, producer-verified request. No WAV is published until the caller
+ * verifies the entire narration and its immutable approved-script identity. */
+export async function synthesizeNano(request:{
+  endpoint:string;input:string;voice:string;speed:number;seed:number;
+  expectedBinding?:string;expectedVersion?:number;
+}) {
+  const {endpoint,input,voice,speed,seed}=request;
+  if(input.length<1||input.length>4096)throw new Error('Nano API input must be 1..4096 characters.');
+  const discovered=await discoverNano(endpoint);
+  if(!discovered.ready)throw new Error('Nano producer is not generation-ready.');
+  const profile=discovered.profiles.find(item=>(item as Record<string,unknown>).id===voice) as Record<string,unknown>|undefined;
+  if(!profile)throw new Error('Selected confirmed Nano profile does not exist.');
+  const base=nanoBase(endpoint),first=await profileProof(base,voice,profile);
+  const binding=String(first.proof.binding),version=Number(profile.version);
+  if((request.expectedBinding&&request.expectedBinding!==binding)||
+     (request.expectedVersion!==undefined&&request.expectedVersion!==version))
+    throw new Error('NANO_PROFILE_CHANGED: selected reference changed during narration.');
+  const requestId=randomUUID(),cancelToken=randomBytes(24).toString('base64url');
+  let response:Response;
+  try {
+    response=await fetchLocal(base,'/v1/audio/speech',{
+      method:'POST',signal:AbortSignal.timeout(10*60_000),
+      headers:{'content-type':'application/json',accept:'audio/wav',
+        'X-TTS-Request-Id':requestId,'X-TTS-Cancel-Token':cancelToken},
+      body:JSON.stringify({model:'chatterbox-nano',voice,input,response_format:'wav',
+        language:'en',speed,seed})
+    });
+  }catch{throw new Error('NANO_UNCERTAIN: transport outcome may have been admitted; inspect producer status before owner-authorized retry.')}
+  if(!response.ok){
+    if([403,404,409,422].includes(response.status)||
+      (response.status===429&&(discovered.capabilities.model as Record<string,unknown>).definite_429_nonadmission===true))
+      throw new Error(`NANO_NOT_ADMITTED_${response.status}`);
+    throw new Error(`NANO_UNCERTAIN_${response.status}: do not automatically replay.`);
+  }
+  const wav=Buffer.from(await response.arrayBuffer());
+  const receiptToken=requiredHeader(response,'X-TTS-Execution-Receipt');
+  const proof=requiredHeader(response,'X-TTS-Execution-Proof');
+  const expected:NanoExpected={input,voice,speed,seed,
+    profile:{id:String(profile.id),version,ref_sha256:String(profile.ref_sha256)},binding};
+  const verified=decodeProducerReceipt(receiptToken,proof,wav,expected);
+  verifyProducerHeaders(response,verified.receipt);
+  const last=await profileProof(base,voice,profile);
+  if(last.proof.binding!==binding)throw new Error('NANO_PROFILE_CHANGED: reference changed during generation; WAV was not accepted.');
+  return {wav,receipt:verified.receipt,receiptToken,proof,info:verified.wavInfo,
+    profileVersion:version,referenceSha256:String(profile.ref_sha256),binding};
+}
+
+export async function generateNano(root:string,request:{endpoint:string;voice:string;speed:number;seed:number}) {
+  const state=readState(root);
+  if(!state.approvedScript)throw new Error('An approved script is required.');
+  if(!['en','english'].includes(state.brief.language.toLowerCase()))
+    throw new Error('Nano producer pin supports English only; import an approved WAV for this project language.');
+  const result=await synthesizeNano({...request,input:state.approvedScript.text});
+  const voice=acceptNarration(root,{
+    wav:result.wav,expectedScriptSha256:state.approvedScript.sha256,
+    voice:{receipt:result.receipt,profileId:request.voice,profileVersion:result.profileVersion,
+      referenceBinding:result.binding,origin:'NANO_GENERATED'},
+    nano:{endpoint:nanoBase(request.endpoint).toString().replace(/\\/$/,''),profileId:request.voice}
+  });
+  return {...result.info,path:voice.path,receipt:result.receipt};
 }
