@@ -107,8 +107,17 @@ function checkEditablePaths(stage:Stage,artifact:unknown,paths:string[]){
       (parts[1]==='voice'||parts[1]==='captions'||(parts[1]==='shots'&&parts.length<4)))
       throw new Error('INVALID_EDITABLE_PATH: immutable timing or broad shot tree.');
     let node:unknown=artifact;
-    for(const segment of parts){
-      if(!node||typeof node!=='object'||!Object.prototype.hasOwnProperty.call(node,segment))
+    for(let i=0;i<parts.length;i++){
+      const segment=parts[i];
+      if(!node||typeof node!=='object')
+        throw new Error('INVALID_EDITABLE_PATH: pointer does not exist in current artifact: '+pointer);
+      // A single explicit append index is allowed on Native auxiliary ledgers.
+      // This does not authorize replacement of a whole collection.
+      const append=stage==='native'&&i===parts.length-1&&i===1&&
+        ['shot_ledger','sound_script','asset_needs'].includes(parts[0])&&
+        Array.isArray(node)&&segment===String(node.length);
+      if(append)break;
+      if(!Object.prototype.hasOwnProperty.call(node,segment))
         throw new Error('INVALID_EDITABLE_PATH: pointer does not exist in current artifact: '+pointer);
       node=(node as Record<string,unknown>)[segment];
     }
@@ -492,7 +501,12 @@ export function validateLocks(stage:Stage,before:unknown,after:unknown,editable:
     if(!left||!right||typeof left!=='object'||typeof right!=='object'||Array.isArray(left)!==Array.isArray(right))
       throw new Error('Locked native/creative field changed: '+(pointer||'/'));
     if(Array.isArray(left)&&Array.isArray(right)){
-      if(left.length!==right.length)throw new Error('Locked array size changed: '+pointer);
+      if(left.length!==right.length){
+        const aux=stage==='native'&&['/shot_ledger','/sound_script','/asset_needs'].includes(pointer);
+        const addition=aux&&right.length>left.length&&
+          right.slice(left.length).every((_,offset)=>editablePaths.includes(pointer+'/'+(left.length+offset)));
+        if(!addition)throw new Error('Locked array size changed: '+pointer);
+      }
       for(let i=0;i<left.length;i++)compare(left[i],right[i],pointer+'/'+i);
       return;
     }
