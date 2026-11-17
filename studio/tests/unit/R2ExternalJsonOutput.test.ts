@@ -62,7 +62,7 @@ describe('R2 frozen task JSON attachment delivery',()=>{
       expect(filename).toMatch(/^[a-z0-9_]+\.json$/);
       expect(task.prompt).toContain('JSON FILE DELIVERY — REQUIRED');
       expect(task.prompt).toContain('required filename: '+filename);
-      expect(task.prompt).toContain('complete final frozen response envelope');
+      expect(task.prompt).toContain('COMPLETE final frozen response envelope');
       expect(task.prompt).toContain('actual attachment/download artifact');
       expect(task.prompt).toContain('never claim creation or fabricate a download link');
       expect(task.prompt).toContain(task.id);
