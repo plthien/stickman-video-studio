@@ -193,5 +193,14 @@ export async function repairAlignmentTiming(appPath:string,root:string){
   const audio=inspectWavBuffer(fs.readFileSync(resolveProjectFile(root,pin.voicePath)));
   const words=validateAlignment(raw,transcript,audio.duration);
   assertAlignmentPin(root,pin);
+  const prior=readState(root).alignment;
+  if(prior&&prior.audioSha256===pin.audioSha256&&prior.scriptSha256===sha(transcript)&&
+    JSON.stringify(prior.words)===JSON.stringify(words)&&prior.wordsSha256&&prior.cuesSha256){
+    const wordFile=resolveProjectFile(root,prior.path),cueFile=resolveProjectFile(root,prior.captionsPath);
+    if(fs.existsSync(wordFile)&&fs.existsSync(cueFile)&&
+      sha(fs.readFileSync(wordFile))===prior.wordsSha256&&
+      sha(fs.readFileSync(cueFile))===prior.cuesSha256)
+      return prior; // Byte-identical timing: do not invalidate existing caption approval.
+  }
   return publishAlignment(appPath,root,raw,words,transcript,'ELEVENLABS',pin);
 }
