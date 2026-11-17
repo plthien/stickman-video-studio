@@ -114,7 +114,7 @@ describe('REG-TAB read-only external history and integrity',()=>{
     expect(archived.id).toBe(voice.id);
     expect(archived.status).toBe('STALE');
     expect(archived.prompt).toBe(voice.prompt);
-    expect(readExternalHistory(root,'native','media-review','voice')).toEqual([]);
+    expect(()=>readExternalHistory(root,'native','media-review','voice')).toThrow(/INVALID_HISTORY_MEDIA_KIND/);
   });
   it('REG-TAB-08 legacy Author without authoritative response linkage reports partial history rather than inventing confirmed JSON',()=>{
     const {root}=fixture({style:'B1'});
