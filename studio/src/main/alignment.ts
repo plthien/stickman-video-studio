@@ -32,7 +32,7 @@ function canonicalCharacterWords(raw:Record<string,unknown>,transcript:string,du
     throw new Error('ELEVENLABS_CHARACTER_TEXT_MISMATCH: character evidence must exactly reconstruct approved transcript.');
   const spans=[...transcript.matchAll(/[\p{L}\p{N}']+/gu)];
   if(!spans.length)throw new Error('ELEVENLABS_CHARACTER_TIMING_INVALID: no spoken words.');
-  let previousEnd=0;
+  let previousWordEnd=0;
   const words=spans.map((match,index)=>{
     const begin=match.index??-1;
     if(begin<0)throw new Error('ELEVENLABS_CHARACTER_COVERAGE_INVALID: missing transcript match index.');
@@ -41,9 +41,9 @@ function canonicalCharacterWords(raw:Record<string,unknown>,transcript:string,du
     if(!covered.length||covered[0].begin>begin||covered[covered.length-1].finish<finish)
       throw new Error('ELEVENLABS_CHARACTER_COVERAGE_INVALID: index='+index);
     const start=covered[0].start,end=covered[covered.length-1].end;
-    if(end<=start||start<previousEnd||end>duration+1/24000)
+    if(end<=start||start<previousWordEnd||end>duration+1/24000)
       throw new Error('ELEVENLABS_CHARACTER_WORD_TIMING_INVALID: index='+index);
-    previousEnd=end;
+    previousWordEnd=end;
     const vendor=Array.isArray(raw.words)?raw.words[index]:null;
     const row=vendor&&typeof vendor==='object'&&!Array.isArray(vendor)?vendor as Record<string,unknown>:null;
     const loss=row?.loss;
