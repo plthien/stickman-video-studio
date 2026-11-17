@@ -6,7 +6,7 @@ import {freezeTask,stageImport,confirmImport} from '../../src/main/externalTasks
 import {freezeLifecycleTask,stageLifecycleResult,confirmLifecycleResult} from '../../src/main/externalLifecycle';
 import {readExternalHistory} from '../../src/main/externalHistory';
 import {readState,sha} from '../../src/main/services';
-import {fixture,cleanup,appPath} from './SixIssueFixtures';
+import {fixture,cleanup,appPath,stageNative,nativePayload,validator} from './SixIssueFixtures';
 
 afterEach(cleanup);
 const finding=(status:'open'|'resolved')=>({
@@ -102,6 +102,31 @@ describe('REG-TAB read-only external history and integrity',()=>{
     expect(missing.errors).toContain('RESPONSE_MISSING');
     expect(readState(root).lifecycle?.tasks['script:review'].id).toBe(updated.id);
   });
+  it('REG-TAB-02/03 Native Author and Native Review results remain readable after confirmation and review rebuild',async()=>{
+    const {root}=fixture({style:'B1'});
+    const native=stageNative(root,nativePayload(root));
+    await confirmImport(appPath,root,native.response.token,{validator:validator().run});
+    const importedAuthor=readExternalHistory(root,'native','author');
+    expect(importedAuthor).toHaveLength(1);
+    expect(importedAuthor[0].status).toBe('IMPORTED');
+    expect(importedAuthor[0].confirmedJson).toContain('"stage":"native"');
+    const review=freezeLifecycleTask(appPath,root,'native','review');
+    const staged=stageLifecycleResult(appPath,root,'native','review',result(root,review,'review',{
+      schema:'mode-b-review-v1',artifact_sha256:review.artifactSha256,
+      status:'REVIEWED_NO_FINDINGS',
+      coverage:{target_ids:['shot-1','shot-2'],modalities:['manifest'],ranges:[],media_sha256s:[]},
+      findings:[]
+    }));
+    await Promise.resolve(confirmLifecycleResult(root,staged.token));
+    expect(readExternalHistory(root,'native','review')[0].status).toBe('IMPORTED');
+    expect(readExternalHistory(root,'native','review')[0].confirmedJson).toContain('"REVIEWED_NO_FINDINGS"');
+    const next=freezeLifecycleTask(appPath,root,'native','review',{},true);
+    const archived=readExternalHistory(root,'native','review');
+    expect(archived.map(item=>item.id)).toEqual([next.id,review.id]);
+    expect(archived[1].status).toBe('IMPORTED');
+    expect(archived[1].confirmedJson).toContain('"REVIEWED_NO_FINDINGS"');
+  });
+
   it('REG-TAB-09 Voice and Captions histories keep distinct media-kind scopes even after replacing shared lifecycle key',()=>{
     const {root}=fixture({style:'B1'});freezeTask(appPath,root,'script');
     const voice=freezeLifecycleTask(appPath,root,'script','media-review',{media:'voice'});
