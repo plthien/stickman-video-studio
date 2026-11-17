@@ -4,7 +4,7 @@ import {randomUUID} from 'node:crypto';
 import {atomicJson,readState,resolveProjectFile,sha,strictJson,writeState,type ExternalOperation,type Stage,type StudioState} from './services.js';
 import {compileAuthority} from './externalAuthority.js';
 import {rejectNativeUnsafePaths,validateAuthoring} from './sourceCitations.js';
-import {freezeTask,sourceFingerprint,stageImport,confirmImport,validateScript,validateManifest,type ConfirmOptions} from './externalTasks.js';
+import {activateScriptCandidate,scriptCorrectionRechecked,freezeTask,sourceFingerprint,stageImport,confirmImport,validateScript,validateManifest,type ConfirmOptions} from './externalTasks.js';
 
 type Scope={targetIds?:string[];editableIds?:string[];editablePaths?:string[];findingIds?:string[];media?:'preview'|'film'|'voice'|'captions';transferAcknowledged?:boolean};
 type Artifact={value:unknown;sha256:string;id:string};
@@ -390,7 +390,10 @@ function finalizeLifecycle(root:string,pending:Record<string,unknown>,task:NonNu
   state.lifecycle.artifacts[task.id]={taskId:task.id,stage:task.stage,operation:task.operation,
     artifactSha256:sha(JSON.stringify(payload)),value:payload,status:String(payload.status??'CORRECTION_STAGED'),
     createdAt:new Date().toISOString()};
-  state.lifecycle.tasks[key].status='IMPORTED';writeState(root,state);
+  state.lifecycle.tasks[key].status='IMPORTED';
+  if(task.stage==='script'&&task.operation==='recheck'&&payload.status==='REVIEWED_NO_FINDINGS'&&
+    scriptCorrectionRechecked(state))activateScriptCandidate(root,state,'RECHECK');
+  writeState(root,state);
   if(fs.existsSync(pendingPath(root)))fs.unlinkSync(pendingPath(root));
   if(fs.existsSync(nativeCorrectionJournal(root)))fs.unlinkSync(nativeCorrectionJournal(root));
   return state;
