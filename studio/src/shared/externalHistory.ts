@@ -6,7 +6,7 @@ export interface ExternalHistoryRecord {
   mediaKind?:'voice'|'captions'|'preview'|'film';
   prompt:string|null;confirmedJson:string|null;
   findings:Array<{id:string;status:string;severity:string;target_ids:string[];requirement:string}>;
-  errors:string[];integrity:'OK'|'PARTIAL'|'ERROR';
+  errors:string[];integrity:'OK'|'PARTIAL'|'ERROR';reviewStatus?:string;
   editableIds?:string[];editablePaths?:string[];targetIds?:string[];findingIds?:string[];
   mediaTransferAttested?:boolean;
 }
