@@ -883,19 +883,21 @@ function recoverDisabledMediaReviewPending(root:string,state:StudioState):void{
   const current=state.lifecycle?.tasks[stage+':media-review'];
   const historical=state.externalTaskArchive?.find(row=>row.stage===stage&&row.operation==='media-review'&&row.task.id===taskId)?.task;
   const task=current?.id===taskId?current:historical;
-  if(!task||task.stage!==stage||task.operation!=='media-review'||
+  if(!task)throw new Error('LEGACY_MEDIA_REVIEW_PENDING_RECOVERY_REQUIRED: legacy task cannot be linked or publication status is uncertain');
+  if(task.stage!==stage||task.operation!=='media-review'||
     task.id!==taskId||typeof task.revision!=='number'||!Number.isInteger(task.revision)||
     typeof task.inputSha256!=='string'||!['FROZEN','STALE'].includes(String(task.status))||
     state.lifecycle?.artifacts[taskId])
     blocked('legacy task cannot be linked or publication status is uncertain');
-  let responseFile:string,responseBytes:Buffer;
-  try{
-    responseFile=resolveProjectFile(root,'.studio/external/lifecycle/results/'+taskId+'.json');
-    if(!fs.existsSync(responseFile))blocked('legacy response file is missing');
-    responseBytes=fs.readFileSync(responseFile);
-  }catch(error){
-    blocked('legacy response path or bytes are unreadable: '+String(error));
-  }
+  const responseBytes:Buffer=(()=>{
+    try{
+      const responseFile=resolveProjectFile(root,'.studio/external/lifecycle/results/'+taskId+'.json');
+      if(!fs.existsSync(responseFile))blocked('legacy response file is missing');
+      return fs.readFileSync(responseFile);
+    }catch(error){
+      return blocked('legacy response path or bytes are unreadable: '+String(error));
+    }
+  })();
   if(sha(responseBytes)!==pending!.responseSha256)blocked('legacy response SHA mismatch');
   let response:Record<string,unknown>;
   try{
@@ -934,9 +936,10 @@ function recoverDisabledMediaReviewPending(root:string,state:StudioState):void{
     responseSha256:pending!.responseSha256,originalSha256:digest,
     originalPath:'.studio/external/lifecycle/pending.json',archivePath:archiveRelative};
   if(fs.existsSync(receipt)){
-    let saved:Record<string,unknown>;
-    try{saved=strictJson(fs.readFileSync(receipt,'utf8')) as Record<string,unknown>;}
-    catch{blocked('archival receipt is corrupt');}
+    const saved:Record<string,unknown>=(()=>{
+      try{return strictJson(fs.readFileSync(receipt,'utf8')) as Record<string,unknown>;}
+      catch{return blocked('archival receipt is corrupt');}
+    })();
     if(canonical(saved)!==canonical(record))blocked('archival receipt conflicts with original pending');
   }else atomicJson(receipt,record);
   if(canonical(strictJson(fs.readFileSync(receipt,'utf8')))!==canonical(record)||
