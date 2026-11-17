@@ -63,9 +63,9 @@ export async function publishAlignment(appPath: string, root: string, raw: Recor
   }catch(error){for(const file of [target,captionsTarget])if(fs.existsSync(file))fs.unlinkSync(file);throw error}finally{if(fs.existsSync(staging))fs.rmSync(staging,{recursive:true,force:true})}
 }
 
-export async function alignWithElevenLabs(appPath: string, root: string, authorized: boolean) {
+export async function alignWithElevenLabs(appPath: string, root: string, authorized: boolean, configuredKey?:string) {
   if (authorized !== true) throw new Error('Explicit cloud-upload authorization is required.');
-  const key = process.env.ELEVENLABS_API_KEY; if (!key) throw new Error('ELEVENLABS_API_KEY is not configured in the Electron main-process environment.');
+  const key = configuredKey ?? process.env.ELEVENLABS_API_KEY; if (!key) throw new Error('Configure ElevenLabs API key in Settings or set ELEVENLABS_API_KEY in the Electron main-process environment.');
   const state = readState(root); if (!state.voice || state.voice.stale || !state.approvedScript) throw new Error('Current approved script and verified narration are required.');const pin=captureAlignmentPin(root);
   const audio = fs.readFileSync(resolveProjectFile(root, state.voice.path)), wav = inspectWavBuffer(audio); if (wav.sha256 !== state.voice.sha256) throw new Error('Narration bytes changed; alignment is stale.');
   const transcript = alignmentText(state.approvedScript.text), form = new FormData(); form.append('file', new Blob([audio], { type: 'audio/wav' }), 'narration.wav'); form.append('text', transcript);
