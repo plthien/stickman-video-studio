@@ -17,6 +17,7 @@ describe('frozen source-grounded manual tasks',()=>{it('automatically activates 
   const recovered=reconcileScriptActivation(root);
   expect(recovered.approvedScript?.text).toBe('Approved exact text.');
   expect(reconcileScriptActivation(root).approvedScript?.approvedAt).toBe(recovered.approvedScript?.approvedAt);
+});
   it('changing Script automatically stales old Voice/Native evidence without losing its files',async()=>{
     const {root}=fixture({style:'B1'}),original=readState(root),oldVoice=original.voice!;
     const task=freezeTask(path.resolve('.'),root,'script');
