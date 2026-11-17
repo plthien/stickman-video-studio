@@ -80,7 +80,7 @@ export function createNanoTestProducer(options:NanoMockOptions={}){
               seed:body.seed,requested_speed:body.speed.toFixed(6),
               effective_speed:body.speed.toFixed(6),atempo_applied:body.speed!==1};
             const canonical=JSON.stringify(Object.fromEntries(
-              Object.keys(values).sort().map(key=>[key,values[key]])));
+              Object.keys(values).sort().map(key=>[key,values[key as keyof typeof values]])));
             const receiptToken=Buffer.from(canonical).toString('base64url');
             const headers:Record<string,string>={
               'Content-Type':'audio/wav',
