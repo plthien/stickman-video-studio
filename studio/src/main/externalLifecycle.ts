@@ -888,9 +888,14 @@ function recoverDisabledMediaReviewPending(root:string,state:StudioState):void{
     typeof task.inputSha256!=='string'||!['FROZEN','STALE'].includes(String(task.status))||
     state.lifecycle?.artifacts[taskId])
     blocked('legacy task cannot be linked or publication status is uncertain');
-  const responseFile=resultPath(root,taskId);
-  if(!fs.existsSync(responseFile))blocked('legacy response file is missing');
-  const responseBytes=fs.readFileSync(responseFile);
+  let responseFile:string,responseBytes:Buffer;
+  try{
+    responseFile=resolveProjectFile(root,'.studio/external/lifecycle/results/'+taskId+'.json');
+    if(!fs.existsSync(responseFile))blocked('legacy response file is missing');
+    responseBytes=fs.readFileSync(responseFile);
+  }catch(error){
+    blocked('legacy response path or bytes are unreadable: '+String(error));
+  }
   if(sha(responseBytes)!==pending!.responseSha256)blocked('legacy response SHA mismatch');
   let response:Record<string,unknown>;
   try{
