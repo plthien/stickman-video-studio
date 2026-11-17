@@ -73,8 +73,24 @@ describe('R2 frozen task JSON attachment delivery',()=>{
       expect(task.prompt).toContain('actual attachment/download artifact');
       expect(task.prompt).toContain('never claim creation or fabricate a download link');
       expect(task.prompt).toContain('"task_id": "'+task.id+'"');
+      if(row.operation==='correct')expect(task.prompt).toContain(row.stage==='script'?'SCRIPT CORRECT':'NATIVE CORRECT');
+      if(row.operation==='recheck')expect(task.prompt).toContain(row.stage==='script'?'SCRIPT RECHECK':'NATIVE RECHECK');
+      if(row.operation==='media-review')expect(task.prompt).toContain(row.stage==='script'?'VOICE MEDIA REVIEW':'PREVIEW MEDIA REVIEW');
+      if(row.operation==='review'&&row.stage==='native')expect(task.prompt).toContain('NATIVE REVIEW');
+      if(row.operation!=='author'&&!(row.operation==='review'&&row.stage==='script')){
+        const contract=task.prompt.split('## G — RESPONSE CONTRACT — NO PRESET OUTCOME')[1]
+          ?.split('## H — ORIGINAL FROZEN AUTHOR TASK')[0]??'';
+        expect(contract).toContain('"task_id": "'+task.id+'"');
+        expect(contract).not.toMatch(/"status"\\s*:\\s*"(?:REVIEWED_NO_FINDINGS|REVIEWED_WITH_FINDINGS|INSUFFICIENT_EVIDENCE|NOT_VERIFIED)"/);
+      }
       seen.add(row.stage+':'+row.operation);
       frozenFilenameEvidence.push({stage:row.stage,operation:row.operation,shortId,filename});
+      console.info('R2_FROZEN_PROMPT_EVIDENCE',JSON.stringify({
+        stage:row.stage,operation:row.operation,media:row.media??null,
+        task_id:task.id,revision:task.revision,source_path:task.promptPath,
+        sha256:sha(task.prompt),bytes:Buffer.byteLength(task.prompt,'utf8'),
+        lines:task.prompt.split('\\n').length,filename
+      }));
       const same=row.operation==='author'?
         freezeTask(appPath,root,row.stage):
         freezeLifecycleTask(appPath,root,row.stage,row.operation,scope);
