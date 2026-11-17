@@ -16,6 +16,12 @@ describe('R2 frozen task JSON attachment delivery',()=>{
       .toBe('mode_b_script_review_r2_f4823514.json');
     expect(externalOutputFilename('native','media-review',7,id,'preview'))
       .toBe('mode_b_native_media_review_preview_r7_f4823514.json');
+    expect(externalOutputFilename('script','media-review',3,id,'voice'))
+      .toBe('mode_b_script_media_review_voice_r3_f4823514.json');
+    expect(externalOutputFilename('native','media-review',5,id,'film'))
+      .toBe('mode_b_native_media_review_film_r5_f4823514.json');
+    expect(externalOutputFilename('script','media-review',4,id,'captions'))
+      .toBe('mode_b_script_media_review_captions_r4_f4823514.json');
     expect(externalOutputFilename('script','author',3,'c2a6c08e-88ab-4333-9123-0123456789ab'))
       .toBe('mode_b_script_author_r3_c2a6c08e.json');
     expect(()=>externalOutputFilename('script','media-review',1,id)).toThrow(/media kind/);
@@ -65,7 +71,7 @@ describe('R2 frozen task JSON attachment delivery',()=>{
       expect(task.prompt).toContain('COMPLETE final frozen response envelope');
       expect(task.prompt).toContain('actual attachment/download artifact');
       expect(task.prompt).toContain('never claim creation or fabricate a download link');
-      expect(task.prompt).toContain(task.id);
+      expect(task.prompt).toContain('"task_id": "'+task.id+'"');
       seen.add(row.stage+':'+row.operation);
       const same=row.operation==='author'?
         freezeTask(appPath,root,row.stage):
