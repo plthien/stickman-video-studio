@@ -450,6 +450,12 @@ function dedicatedLifecyclePrompt(
     '## E — ORIGINAL MODE B CREATIVE AUTHORITY',
     'The original frozen Author appendix below contains the full applicable requirements. Its instructions to produce a new Author response are NOT executable for this task. SHA/provenance outside the appendix is informational; no extra independent rules are invented here.',
     sourceTrace,
+    ...(stage==='script'&&operation==='media-review'?[
+      'SCRIPT MEDIA REVIEW — ADDITIONAL ORIGINAL SOURCE-EXACT EVIDENCE RULES (not contained in the focused Script Author appendix).',
+      ...authority.sources.map(source=>
+        'BEGIN SOURCE '+source.path+' | original SHA256 '+source.sha256+
+        ' | extraction SHA256 '+source.extractionSha256+'\n'+source.text+'\nEND SOURCE '+source.path)
+    ]:[]),
     '## F — EVIDENCE AND REVIEW COVERAGE',
     operation==='media-review'?
       'The local package and its SHA prove local bytes, NOT transfer or actual inspection. transferAcknowledged is only the owner declaration of manual transfer. Report observations only for files actually provided AND examined in this conversation. Auxiliary contact sheets are stills, not motion evidence. Use time bounds only when verified from transferred media.':
