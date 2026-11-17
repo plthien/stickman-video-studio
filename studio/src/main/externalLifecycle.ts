@@ -858,7 +858,9 @@ function validateReview(payload:Record<string,unknown>,task:NonNullable<StudioSt
 function recoverDisabledMediaReviewPending(root:string,state:StudioState):void{
   const originalPath=pendingPath(root);
   if(!fs.existsSync(originalPath))return;
-  const original=fs.readFileSync(originalPath);
+  let original:Buffer;
+  try{original=fs.readFileSync(originalPath);}
+  catch{throw new Error('LEGACY_MEDIA_REVIEW_PENDING_RECOVERY_REQUIRED: cannot read pending bytes');}
   let pending:Record<string,unknown>;
   const blocked=(reason:string):never=>{
     throw new Error('LEGACY_MEDIA_REVIEW_PENDING_RECOVERY_REQUIRED: '+reason);
@@ -907,13 +909,16 @@ function recoverDisabledMediaReviewPending(root:string,state:StudioState):void{
   const receiptRelative='.studio/external/lifecycle/archived-pending/media-review-'+digest+'.receipt.json';
   const archive=resolveProjectFile(root,archiveRelative);
   const receipt=resolveProjectFile(root,receiptRelative);
+  try{
   fs.mkdirSync(path.dirname(archive),{recursive:true});
   // A partial temporary write from an interrupted process never replaces
   // the original pending or an already verified immutable archive.
   if(!fs.existsSync(archive)){
     const temp=archive+'.'+randomUUID()+'.tmp';
     try{
-      fs.writeFileSync(temp,original,{flag:'wx'});
+      const handle=fs.openSync(temp,'wx');
+      try{fs.writeFileSync(handle,original);fs.fsyncSync(handle);}
+      finally{fs.closeSync(handle);}
       if(sha(fs.readFileSync(temp))!==digest)blocked('temporary archive SHA mismatch');
       fs.renameSync(temp,archive);
     }finally{if(fs.existsSync(temp))fs.unlinkSync(temp);}
@@ -931,10 +936,19 @@ function recoverDisabledMediaReviewPending(root:string,state:StudioState):void{
   }else atomicJson(receipt,record);
   if(canonical(strictJson(fs.readFileSync(receipt,'utf8')))!==canonical(record)||
     sha(fs.readFileSync(archive))!==digest)blocked('archive receipt verification failed');
+  for(const file of [archive,receipt]){
+    const handle=fs.openSync(file,'r');
+    try{fs.fsyncSync(handle);}finally{fs.closeSync(handle);}
+  }
   // Do not delete a shared pending that changed between validation and archive.
   if(!fs.existsSync(originalPath)||!fs.readFileSync(originalPath).equals(original))
     blocked('shared pending changed during recovery');
   fs.unlinkSync(originalPath);
+  }catch(error){
+    if(error instanceof Error&&error.message.startsWith('LEGACY_MEDIA_REVIEW_PENDING_RECOVERY_REQUIRED:'))
+      throw error;
+    blocked('archive-and-clear interrupted: '+String(error));
+  }
 }
 export function stageLifecycleResult(appPath:string,root:string,stage:Stage,operation:Exclude<ExternalOperation,'author'>,text:string){
   requireActiveLifecycleOperation(operation);
