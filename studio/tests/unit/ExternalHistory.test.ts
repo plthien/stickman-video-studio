@@ -5,7 +5,7 @@ import {afterEach,describe,expect,it} from 'vitest';
 import {freezeTask,stageImport,confirmImport} from '../../src/main/externalTasks';
 import {freezeLifecycleTask,stageLifecycleResult,confirmLifecycleResult} from '../../src/main/externalLifecycle';
 import {readExternalHistory} from '../../src/main/externalHistory';
-import {readState,sha} from '../../src/main/services';
+import {readState,sha,writeState} from '../../src/main/services';
 import {fixture,cleanup,appPath,stageNative,nativePayload,validator} from './SixIssueFixtures';
 
 afterEach(cleanup);
@@ -129,19 +129,77 @@ describe('REG-TAB read-only external history and integrity',()=>{
     expect(archived[1].confirmedJson).toContain('"REVIEWED_NO_FINDINGS"');
   });
 
-  it('REG-TAB-09 Voice and Captions histories keep distinct media-kind scopes even after replacing shared lifecycle key',()=>{
+  it('REG-F04-03 legacy Media Review task remains readable but cannot be created anew',()=>{
     const {root}=fixture({style:'B1'});freezeTask(appPath,root,'script');
-    const voice=freezeLifecycleTask(appPath,root,'script','media-review',{media:'voice'});
-    const first=readExternalHistory(root,'script','media-review','voice');
-    expect(first[0].id).toBe(voice.id);
-    expect(first[0].status).toBe('FROZEN');
-    const captions=freezeLifecycleTask(appPath,root,'script','media-review',{media:'captions'});
-    expect(readExternalHistory(root,'script','media-review','captions')[0].id).toBe(captions.id);
-    const archived=readExternalHistory(root,'script','media-review','voice')[0];
-    expect(archived.id).toBe(voice.id);
-    expect(archived.status).toBe('STALE');
-    expect(archived.prompt).toBe(voice.prompt);
-    expect(()=>readExternalHistory(root,'native','media-review','voice')).toThrow(/INVALID_HISTORY_MEDIA_KIND/);
+    const review=freezeLifecycleTask(appPath,root,'script','review');
+    const state=readState(root);
+    const legacyPath='.studio/external/lifecycle/tasks/legacy-voice.md';
+    const legacyText='PERSISTED LEGACY MEDIA REVIEW PROMPT — TEST FIXTURE ONLY';
+    fs.writeFileSync(path.join(root,legacyPath),legacyText);
+    state.lifecycle!.tasks['script:media-review']={
+      ...state.lifecycle!.tasks['script:review'],id:'legacy-voice',revision:7,
+      operation:'media-review',mediaKind:'voice',status:'STALE',
+      promptPath:legacyPath,promptSha256:sha(legacyText)};
+    writeState(root,state);
+    const before=fs.readFileSync(path.join(root,'.studio/state.json'));
+    const legacy=readExternalHistory(root,'script','media-review','voice');
+    expect(legacy).toHaveLength(1);
+    expect(legacy[0]).toMatchObject({id:'legacy-voice',status:'STALE',
+      prompt:legacyText,confirmedJson:null,integrity:'OK'});
+    expect(readExternalHistory(root,'script','media-review','captions')).toEqual([]);
+    expect(()=>freezeLifecycleTask(appPath,root,'script','media-review',{media:'voice'}))
+      .toThrow(/MEDIA_REVIEW_DISABLED/);
+    expect(fs.readFileSync(path.join(root,'.studio/state.json'))).toEqual(before);
+    expect(readState(root).lifecycle!.tasks['script:review'].id).toBe(review.id);
+  });
+
+  it('REG-F01-01 restores one legacy Author response by exact filename, SHA and immutable envelope without writing state',async()=>{
+    const {root,author}=await fullScriptHistory();
+    const state=readState(root);
+    delete state.tasks!.script!.confirmedResponseSha256;
+    delete state.tasks!.script!.confirmedResponsePath;
+    writeState(root,state);
+    const before=fs.readFileSync(path.join(root,'.studio/state.json'));
+    const recovered=readExternalHistory(root,'script','author')[0];
+    expect(recovered.id).toBe(author.id);
+    expect(recovered.integrity).toBe('OK');
+    expect(recovered.confirmedJson).toContain('"task_id":"'+author.id+'"');
+    expect(recovered.errors).toEqual([]);
+    expect(fs.readFileSync(path.join(root,'.studio/state.json'))).toEqual(before);
+  });
+  it('REG-F01-02 refuses tampered or wrong-identity legacy bytes even with a matching filename SHA',async()=>{
+    const {root,author}=await fullScriptHistory();
+    const state=readState(root),relative=state.tasks!.script!.confirmedResponsePath!;
+    const actual=path.join(root,relative);
+    const original=fs.readFileSync(actual,'utf8');
+    delete state.tasks!.script!.confirmedResponseSha256;
+    delete state.tasks!.script!.confirmedResponsePath;
+    writeState(root,state);
+    fs.appendFileSync(actual,'TAMPERED');
+    expect(readExternalHistory(root,'script','author')[0].confirmedJson).toBeNull();
+    expect(readExternalHistory(root,'script','author')[0].errors).toContain('LEGACY_RESPONSE_NOT_VERIFIABLE');
+    fs.unlinkSync(actual);
+    const wrong={...JSON.parse(original) as Record<string,unknown>,project_id:'not-the-current-project'};
+    const bytes=JSON.stringify(wrong),digest=sha(bytes);
+    const name='script-'+author.id+'-'+author.revision+'-'+digest+'.json';
+    fs.writeFileSync(path.join(root,'.studio/external/responses',name),bytes);
+    const record=readExternalHistory(root,'script','author')[0];
+    expect(record.confirmedJson).toBeNull();
+    expect(record.errors).toContain('LEGACY_RESPONSE_NOT_VERIFIABLE');
+  });
+  it('REG-F01-03 refuses ambiguous legacy Author responses instead of choosing by timestamp',async()=>{
+    const {root,author}=await fullScriptHistory();
+    const state=readState(root),original=fs.readFileSync(path.join(root,state.tasks!.script!.confirmedResponsePath!),'utf8');
+    delete state.tasks!.script!.confirmedResponseSha256;
+    delete state.tasks!.script!.confirmedResponsePath;
+    writeState(root,state);
+    const second=JSON.stringify(JSON.parse(original),null,2)+'\\n';
+    const secondName='script-'+author.id+'-'+author.revision+'-'+sha(second)+'.json';
+    fs.writeFileSync(path.join(root,'.studio/external/responses',secondName),second);
+    const record=readExternalHistory(root,'script','author')[0];
+    expect(record.confirmedJson).toBeNull();
+    expect(record.errors).toContain('LEGACY_RESPONSE_AMBIGUOUS');
+    expect(record.integrity).toBe('PARTIAL');
   });
   it('REG-TAB-08 legacy Author without authoritative response linkage reports partial history rather than inventing confirmed JSON',()=>{
     const {root}=fixture({style:'B1'});
