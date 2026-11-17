@@ -3,22 +3,21 @@ import { createContext, useContext, useEffect, useRef, useState, type Dispatch, 
 import { useAppState } from '../../app/AppState';
 import { Badge, Button, Card, CardHeader, Field, Input, Textarea } from '../../components/ui';
 const tabNames = ['Script', 'Native'] as const; type PromptTab = (typeof tabNames)[number]; type SyntaxResult = 'idle' | 'valid' | 'invalid';
-const operations=['Author','Review','Correct','Recheck','Media review'] as const;type Operation=(typeof operations)[number];
-type MediaKind='preview'|'film'|'voice'|'captions';
+const operations=['Author','Review','Correct','Recheck'] as const;type Operation=(typeof operations)[number];
 type History=import('../../../shared/externalHistory').ExternalHistoryRecord;
 interface TabValues {
   json:string;result:SyntaxResult;prompt:string;pending:StudioStagedImport|null;
   nativeMediaStatus:StudioStagedImport|null;error:string;previewSeconds:number;
   draftConsent:boolean;reviewTargets:string;editable:string;editablePaths:string;
-  findingScope:string;reviewFolder:string;transferAcknowledged:boolean;
+  findingScope:string;
   frozenScopeKey:string;frozenTaskId:string;
   history:History[];historySelectedId:string;historyLoading:boolean;
   suggestedScopeReviewTaskId?:string;scopeTouched?:boolean;
 }
 const emptyTab=():TabValues=>({json:'',result:'idle',prompt:'',pending:null,
   nativeMediaStatus:null,error:'',previewSeconds:20,draftConsent:false,
-  reviewTargets:'',editable:'',editablePaths:'',findingScope:'',reviewFolder:'',
-  transferAcknowledged:false,frozenScopeKey:'',frozenTaskId:'',
+  reviewTargets:'',editable:'',editablePaths:'',findingScope:'',
+  frozenScopeKey:'',frozenTaskId:'',
   history:[],historySelectedId:'',historyLoading:false,
   scopeTouched:false});
 interface ExternalSession {
@@ -41,20 +40,14 @@ export function ExternalWorkspace(){
   const {native,captureProjectSession,isCurrentProjectSession,setNativeIfSessionCurrent,showNotice}=useAppState();
   const [operation,setOperation]=useState<Operation>('Author');
   const stage=tab.toLowerCase();
-  const [mediaByStage,setMediaByStage]=useState<{script:MediaKind;native:MediaKind}>({script:'voice',native:'preview'});
-  const reviewMediaKind=stage==='script'?mediaByStage.script:mediaByStage.native;
-  const setReviewMediaKind=(value:MediaKind)=>setMediaByStage(prev=>({...prev,[stage]:value}));
-  const lifecycleOperation=operation.toLowerCase().replace(' ','-') as 'review'|'correct'|'recheck'|'media-review';
-  const mediaKind:MediaKind|undefined=operation==='Media review'?
-    (stage==='script'?(reviewMediaKind==='captions'?'captions':'voice'):
-      (reviewMediaKind==='film'?'film':'preview')):undefined;
+  const lifecycleOperation=operation.toLowerCase() as 'review'|'correct'|'recheck';
   const projectId=native?.project.id;
   const projectEpoch=captureProjectSession()?.epoch;
-  const sessionKey=[projectId??'none',stage,operation,mediaKind??'-'].join('|');
+  const sessionKey=[projectId??'none',stage,operation].join('|');
   const activeKey=useRef(sessionKey);activeKey.current=sessionKey;
   const local=tabs[sessionKey]??emptyTab();
   const {json,result,prompt,pending,nativeMediaStatus,error,previewSeconds,draftConsent,
-    reviewTargets,editable,editablePaths,findingScope,reviewFolder,transferAcknowledged,
+    reviewTargets,editable,editablePaths,findingScope,
     frozenScopeKey,frozenTaskId,history,historySelectedId,historyLoading}=local;
   const field=<K extends keyof TabValues,>(name:K)=>(value:TabValues[K])=>
     patch(sessionKey,{[name]:value} as Pick<TabValues,K>);
@@ -63,12 +56,13 @@ export function ExternalWorkspace(){
   const setError=field('error'),setPreviewSeconds=field('previewSeconds');
   const setDraftConsent=field('draftConsent'),setReviewTargets=field('reviewTargets');
   const setEditable=field('editable'),setEditablePaths=field('editablePaths');
-  const setFindingScope=field('findingScope'),setReviewFolder=field('reviewFolder');
-  const setTransferAcknowledged=field('transferAcknowledged'),setFrozenScopeKey=field('frozenScopeKey');
+  const setFindingScope=field('findingScope'),setFrozenScopeKey=field('frozenScopeKey');
   const setFrozenTaskId=field('frozenTaskId');
-  const selectedHistory=history.find(item=>item.id===historySelectedId)??history[0];
-  const historyStatus=selectedHistory?.status??(frozenTaskId?'FROZEN':'EMPTY');
-  const visiblePrompt=frozenTaskId&&historyStatus==='FROZEN'?prompt:selectedHistory?.prompt??prompt;
+  const selectedHistory=historySelectedId?history.find(item=>item.id===historySelectedId):history[0];
+  const showingHistory=Boolean(selectedHistory&&(Boolean(historySelectedId)||!frozenTaskId||selectedHistory.id!==frozenTaskId));
+  const visibleHistory=showingHistory?selectedHistory:null;
+  // Do not substitute the current prompt when a historical file is missing or corrupt.
+  const visiblePrompt=showingHistory?(selectedHistory?.prompt??''):prompt;
   const canImport=Boolean(frozenTaskId&&
     !history.some(item=>item.id===frozenTaskId&&item.status!=='FROZEN')&&
     (!historySelectedId||historySelectedId===frozenTaskId));
@@ -76,17 +70,15 @@ export function ExternalWorkspace(){
   const jsonFilePicker=useRef<HTMLInputElement|null>(null);
   const splitList=(value:string)=>value.split(',').map(x=>x.trim()).filter(Boolean);
   const lifecycleScope=()=>({targetIds:splitList(reviewTargets),editableIds:splitList(editable),
-    editablePaths:splitList(editablePaths),findingIds:findingScope.trim()?splitList(findingScope):undefined,
-    media:mediaKind,transferAcknowledged:operation==='Media review'?transferAcknowledged:undefined});
-  const reviewFindings=selectedHistory?.findings??[];
-  const lastReview=selectedHistory?.operation==='review'||selectedHistory?.operation==='recheck'||
-    selectedHistory?.operation==='media-review'?selectedHistory:null;
+    editablePaths:splitList(editablePaths),findingIds:findingScope.trim()?splitList(findingScope):undefined});
+  const reviewFindings=visibleHistory?.findings??[];
+  const lastReview=visibleHistory&&(visibleHistory.operation==='review'||visibleHistory.operation==='recheck')?visibleHistory:null;
   // Requests belong to a captured tab and project epoch; never publish late
   // results into the newly selected tab. Draft state is retained in its own key.
   useEffect(()=>{
     for(const name of ['freeze','validate','pending','confirm','export','jsonFile','history'] as const)
       requests.current[name]+=1;
-  },[projectId,projectEpoch,stage,operation,mediaKind]);
+  },[projectId,projectEpoch,stage,operation]);
   const suggested=native?.suggestedCorrectScope?.[stage as 'script'|'native'];
   useEffect(()=>{
     if(operation!=='Correct'||!suggested?.reviewTaskId||
@@ -109,7 +101,7 @@ export function ExternalWorkspace(){
       sequence===requests.current.history&&isCurrentProjectSession(session);
     patch(expectedKey,{historyLoading:true});
     if(window.studio.readHistory)
-      window.studio.readHistory(session.projectId,stage,op,mediaKind)
+      window.studio.readHistory(session.projectId,stage,op)
         .then(rows=>{if(!isActive())return;
           patch(expectedKey,{history:rows,historyLoading:false,
             historySelectedId:rows.some(item=>item.id===tabs[expectedKey]?.historySelectedId)?
@@ -120,7 +112,7 @@ export function ExternalWorkspace(){
     if(window.studio.readFrozen)
       window.studio.readFrozen(session.projectId,stage,op)
         .then(task=>{if(!isActive())return;
-          if(!task||op==='media-review'&&task.mediaKind!==mediaKind){
+          if(!task){
             patch(expectedKey,{frozenTaskId:'',frozenScopeKey:'',prompt:''});
             return;
           }
@@ -128,23 +120,20 @@ export function ExternalWorkspace(){
             frozenTaskId:task.id};
           if(op!=='author'){
             const fields={targetIds:task.targetIds??[],editableIds:task.editableIds??[],
-              editablePaths:task.editablePaths??[],findingIds:task.findingIds?.length?task.findingIds:undefined,
-              media:op==='media-review'?task.mediaKind:undefined,
-              transferAcknowledged:op==='media-review'?Boolean(task.mediaTransferAttested):undefined};
+              editablePaths:task.editablePaths??[],findingIds:task.findingIds?.length?task.findingIds:undefined};
             Object.assign(next,{reviewTargets:fields.targetIds.join(', '),
               editable:fields.editableIds.join(', '),editablePaths:fields.editablePaths.join(', '),
-              findingScope:(fields.findingIds??[]).join(', '),frozenScopeKey:JSON.stringify(fields),
-              transferAcknowledged:Boolean(task.mediaTransferAttested)});
+              findingScope:(fields.findingIds??[]).join(', '),frozenScopeKey:JSON.stringify(fields)});
           }
           patch(expectedKey,next);
         }).catch(reason=>{if(isActive())patch(expectedKey,{error:String(reason)});});
     return()=>{active=false;};
-  },[projectId,projectEpoch,stage,operation,mediaKind]);
+  },[projectId,projectEpoch,stage,operation]);
   const reloadHistory=(project:string,expectedKey=sessionKey)=>{
     if(!window.studio?.readHistory)return;
     const session=captureProjectSession(),sequence=++requests.current.history;
     const op=operation==='Author'?'author':lifecycleOperation;
-    void window.studio.readHistory(project,stage,op,mediaKind).then(rows=>{
+    void window.studio.readHistory(project,stage,op).then(rows=>{
       if(activeKey.current===expectedKey&&session&&sequence===requests.current.history&&isCurrentProjectSession(session)&&projectId===project)
         patch(expectedKey,{history:rows,historyLoading:false});
     }).catch(reason=>{
@@ -157,7 +146,11 @@ export function ExternalWorkspace(){
     requests.current.history+=1;
     if(!session)return;
     const snapshot=lifecycleScope(),key=JSON.stringify(snapshot);
-    const rebuild=Boolean(forceRebuild||(frozenTaskId&&scopeDirty)||taskReadOnly);
+    if(!forceRebuild&&frozenTaskId&&scopeDirty){
+      setError('Current FROZEN task has a different scope. Use Rebuild Task explicitly.');
+      return;
+    }
+    const rebuild=forceRebuild;
     try{
       const task=expectedOperation==='Author'?
         await window.studio.freezeTask(session.projectId,expectedStage,rebuild):
@@ -191,16 +184,14 @@ export function ExternalWorkspace(){
   const validate=async()=>{const scope=captureProjectSession(),expectedStage=stage,expectedOperation=operation,sequence=++requests.current.validate;try{if(!native||!scope||!window.studio||!canImport)throw new Error('A current FROZEN task is required to validate an import.');const value=operation==='Author'?await window.studio.stageImport(native.project.id,expectedStage,json):await window.studio.stageLifecycle(native.project.id,expectedStage,lifecycleOperation,json);if(!isCurrentProjectSession(scope)||expectedStage!==stage||expectedOperation!==operation||sequence!==requests.current.validate||activeKey.current!==sessionKey)return;setPending(value);setNativeMediaStatus(null);setResult('valid');}catch(reason){if(scope&&(!isCurrentProjectSession(scope)||expectedStage!==stage||sequence!==requests.current.validate||activeKey.current!==sessionKey))return;setResult('invalid');setError(reason instanceof Error?reason.message:String(reason));}};
   const copy=()=>{const scope=captureProjectSession(),expectedStage=stage;if(!scope||!visiblePrompt)return;void navigator.clipboard.writeText(visiblePrompt).then(()=>{if(isCurrentProjectSession(scope)&&expectedStage===stage&&activeKey.current===sessionKey)showNotice(`${tab} prompt copied.`)}).catch(reason=>{if(isCurrentProjectSession(scope)&&expectedStage===stage&&activeKey.current===sessionKey)setError('Clipboard ERROR: '+String(reason))})};
   const exportFile=async()=>{if(!native||!window.studio)return;const scope=captureProjectSession(),expectedStage=stage,sequence=++requests.current.export;if(!scope)return;try{const file=await window.studio.exportPrompt(native.project.id,expectedStage,operation==='Author'?'author':lifecycleOperation);if(file&&isCurrentProjectSession(scope)&&expectedStage===stage&&sequence===requests.current.export&&activeKey.current===sessionKey)showNotice('Prompt exported: '+file);}catch(reason){if(isCurrentProjectSession(scope)&&expectedStage===stage&&sequence===requests.current.export&&activeKey.current===sessionKey)setError(String(reason));}};
-  const exportMediaPack=async()=>{if(!native||!window.studio)return;const scope=captureProjectSession(),expectedKey=sessionKey;if(!scope||!mediaKind)return;try{const value=await window.studio.reviewPack(scope.projectId,mediaKind);if(isCurrentProjectSession(scope)&&activeKey.current===expectedKey)setReviewFolder(value.folder??value.path);}catch(reason){if(isCurrentProjectSession(scope)&&activeKey.current===expectedKey)setError(String(reason));}};
-  const taskReadOnly=Boolean(selectedHistory&&selectedHistory.status!=='FROZEN'&&
-    (!frozenTaskId||selectedHistory.id!==frozenTaskId));
-  const displayedStatus=taskReadOnly?selectedHistory!.status:historyStatus;
-  return <div className="grid wide-left"><Card><CardHeader title="External task prompt" hint="Copy to ChatGPT manually · no embedded API" action={<Badge tone={native&&visiblePrompt?'mint':'amber'}>{native?displayedStatus:'EMPTY'}</Badge>}/><div className="tabs">{tabNames.map(item=><button key={item} className={tab===item?'active':''} onClick={()=>setTab(item)}>{item}</button>)}</div><div className="tabs">{operations.map(item=><button key={item} className={operation===item?'active':''} onClick={()=>setOperation(item)}>{item}</button>)}</div>{['Review','Recheck','Media review'].includes(operation)&&<Field label="Review target IDs (optional; blank covers every section/shot)"><Input value={reviewTargets} onChange={event=>setReviewTargets(event.target.value)} placeholder="shot-001, shot-002"/></Field>}{operation==='Correct'&&<>{suggested?.findingIds.length? <div className="info" data-testid="correct-review-scope">Auto-filled from confirmed Review: {suggested.findingIds.join(', ')}. Editable section/shot scope: {suggested.editableIds.join(', ')}. You may narrow the scope before Build Task.</div>:<div className="info">No unresolved findings from a confirmed review of the current artifact. Build Correct only with an explicit authorized edit scope.</div>}<Field label="Editable section/shot IDs (comma separated)"><Input value={editable} onChange={event=>patch(sessionKey,{editable:event.target.value,scopeTouched:true})} placeholder="S03, S04"/></Field><Field label="Expanded editable field paths (optional, comma separated)"><Input value={editablePaths} onChange={event=>patch(sessionKey,{editablePaths:event.target.value,scopeTouched:true})} placeholder="/manifest/opening, /sound_script/2"/></Field></>}{['Correct','Recheck'].includes(operation)&&<Field label="Finding IDs to resolve (optional; defaults to unresolved findings)"><Input value={findingScope} onChange={event=>patch(sessionKey,{findingScope:event.target.value,scopeTouched:true})} placeholder="F-001, F-002"/></Field>}<div className="external-task-toolbar" role="toolbar" aria-label="External task controls"><div className="actions external-task-build-actions"><Button disabled={!native} onClick={()=>void buildTask(false)}>{scopeDirty?'Rebuild Task':'Build Task'}</Button>{frozenTaskId&&!scopeDirty&&<Button disabled={!native} onClick={()=>void buildTask(true)}>Rebuild Task</Button>}</div><div className="actions external-task-export-actions"><Button variant="primary" disabled={!native||!visiblePrompt} onClick={copy}>Copy prompt</Button><Button disabled={!native||!canImport||!prompt} onClick={exportFile}>Export .md</Button><Button onClick={()=>window.open('https://chatgpt.com/','_blank','noopener,noreferrer')}>Open ChatGPT</Button></div></div>{scopeDirty&&<div className="info error">Draft scope changed. The displayed prompt still belongs to the previous frozen scope and task ID {frozenTaskId}. Rebuild Task invalidates that task and all responses based on it.</div>}{frozenTaskId&&!scopeDirty&&<div className="info">Rebuild Task replaces the frozen task ID and invalidates earlier ChatGPT responses, even if the scope is unchanged.</div>}<pre className="prompt external-task-prompt" data-active-prompt={tab} data-testid="external-task-prompt">{native?visiblePrompt:''}</pre>
+  const taskReadOnly=Boolean(visibleHistory&&visibleHistory.status!=='FROZEN');
+  const displayedStatus=visibleHistory?.status??(frozenTaskId?'FROZEN':'EMPTY');
+  return <div className="grid wide-left"><Card><CardHeader title="External task prompt" hint="Copy to ChatGPT manually · no embedded API" action={<Badge tone={native&&visiblePrompt?'mint':'amber'}>{native?displayedStatus:'EMPTY'}</Badge>}/><div className="tabs">{tabNames.map(item=><button key={item} className={tab===item?'active':''} onClick={()=>setTab(item)}>{item}</button>)}</div><div className="tabs">{operations.map(item=><button key={item} className={operation===item?'active':''} onClick={()=>setOperation(item)}>{item}</button>)}</div>{['Review','Recheck'].includes(operation)&&<Field label="Review target IDs (optional; blank covers every section/shot)"><Input value={reviewTargets} onChange={event=>setReviewTargets(event.target.value)} placeholder="shot-001, shot-002"/></Field>}{operation==='Correct'&&<>{suggested?.findingIds.length? <div className="info" data-testid="correct-review-scope">Auto-filled from confirmed Review: {suggested.findingIds.join(', ')}. Editable section/shot scope: {suggested.editableIds.join(', ')}. You may narrow the scope before Build Task.</div>:<div className="info">No unresolved findings from a confirmed review of the current artifact. Build Correct only with an explicit authorized edit scope.</div>}<Field label="Editable section/shot IDs (comma separated)"><Input value={editable} onChange={event=>patch(sessionKey,{editable:event.target.value,scopeTouched:true})} placeholder="S03, S04"/></Field><Field label="Expanded editable field paths (optional, comma separated)"><Input value={editablePaths} onChange={event=>patch(sessionKey,{editablePaths:event.target.value,scopeTouched:true})} placeholder="/manifest/opening, /sound_script/2"/></Field></>}{['Correct','Recheck'].includes(operation)&&<Field label="Finding IDs to resolve (optional; defaults to unresolved findings)"><Input value={findingScope} onChange={event=>patch(sessionKey,{findingScope:event.target.value,scopeTouched:true})} placeholder="F-001, F-002"/></Field>}<div className="external-task-toolbar" role="toolbar" aria-label="External task controls"><div className="actions external-task-build-actions"><Button disabled={!native} onClick={()=>void buildTask(false)}>Build Task</Button>{frozenTaskId&&<Button disabled={!native} onClick={()=>void buildTask(true)}>Rebuild Task</Button>}</div><div className="actions external-task-export-actions"><Button variant="primary" disabled={!native||!visiblePrompt} onClick={copy}>Copy prompt</Button><Button disabled={!native||!canImport||!prompt} onClick={exportFile}>Export .md</Button><Button onClick={()=>window.open('https://chatgpt.com/','_blank','noopener,noreferrer')}>Open ChatGPT</Button></div></div>{scopeDirty&&<div className="info error">Draft scope changed. The displayed prompt still belongs to the previous frozen scope and task ID {frozenTaskId}. Rebuild Task invalidates that task and all responses based on it.</div>}{frozenTaskId&&!scopeDirty&&<div className="info">Rebuild Task replaces the frozen task ID and invalidates earlier ChatGPT responses, even if the scope is unchanged.</div>}<pre className="prompt external-task-prompt" data-active-prompt={tab} data-testid="external-task-prompt">{native?visiblePrompt:''}</pre>
     {historyLoading&&<div className="info">Reading saved task history…</div>}
     {history.length>1&&<Field label="Saved task history"><select aria-label="Saved task history" value={selectedHistory?.id??''} onChange={event=>patch(sessionKey,{historySelectedId:event.target.value})}>{history.map(item=><option key={item.id} value={item.id}>revision {item.revision} · {item.status} · {item.id.slice(0,8)}</option>)}</select></Field>}
     {taskReadOnly&&<div className="info" data-testid="external-history-status">Saved {displayedStatus} task · read-only history. Build a new task to import a new response.</div>}
-    {selectedHistory?.errors.length?<div className="info error" role="alert">History integrity: {selectedHistory.errors.join(', ')}. Missing or unverifiable data is not reconstructed.</div>:null}
-    {selectedHistory?.confirmedJson&&<div className="info" data-testid="external-confirmed-history"><strong>Confirmed JSON · read-only</strong><pre className="prompt" aria-label="Confirmed JSON history">{selectedHistory.confirmedJson}</pre></div>}{!native&&<div className="info">EMPTY — Create/open a project to freeze a real ChatGPT task. No sample prompt is available.</div>}{operation==='Media review'&&<div className="actions external-task-media-actions"><Field label="Review media scope"><select value={mediaKind??reviewMediaKind} onChange={event=>setReviewMediaKind(event.target.value as MediaKind)}>{stage==='native'?<><option value="preview">Actual preview</option><option value="film">Encoded full film</option></>:<><option value="voice">Accepted narration WAV</option><option value="captions">Accepted captions</option></>}</select></Field><Button disabled={!native} onClick={exportMediaPack}>Export actual media pack</Button><label className="check"><input type="checkbox" checked={transferAcknowledged} onChange={event=>setTransferAcknowledged(event.target.checked)}/> I manually transferred this project's actual MP4/WAV and review JSON to External ChatGPT. This attestation is not proof the model inspected them.</label></div>}{reviewFolder&&<div className="info">Transfer the actual files in {reviewFolder} together with review-package.json. Local files and hashes alone do not establish audiovisual inspection.</div>}{lastReview&&<div className="info"><strong>Saved {lastReview.operation}: {lastReview.reviewStatus??lastReview.status}</strong>{reviewFindings.length?reviewFindings.map(item=><div key={item.id}>{item.id} · {item.severity} · {item.status} · {item.target_ids.join(', ')} · {item.requirement}</div>):<div>{stage==='script'?'No reported findings; corrected Script activation still requires a clean Recheck.':'No reported findings; this does not approve the native film.'}</div>}</div>}</Card>
+    {visibleHistory?.errors.length?<div className="info error" role="alert">History integrity: {visibleHistory.errors.join(', ')}. Missing or unverifiable data is not reconstructed.</div>:null}
+    {visibleHistory?.confirmedJson&&<div className="info" data-testid="external-confirmed-history"><strong>Confirmed JSON · read-only</strong><pre className="prompt" aria-label="Confirmed JSON history">{visibleHistory.confirmedJson}</pre></div>}{!native&&<div className="info">EMPTY — Create/open a project to freeze a real ChatGPT task. No sample prompt is available.</div>}{lastReview&&<div className="info"><strong>Saved {lastReview.operation}: {lastReview.reviewStatus??lastReview.status}</strong>{reviewFindings.length?reviewFindings.map(item=><div key={item.id}>{item.id} · {item.severity} · {item.status} · {item.target_ids.join(', ')} · {item.requirement}</div>):<div>{stage==='script'?'No reported findings; corrected Script activation still requires a clean Recheck.':'No reported findings; this does not approve the native film.'}</div>}</div>}</Card>
     <Card><CardHeader title="Import JSON workspace" hint="Strict schema · diff · explicit confirmation"/><Textarea aria-label="Import JSON" value={json} onChange={event=>change(event.target.value)} placeholder="Paste the returned JSON here…"/><div className="actions"><input ref={jsonFilePicker} type="file" accept=".json,application/json" aria-label="Choose JSON file" hidden onChange={event=>{const file=event.currentTarget.files?.[0];event.currentTarget.value='';if(file)importJsonFile(file);}}/><Button disabled={!native} onClick={()=>jsonFilePicker.current?.click()}>Import .json</Button><Button disabled={!json} onClick={()=>change('')}>Clear</Button><Button variant="primary" disabled={!native||!json||!canImport} onClick={validate}>Validate import</Button></div>
       {result==='valid'&&<div className="info success">Schema valid. Review the staged diff before import.</div>}{result==='invalid'&&<div className="info error" role="alert">Invalid import. {error}</div>}
       {pending&&canImport&&<><div className="diff-grid"><pre className="prompt">BEFORE{`\n`}{JSON.stringify(pending.before,null,2)}</pre><pre className="prompt">AFTER{`\n`}{JSON.stringify(pending.after,null,2)}</pre></div>
