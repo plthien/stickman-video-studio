@@ -34,5 +34,6 @@ describe('External workspace never offers a fake frozen prompt',()=>{
     expect(screen.getByRole('button',{name:'Export .md'})).toBeDisabled();
     expect(screen.getByRole('button',{name:'Validate import'})).toBeDisabled();
     expect(screen.queryByText('FROZEN script')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:'Approve exact Script candidate'})).not.toBeInTheDocument();
   });
 });
