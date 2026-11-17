@@ -26,7 +26,7 @@ export interface StudioState {
   imports?: string[];
   media?: Array<{ path:string; sha256:string; kind:'image'|'sfx'|'ambience'; shotId?:string; layerId?:string; track?:'sfx'|'dialogue'|'ambience'|'music'; trackIndex?:number; rights:string; importedAt:string }>;
   nativeReadiness?: { sampleReady:boolean; fullReady:boolean; previewSeconds:number; checkedSeconds?:number; validationSha256?:string; sourceFingerprint?:string; missingOutsideScope?:string[]; reviewedDraft:boolean; verifiedAt:string };
-  longform?: { jobId:string; manifestPath:string; outputPath:string; status:'READY'|'RUNNING'|'UNCERTAIN'|'PASS'|'FAILED'; sourceSha256:string; profileId:string; profileVersion?:number; resume:boolean; updatedAt:string; detail?:string };
+  longform?: { jobId:string; manifestPath:string; outputPath:string; status:'READY'|'RUNNING'|'UNCERTAIN'|'PASS'|'FAILED'; sourceSha256:string; profileId:string; profileVersion?:number; resume:boolean; updatedAt:string; detail?:string; completedParts?:number; totalParts?:number; currentPart?:number; mode?:'generate'|'regenerate'|'resume'|'retry' };
 }
 
 const MAX_JSON = 4 * 1024 * 1024;
