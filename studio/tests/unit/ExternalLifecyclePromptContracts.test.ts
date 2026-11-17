@@ -119,13 +119,18 @@ describe('P-01 through P-14 lifecycle prompt, lock, evidence and ancestry contra
     const incomplete=reviewPayload(recheck,['opening'],[],'script');
     expect(()=>stageLifecycleResult(appPath,root,'script','recheck',
       result(root,recheck,'recheck',incomplete))).toThrow(/omitted/);
+    const correctedCandidate=structuredClone(readState(root).scriptCandidate!);
+    const originalApprovedSha=readState(root).approvedScript?.sha256;
+    expect(correctedCandidate.sha256).not.toBe(originalApprovedSha);
     const resolved=reviewPayload(recheck,['opening'],[finding('F-SCOPE','opening','resolved')],'script');
     resolved.status='REVIEWED_NO_FINDINGS';
     const staged=stageLifecycleResult(appPath,root,'script','recheck',
       result(root,recheck,'recheck',resolved));
     await Promise.resolve(confirmLifecycleResult(root,staged.token));
-    expect(readState(root).approvedScript?.approvedBy).toBe('AUTO');
-    expect(readState(root).approvedScript?.sections[0].text).toContain('true cause');
+    const activated=readState(root).approvedScript;
+    expect(activated?.approvedBy).toBe('AUTO');
+    expect(activated?.sha256).toBe(correctedCandidate.sha256);
+    expect(activated?.sections).toEqual(correctedCandidate.sections);
   });
 
   it('P-04 unresolved Recheck findings do not auto-activate a corrected Script',async()=>{
