@@ -242,7 +242,8 @@ describe('REG-TAB navigation persistence, read-only history and async isolation'
     await waitFor(()=>expect(screen.getByTestId('external-task-prompt')).toHaveTextContent('REBUILT REVIEW PROMPT'));
   });
   it('REG-F03-03 stale frozen reservation requires explicit Rebuild even when readFrozen rejects the old prompt',async()=>{
-    const freezeLifecycle=vi.fn(async()=>({id:'explicit-rebuilt',prompt:'New frozen task prompt'}));
+    const freezeLifecycle=vi.fn(async(_projectId:string,_stage:string,_operation:string,_scope:Record<string,unknown>,_rebuild:boolean)=>
+      ({id:'explicit-rebuilt',prompt:'New frozen task prompt'}));
     bridge({readFrozen:async()=>{throw new Error('STALE frozen source');},
       readHistory:async(_id:string,_stage:string,op:string)=>op==='review'?
         [{...record('stale-review','review','FROZEN'),prompt:null,
