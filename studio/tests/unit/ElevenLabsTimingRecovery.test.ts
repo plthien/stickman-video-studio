@@ -1,6 +1,11 @@
 // @vitest-environment node
-import {describe,expect,it} from 'vitest';
-import {validateAlignment} from '../../src/main/alignment';
+import fs from 'node:fs';
+import path from 'node:path';
+import {afterEach,describe,expect,it} from 'vitest';
+import {captureAlignmentPin,eligibleAlignmentResponse,persistAlignmentResponse,validateAlignment,publishAlignment} from '../../src/main/alignment';
+import {readState,writeState,sha} from '../../src/main/services';
+import {appPath,fixture,cleanup} from './SixIssueFixtures';
+afterEach(cleanup);
 
 describe('ElevenLabs provider timing: evidence-grounded zero-duration repair',()=>{
   const transcript='One two';
@@ -68,6 +73,42 @@ describe('ElevenLabs provider timing: evidence-grounded zero-duration repair',()
     expect(()=>validateAlignment({words:[{word:'One',start:'0',end:.2},
       {word:'two',start:.3,end:.5}]},transcript,62.96))
       .toThrow(/index=0 reason=MISSING_OR_INVALID_TIMESTAMP/);
+  });
+
+  it('AL-07/08/09: failed normalization retains bounded response and prior WAV and approvals',()=>{
+    const {root,voicePath}=fixture(),pin=captureAlignmentPin(root);
+    const before=readState(root),bytes=fs.readFileSync(path.join(root,voicePath));
+    const invalid={characters:[{text:'Wrong',start:0,end:.6}],
+      words:[{text:'   ',start:.2,end:.24}]};
+    const evidencePath=persistAlignmentResponse(root,pin,invalid);
+    expect(fs.existsSync(path.join(root,evidencePath))).toBe(true);
+    expect(()=>validateAlignment(invalid,'One two three',30)).toThrow(/CHARACTER_TEXT_MISMATCH/);
+    expect(eligibleAlignmentResponse(root)).toEqual(invalid);
+    expect(readState(root).alignment).toEqual(before.alignment);
+    expect(fs.readFileSync(path.join(root,voicePath))).toEqual(bytes);
+    const next=readState(root);
+    next.approvedScript!.text='Changed transcript';
+    next.approvedScript!.sections=[{id:'opening',text:'Changed transcript'}];
+    next.approvedScript!.sha256=sha('Changed transcript');
+    writeState(root,next);
+    expect(eligibleAlignmentResponse(root)).toBe(null);
+  });
+  it('AL-11: a project/script change during caption conversion blocks stale alignment publication',async()=>{
+    const {root,voicePath}=fixture(),pin=captureAlignmentPin(root);
+    const prior=readState(root).alignment,wav=fs.readFileSync(path.join(root,voicePath));
+    const raw={words:[{text:'One',start:.1,end:.3},{text:'two',start:.35,end:.6},
+      {text:'three',start:.65,end:.9}]};
+    const words=validateAlignment(raw,'One two three',30);
+    const runner=async()=>{
+      const state=readState(root);
+      state.approvedScript!.revision+=1;
+      writeState(root,state);
+      return{code:0,stdout:'',stderr:''};
+    };
+    await expect(publishAlignment(appPath,root,raw,words,'One two three',
+      'ELEVENLABS',pin,runner)).rejects.toThrow(/changed during alignment/);
+    expect(readState(root).alignment).toEqual(prior);
+    expect(fs.readFileSync(path.join(root,voicePath))).toEqual(wav);
   });
 
 });
