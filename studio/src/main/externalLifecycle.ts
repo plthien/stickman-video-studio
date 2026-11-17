@@ -25,6 +25,30 @@ function artifactFor(root:string,state:StudioState,stage:Stage,operation:Externa
   const value={manifest,shot_ledger:existing?.shotLedger??[],sound_script:existing?.soundScript??[],asset_needs:existing?.assetNeeds??[]};
   return{value,sha256:sha(JSON.stringify(value)),id:'native-'+state.external.native.revision+'-'+operation};
 }
+/** Derive an exact correction scope from the latest CONFIRMED review of the
+ * CURRENT artifact. Never authorize edits based on old, unrelated review data.
+ * The suggested scope is informational; frozen Correct tasks still lock it.
+ */
+export function suggestedCorrectScope(root:string,state:StudioState,stage:Stage){
+  const empty={editableIds:[] as string[],findingIds:[] as string[],reviewTaskId:null as string|null};
+  let current:Artifact;
+  try{current=artifactFor(root,state,stage,'correct');}catch{return empty;}
+  const reports=Object.values(state.lifecycle?.artifacts??{})
+    .filter(item=>item.stage===stage&&(item.operation==='review'||item.operation==='recheck')&&
+      (item.value as {artifact_sha256?:string})?.artifact_sha256===current.sha256)
+    .sort((a,b)=>b.createdAt.localeCompare(a.createdAt)||b.taskId.localeCompare(a.taskId));
+  const latest=reports[0];
+  if(!latest||latest.status!=='REVIEWED_WITH_FINDINGS')return empty;
+  const findings=(latest.value as {findings?:Array<{id:string;status:string;target_ids:string[]}>}).findings??[];
+  const unresolved=findings.filter(item=>(item.status==='open'||item.status==='uncertain')&&
+    /^[A-Za-z0-9_-]{1,80}$/.test(item.id)&&Array.isArray(item.target_ids));
+  return {
+    editableIds:[...new Set(unresolved.flatMap(item=>item.target_ids))],
+    findingIds:[...new Set(unresolved.map(item=>item.id))],
+    reviewTaskId:latest.taskId
+  };
+}
+
 function evidence(root:string,state:StudioState,scope:Scope){
   const selected=scope.media;if(!selected)return{status:'NOT_VERIFIED',modalities:[],ranges:[],files:[]};
   const row=selected==='preview'?state.preview:selected==='film'?state.render:undefined;
@@ -245,8 +269,18 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
       evidencePack.status='OWNER_ATTESTED_FILE_TRANSFER_NOT_VERIFIED_BY_STUDIO';
     }else evidencePack.status='AVAILABLE_LOCALLY_NOT_TRANSFERRED';
   }
-  const editableIds=[...new Set(scope.editableIds??[])],editablePaths=[...new Set(scope.editablePaths??[])];
-  if(operation==='correct'&&!editableIds.length&&!editablePaths.length)throw new Error('Correct requires explicit non-empty editable IDs or field paths.');
+  const editablePaths=[...new Set(scope.editablePaths??[])];
+  const suggested=operation==='correct'?suggestedCorrectScope(root,state,stage):null;
+  const selectedFindings=scope.findingIds?.length?scope.findingIds:suggested?.findingIds??[];
+  const inferredTargets=suggested&&scope.findingIds?.length?
+    suggested.editableIds.filter(id=>Object.values(state.lifecycle?.artifacts??{}).some(item=>
+      item.taskId===suggested.reviewTaskId&&
+      (item.value as {findings?:Array<{id:string;target_ids:string[]}>}).findings?.some(f=>
+        selectedFindings.includes(f.id)&&f.target_ids.includes(id)))):suggested?.editableIds??[];
+  const editableIds=[...new Set(scope.editableIds?.length||editablePaths.length?
+    scope.editableIds??[]:inferredTargets)];
+  if(operation==='correct'&&!editableIds.length&&!editablePaths.length)
+    throw new Error('Correct requires unresolved findings from a confirmed current-artifact Review or an explicit editable section/shot scope.');
   if(editableIds.some(id=>typeof id!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(id)))throw new Error('Invalid editable ID.');
   if(editablePaths.some(p=>typeof p!=='string'||!/^\/(?:manifest\/)?[A-Za-z0-9_~-]+(?:\/[A-Za-z0-9_~-]+)*$/.test(p)||p==='/'||p==='/manifest'))
     throw new Error('Invalid or overly broad editable field path.');
@@ -269,7 +303,7 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
     for(const finding of p.findings??[])latestFindingStatus.set(finding.id,finding.status??'uncertain');
   }
   const reviewFindings=[...latestFindingStatus].filter(([,status])=>status!=='resolved').map(([id])=>id);
-  const findingIds=scope.findingIds??((operation==='correct'||operation==='recheck')?[...new Set(reviewFindings)]:[]);
+  const findingIds=scope.findingIds??(operation==='correct'?suggested?.findingIds??[]:operation==='recheck'?[...new Set(reviewFindings)]:[]);
   if(new Set(findingIds).size!==findingIds.length||findingIds.some(id=>typeof id!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(id)))
     throw new Error('Invalid finding scope.');
   if(operation==='recheck'&&reviewFindings.some(id=>!findingIds.includes(id)))
