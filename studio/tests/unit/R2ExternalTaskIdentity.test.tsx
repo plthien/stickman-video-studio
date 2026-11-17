@@ -1,10 +1,10 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
-import {fireEvent,render,screen,waitFor,cleanup} from '@testing-library/react';
+import {act,fireEvent,render,screen,waitFor,cleanup} from '@testing-library/react';
 import {ExternalSessionProvider,ExternalWorkspace} from '../../src/renderer/features/external/ExternalWorkspace';
 
 const harness=vi.hoisted(()=>({
   projectId:'project-A',readFrozen:vi.fn(),freezeLifecycle:vi.fn(),freezeTask:vi.fn(),
-  messages:vi.fn()
+  messages:vi.fn(),stageImport:vi.fn(),stageLifecycle:vi.fn()
 }));
 vi.mock('../../src/renderer/app/AppState',()=>({
   useAppState:()=>({
@@ -28,16 +28,66 @@ beforeEach(()=>{
     return task('frozen-1',scope);
   });
   harness.freezeTask.mockReset().mockResolvedValue(task('author-1',{}));
+  harness.stageImport.mockReset();harness.stageLifecycle.mockReset();
   Object.defineProperty(window,'studio',{configurable:true,value:{
-    readFrozen:harness.readFrozen,freezeLifecycle:harness.freezeLifecycle,freezeTask:harness.freezeTask
+    readFrozen:harness.readFrozen,freezeLifecycle:harness.freezeLifecycle,freezeTask:harness.freezeTask,
+    stageImport:harness.stageImport,stageLifecycle:harness.stageLifecycle
   }});
 });
-afterEach(()=>{cleanup();Reflect.deleteProperty(window,'studio');});
+afterEach(()=>{cleanup();vi.unstubAllGlobals();Reflect.deleteProperty(window,'studio');});
 function showCorrect(){
   render(<ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider>);
   fireEvent.click(screen.getByRole('button',{name:'Correct'}));
 }
 describe('R2 explicit external reservation identity',()=>{
+
+  it('loads a local .json file verbatim into the editor without staging or confirming import',async()=>{
+    showCorrect();
+    const response=JSON.stringify({schema:'mode-b-external-result-v1',payload:{sections:[]}},null,2);
+    fireEvent.change(screen.getByLabelText('Choose JSON file'),{
+      target:{files:[new File([response],'response.json',{type:'application/json'})]}
+    });
+    await waitFor(()=>expect(screen.getByRole('textbox',{name:'Import JSON'})).toHaveValue(response));
+    expect(screen.getByRole('button',{name:'Validate import'})).toBeEnabled();
+    expect(harness.stageImport).not.toHaveBeenCalled();
+    expect(harness.stageLifecycle).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button',{name:/Confirm reviewed import/})).not.toBeInTheDocument();
+  });
+  it('rejects malformed .json without replacing existing pasted JSON or staging an import',async()=>{
+    showCorrect();
+    const editor=screen.getByRole('textbox',{name:'Import JSON'});
+    fireEvent.change(editor,{target:{value:'{"previous":true}'}});
+    fireEvent.change(screen.getByLabelText('Choose JSON file'),{
+      target:{files:[new File(['{broken'], 'invalid.json',{type:'application/json'})]}
+    });
+    await screen.findByText('Selected file is not valid JSON.');
+    expect(editor).toHaveValue('{"previous":true}');
+    expect(harness.stageImport).not.toHaveBeenCalled();
+    expect(harness.stageLifecycle).not.toHaveBeenCalled();
+  });
+  it('discards a selected JSON file read after switching the native project session',async()=>{
+    let pending:{result:string|null;onload:(()=>void)|null}|null=null;
+    class DelayedFileReader {
+      result:string|null=null;
+      onload:(()=>void)|null=null;
+      onerror:(()=>void)|null=null;
+      readAsText(){pending=this;}
+    }
+    vi.stubGlobal('FileReader',DelayedFileReader);
+    const view=render(<ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider>);
+    fireEvent.change(screen.getByLabelText('Choose JSON file'),{
+      target:{files:[new File(['{"stale":"old project"}'],'old.json',{type:'application/json'})]}
+    });
+    expect(pending).not.toBeNull();
+    harness.projectId='project-B';
+    view.rerender(<ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider>);
+    await waitFor(()=>expect(harness.readFrozen).toHaveBeenCalledWith('project-B','script','author'));
+    act(()=>{
+      if(pending){pending.result='{"stale":"old project"}';pending.onload?.();}
+    });
+    expect(screen.getByRole('textbox',{name:'Import JSON'})).toHaveValue('');
+    expect(harness.stageImport).not.toHaveBeenCalled();
+  });
   it('typing and rerendering scope never freezes; Build is one reservation',async()=>{
     showCorrect();
     const input=screen.getByPlaceholderText('S03, S04');
