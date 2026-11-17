@@ -12,7 +12,8 @@ const API_MAX_CHARS=4096;
 const FINAL_MAX_SECONDS=900;
 const active=new Set<string>();
 type Part={sectionId:string;index:number;text:string;seed:number;speed:number};
-type JobInput={voice?:string;resume?:boolean;retryUncertain?:boolean};
+export type JobInput={voice?:string;resume?:boolean;retryUncertain?:boolean;regenerate?:boolean};
+export type NarrationAction='generate'|'regenerate'|'resume'|'retry'|'running';
 type PartReceipt={schema:string;index:number;inputSha256:string;wavSha256:string;
   receiptToken:string;proof:string;profileVersion:number;referenceSha256:string;binding:string};
 
@@ -95,10 +96,28 @@ function mark(root:string,jobId:string,status:'RUNNING'|'UNCERTAIN'|'FAILED',det
     writeState(root,state);
   }
 }
+/** Return the one safe action. The persisted state is authoritative, never
+ * a guess based on which React buttons happen to be enabled. */
+export function narrationAction(root:string):{action:NarrationAction;reason:string;completed:number;total:number;currentPart?:number;status:string;detail?:string}{
+  const job=readState(root).longform;
+  if(active.has(root))return{action:'running',reason:'Generation request is active.',completed:job?.completedParts??0,total:job?.totalParts??0,currentPart:job?.currentPart,status:'RUNNING',detail:job?.detail};
+  if(!job)return{action:'generate',reason:'No generation attempt.',completed:0,total:0,status:'READY'};
+  const progress={completed:job.completedParts??0,total:job.totalParts??0,currentPart:job.currentPart,status:job.status,detail:job.detail};
+  if(job.status==='PASS')return{action:'regenerate',reason:'The previous narration attempt passed.',...progress};
+  const dir=resolveProjectFile(root,job.outputPath);
+  const files=fs.existsSync(dir)?fs.readdirSync(dir):[];
+  const uncertain=files.some(x=>/^part-\d+\.inflight\.json$/.test(x));
+  if(uncertain||job.status==='UNCERTAIN')return{action:'retry',reason:'The outcome of a dispatched part is uncertain; replay requires authorization.',...progress};
+  return{action:'resume',reason:'Recover the saved attempt; verified parts will be reused.',...progress};
+}
+
 export async function generateApiNarration(root:string,input:JobInput){
   if(active.has(root))throw new Error('NARRATION_RUNNING: wait for the current request to finish or recover.');
   active.add(root);
   let jobId='';
+  if((input.regenerate&& (input.resume||input.retryUncertain))||(input.retryUncertain&&!input.resume)){
+    active.delete(root);throw new Error('NARRATION_INTENT_CONFLICT: select one eligible action.');
+  }
   try{
     const initial=readState(root),script=initial.approvedScript,voice=input.voice??initial.nano?.profileId;
     if(!script||!voice)throw new Error('Approved Script and a selected Nano voice profile are required.');
@@ -113,7 +132,19 @@ export async function generateApiNarration(root:string,input:JobInput){
     const sourceSha256=sha(JSON.stringify({project:initial.project.id,script:script.sha256,
       revision:script.revision,voice,version,binding,endpoint,
       segments:segments.map(x=>[x.sectionId,sha(x.text),x.seed,x.speed])}));
-    jobId=sourceSha256.slice(0,24);
+    const previous=readState(root).longform;
+    const recovering=Boolean(input.resume||input.retryUncertain);
+    if(recovering){
+      if(!previous||previous.status==='PASS')throw new Error('NARRATION_RECOVERY_UNAVAILABLE: no incomplete attempt.');
+      if(previous.sourceSha256!==sourceSha256||previous.profileId!==voice||previous.profileVersion!==version)
+        throw new Error('NARRATION_RECOVERY_INCOMPATIBLE: Script, endpoint or Nano profile changed.');
+      jobId=previous.jobId;
+    }else if(input.regenerate){
+      jobId=sourceSha256.slice(0,16)+'-'+randomUUID().slice(0,12);
+    }else if(previous&&previous.sourceSha256===sourceSha256){
+      if(previous.status!=='PASS')throw new Error('NARRATION_RECOVERY_REQUIRED: Resume or Explicit Retry before generating anew.');
+      jobId=previous.jobId;
+    }else jobId=sourceSha256.slice(0,16)+'-'+randomUUID().slice(0,12);
     const relativeBase='.studio/voice/jobs/'+jobId;
     const output=resolveProjectFile(root,relativeBase+'/output');
     const manifest=resolveProjectFile(root,relativeBase+'/source.json');
@@ -127,7 +158,7 @@ export async function generateApiNarration(root:string,input:JobInput){
     const old=readState(root);
     // Idempotent repeat must not republish identical WAV and invalidate current
     // alignment/caption approval merely because Generate was clicked twice.
-    if(old.longform?.jobId===jobId&&old.longform.status==='PASS'&&
+    if(!input.regenerate&&old.longform?.jobId===jobId&&old.longform.status==='PASS'&&
       old.voice?.origin==='NANO_LONGFORM'&&!old.voice.stale&&fs.existsSync(resolveProjectFile(root,relativeBase+'/output/final.wav'))){
       const final=fs.readFileSync(resolveProjectFile(root,relativeBase+'/output/final.wav'));
       const info=inspectWavBuffer(final);
@@ -179,6 +210,10 @@ export async function generateApiNarration(root:string,input:JobInput){
       }
       if(fs.existsSync(uncertainPath)&&!input.retryUncertain)
         throw new Error('NANO_UNCERTAIN: explicitly retry the pending part '+stem+'.');
+      if(fs.existsSync(uncertainPath)&&input.retryUncertain){
+        // Preserve the original in-flight marker as evidence for the authorized replay.
+        fs.renameSync(uncertainPath,uncertainPath+'.retry-'+randomUUID());
+      }
       if(part.index>0&&wavs.length>0&&!input.resume&&!input.retryUncertain&&
         (old.longform?.jobId===jobId)&&old.longform.status!=='PASS')
         throw new Error('NARRATION_RESUME_REQUIRED: continue saved sections using Resume.');
@@ -189,9 +224,11 @@ export async function generateApiNarration(root:string,input:JobInput){
         throw new Error('NARRATION_STALE: project Script/endpoint changed.');
       fresh.longform={jobId,manifestPath:relativeBase+'/source.json',
         outputPath:relativeBase+'/output',status:'RUNNING',sourceSha256,profileId:voice,
-        profileVersion:version,resume:Boolean(input.resume),updatedAt:new Date().toISOString()};
+        profileVersion:version,resume:Boolean(input.resume),updatedAt:new Date().toISOString(),
+        completedParts:wavs.length,totalParts:segments.length,currentPart:part.index,
+        mode:input.regenerate?'regenerate':input.retryUncertain?'retry':input.resume?'resume':'generate'};
       writeState(root,fresh);
-      atomicJson(uncertainPath,{schema:'nano-api-inflight-v1',sourceSha256,index:part.index,inputSha256:sha(part.text)});
+      atomicJson(uncertainPath,{schema:'nano-api-inflight-v1',sourceSha256,index:part.index,inputSha256:sha(part.text),executionAttemptId:randomUUID(),authorizedRetry:Boolean(input.retryUncertain)});
       try {
         const generated=await synthesizeNano({endpoint,input:part.text,voice,speed:part.speed,seed:part.seed,
           expectedBinding:binding,expectedVersion:version});
@@ -206,6 +243,10 @@ export async function generateApiNarration(root:string,input:JobInput){
           profile:{id:voice,version,ref_sha256:String(verified.profile.ref_sha256)},binding});
         fs.unlinkSync(uncertainPath);
         wavs.push(generated.wav);
+        const progress=readState(root);if(progress.longform?.jobId===jobId){
+          progress.longform.completedParts=wavs.length;progress.longform.currentPart=part.index+1;
+          progress.longform.updatedAt=new Date().toISOString();writeState(root,progress);
+        }
       }catch(error){
         const message=error instanceof Error?error.message:String(error);
         if(message.startsWith('NANO_NOT_ADMITTED_')&&fs.existsSync(uncertainPath))
@@ -238,7 +279,17 @@ export async function generateApiNarration(root:string,input:JobInput){
     }else atomicJson(summaryPath,summary);
     const longform={jobId,manifestPath:relativeBase+'/source.json',outputPath:relativeBase+'/output',
       status:'PASS' as const,sourceSha256,profileId:voice,profileVersion:version,
-      resume:Boolean(input.resume),updatedAt:new Date().toISOString()};
+      resume:Boolean(input.resume),updatedAt:new Date().toISOString(),
+      completedParts:segments.length,totalParts:segments.length,currentPart:segments.length,
+      mode:input.regenerate?'regenerate':input.retryUncertain?'retry':input.resume?'resume':'generate'};
+    const accepted=readState(root).voice;
+    if(accepted&&!accepted.stale&&accepted.sha256===info.sha256&&
+      sha(fs.readFileSync(resolveProjectFile(root,accepted.path)))===info.sha256){
+      // New attempt produced byte-identical audio: keep alignment/caption approvals.
+      const state=readState(root);state.longform=longform;
+      writeState(root,state);
+      return {jobId,path:accepted.path,sha256:info.sha256,duration:info.duration,summary};
+    }
     const published=acceptNarration(root,{wav:finalWav,expectedScriptSha256:script.sha256,
       voice:{origin:'NANO_LONGFORM',profileId:voice,profileVersion:version,referenceBinding:binding,
         receipt:{schema:'nano-api-assembled-receipt-v1',sourceSha256,summary}},
