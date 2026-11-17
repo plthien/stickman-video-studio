@@ -3,7 +3,7 @@ import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {afterEach,describe,expect,it} from 'vitest';
 import {confirmLifecycleResult,freezeLifecycleTask,stageLifecycleResult} from '../../src/main/externalLifecycle';
-import {freezeTask} from '../../src/main/externalTasks';
+import {freezeTask,stageImport,confirmImport} from '../../src/main/externalTasks';
 import {compileAuthority,SCRIPT_AUTHOR_EXTRACTION_REVISION} from '../../src/main/externalAuthority';
 import {projectId,readState,writeState,type StudioState} from '../../src/main/services';
 
@@ -44,6 +44,26 @@ function timeFreezeFixture(){
 
 describe('External creative lifecycle',()=>{
 
+
+  it('REG-08: confirmed Script Author JSON activates automatically without manual approval',async()=>{
+    const root=timeFreezeFixture(),state=readState(root),task=state.tasks!.script!;
+    const candidate=state.scriptCandidate!;
+    expect(state.approvedScript).toBeUndefined();
+    const response={
+      schema:'mode-b-external-result-v1',project_id:state.project.id,
+      task_id:task.id,revision:task.revision,input_sha256:task.inputSha256,
+      stage:'script',payload:{schema:'mode-b-script-v1',
+        sections:candidate.sections,authoring:candidate.authoring}
+    };
+    const staged=stageImport(appPath,root,'script',JSON.stringify(response));
+    await confirmImport(appPath,root,staged.token);
+    const activated=readState(root);
+    expect(activated.approvedScript?.approvedBy).toBe('AUTO');
+    expect(activated.approvedScript?.sections).toEqual(candidate.sections);
+    expect(activated.approvedScript?.authoring).toEqual(candidate.authoring);
+    expect(activated.tasks?.script?.status).toBe('IMPORTED');
+    expect(activated.scriptCandidate?.taskId).toBe(task.id);
+  });
   it('REG-01 / REG-02 / REG-05 / REG-09: Script Review sees exact B1 creative authority and one six-section target',()=>{
     const root=timeFreezeFixture(),author=readState(root).tasks!.script!;
     const original=fs.readFileSync(path.join(root,author.promptPath),'utf8');
