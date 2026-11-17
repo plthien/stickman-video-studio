@@ -94,7 +94,7 @@ function checkEditablePaths(stage:Stage,artifact:unknown,paths:string[]){
     new Set(['/manifest','/manifest/shots','/shot_ledger','/sound_script','/asset_needs','/schema']);
   const forbidden=new Set(['/manifest/voice','/manifest/captions']);
   for(const pointer of paths){
-    if(typeof pointer!=='string'||!/^\/[A-Za-z0-9_~/-]+$/.test(pointer)||pointer.endsWith('/')||
+    if(typeof pointer!=='string'||!/^\/[A-Za-z0-9_~\/-]+$/.test(pointer)||pointer.endsWith('/')||
       structural.has(pointer)||forbidden.has(pointer))throw new Error('INVALID_EDITABLE_PATH: whole-root/collection or immutable field is not an authorized edit: '+pointer);
     const parts=pointer.slice(1).split('/').map(segment=>segment.replace(/~1/g,'/').replace(/~0/g,'~'));
     if(parts.some(segment=>!segment||segment==='__proto__'||segment==='prototype'||segment==='constructor'))
