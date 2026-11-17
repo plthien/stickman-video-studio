@@ -81,7 +81,11 @@ describe('ElevenLabs settings and generated voice preview',()=>{
 describe('Voice actions use main-process eligibility, not permanently enabled buttons',()=>{
   const withProfile=(id:string)=>{const value=project(id,true);value.nano={
     endpoint:'http://127.0.0.1:3901',profileId:'voice'
-  };return value;};
+  };
+    value.approvedScript={sections:[{id:'s1',text:'Hello world'}],text:'Hello world',
+      sha256:'1'.repeat(64),revision:1};
+    return value;
+  };
   it('GEN-02/UI: PASS offers Regenerate only and sends the regenerate intent',async()=>{
     const state=withProfile('voice-regen'),run=vi.fn(async()=>({jobId:'new-attempt'}));
     bridge({
