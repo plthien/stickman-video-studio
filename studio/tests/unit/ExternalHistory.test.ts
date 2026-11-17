@@ -129,6 +129,88 @@ describe('REG-TAB read-only external history and integrity',()=>{
     expect(archived[1].confirmedJson).toContain('"REVIEWED_NO_FINDINGS"');
   });
 
+  it('REG-STALE-01 confirmed Native Author remains readable after a genuinely new Script activates and retires Native',async()=>{
+    const {root}=fixture({style:'B1'});
+    const native=stageNative(root,nativePayload(root));
+    await confirmImport(appPath,root,native.response.token,{validator:validator().run});
+    const nativeTask=readState(root).tasks!.native!;
+    expect(nativeTask.confirmedResponseSha256).toMatch(/^[a-f0-9]{64}$/);
+    const author=freezeTask(appPath,root,'script');
+    const response=JSON.stringify({schema:'mode-b-external-result-v1',project_id:readState(root).project.id,
+      task_id:author.id,revision:author.revision,input_sha256:author.inputSha256,
+      stage:'script',payload:{schema:'mode-b-script-v1',
+        sections:[{id:'opening',text:'A collapsing rock bridge leaves one dangerous choice.'}],
+        authoring:{creative_direction:{premise:'The falling bridge forces a decision.'}}}});
+    const pending=stageImport(appPath,root,'script',response);
+    await confirmImport(appPath,root,pending.token);
+    expect(readState(root).tasks!.native!.status).toBe('STALE');
+    const before=fs.readFileSync(path.join(root,'.studio/state.json'));
+    const rows=readExternalHistory(root,'native','author');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe('STALE');
+    expect(rows[0].confirmedJson).toContain('"task_id":"'+nativeTask.id+'"');
+    expect(rows[0].integrity).toBe('OK');
+    expect(fs.readFileSync(path.join(root,'.studio/state.json'))).toEqual(before);
+    expect(readState(root).tasks!.native!.id).toBe(nativeTask.id);
+  });
+  it('REG-STALE-02 refuses a corrupted confirmed Native Author response without legacy fallback',async()=>{
+    const {root}=fixture({style:'B1'});
+    const native=stageNative(root,nativePayload(root));
+    await confirmImport(appPath,root,native.response.token,{validator:validator().run});
+    const state=readState(root),task=state.tasks!.native!;
+    task.status='STALE';writeState(root,state);
+    fs.appendFileSync(path.join(root,task.confirmedResponsePath!),'CORRUPT');
+    const row=readExternalHistory(root,'native','author')[0];
+    expect(row.status).toBe('STALE');
+    expect(row.confirmedJson).toBeNull();
+    expect(row.errors).toContain('RESPONSE_HASH_MISMATCH');
+  });
+  it('REG-STALE-03 never mistakes an unconfirmed staged Native response for confirmed history',()=>{
+    const {root}=fixture({style:'B1'});
+    const staged=stageNative(root,nativePayload(root));
+    expect(staged.response.status).toBe('STAGED');
+    const unconfirmed=readState(root).tasks!.native!;
+    const next=freezeTask(appPath,root,'native',true);
+    expect(next.id).not.toBe(unconfirmed.id);
+    const old=readExternalHistory(root,'native','author').find(row=>row.id===unconfirmed.id)!;
+    expect(old.status).toBe('STALE');
+    expect(old.confirmedJson).toBeNull();
+    expect(old.integrity).toBe('OK');
+    expect(fs.existsSync(path.join(root,'.studio/external/responses',
+      'native-'+unconfirmed.id+'-'+unconfirmed.revision+'-'+
+      sha(fs.readFileSync(path.join(root,'.studio/external/pending.json')).toString())+'.json'))).toBe(false);
+    expect(readState(root).tasks!.native!.id).toBe(next.id);
+  });
+  it('REG-STALE-04 restores legacy Script Author after STALE only with matching published Script artifact',async()=>{
+    const {root,author}=await fullScriptHistory();
+    const state=readState(root);
+    state.tasks!.script!.status='STALE';
+    delete state.tasks!.script!.confirmedResponseSha256;
+    delete state.tasks!.script!.confirmedResponsePath;
+    writeState(root,state);
+    const before=fs.readFileSync(path.join(root,'.studio/state.json'));
+    const recovered=readExternalHistory(root,'script','author')[0];
+    expect(recovered).toMatchObject({status:'STALE',integrity:'OK'});
+    expect(recovered.confirmedJson).toContain('"task_id":"'+author.id+'"');
+    expect(fs.readFileSync(path.join(root,'.studio/state.json'))).toEqual(before);
+    const wrong=readState(root);wrong.external.script!.artifact={schema:'mode-b-script-v1',sections:[],authoring:{}};
+    writeState(root,wrong);
+    const rejected=readExternalHistory(root,'script','author')[0];
+    expect(rejected.confirmedJson).toBeNull();
+    expect(rejected.errors).toContain('LEGACY_RESPONSE_NOT_VERIFIABLE');
+  });
+  it('REG-STALE-04 lifecycle STALE review needs its confirmed artifact record and original response',async()=>{
+    const {root}=await fullScriptHistory();
+    const state=readState(root);
+    state.lifecycle!.tasks['script:review'].status='STALE';writeState(root,state);
+    const row=readExternalHistory(root,'script','review')[0];
+    expect(row.status).toBe('STALE');
+    expect(row.confirmedJson).toContain('"REVIEWED_WITH_FINDINGS"');
+    const unbound=readState(root);
+    delete unbound.lifecycle!.artifacts[unbound.lifecycle!.tasks['script:review'].id];
+    writeState(root,unbound);
+    expect(readExternalHistory(root,'script','review')[0].confirmedJson).toBeNull();
+  });
   it('REG-F04-03 legacy Media Review task remains readable but cannot be created anew',()=>{
     const {root}=fixture({style:'B1'});freezeTask(appPath,root,'script');
     const review=freezeLifecycleTask(appPath,root,'script','review');
