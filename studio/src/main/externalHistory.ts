@@ -74,7 +74,9 @@ function readOne(root:string,state:StudioState,stage:Stage,operation:ExternalOpe
                 canonical(parsed.payload)!==canonical(saved.value))errors.push('RESPONSE_IDENTITY_MISMATCH');
               else {
                 confirmedJson=bytes.toString('utf8');
-                const rows=(parsed.payload as {findings?:unknown})?.findings;
+                const payload=parsed.payload as {findings?:unknown;status?:unknown};
+                if(typeof payload.status==='string')reviewStatus=payload.status;
+                const rows=payload.findings;
                 if(Array.isArray(rows))findings=rows.filter((x):x is ExternalHistoryRecord['findings'][number]=>{
                   if(!x||typeof x!=='object')return false;
                   const row=x as Record<string,unknown>;
@@ -90,7 +92,7 @@ function readOne(root:string,state:StudioState,stage:Stage,operation:ExternalOpe
     }
   }
   return {id,revision,stage,operation,status,mediaKind:task.mediaKind as ExternalHistoryRecord['mediaKind'],
-    prompt,confirmedJson,findings,errors,integrity:errors.length?(prompt===null&&confirmedJson===null?'ERROR':'PARTIAL'):'OK',
+    prompt,confirmedJson,findings,reviewStatus,errors,integrity:errors.length?(prompt===null&&confirmedJson===null?'ERROR':'PARTIAL'):'OK',
     editableIds:task.editableIds as string[]|undefined,
     editablePaths:task.editablePaths as string[]|undefined,
     targetIds:task.targetIds as string[]|undefined,
