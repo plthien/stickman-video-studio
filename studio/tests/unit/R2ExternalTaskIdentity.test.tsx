@@ -126,10 +126,12 @@ describe('R2 explicit external reservation identity',()=>{
     fireEvent.change(screen.getByPlaceholderText('S03, S04'),{target:{value:'shot-1'}});
     fireEvent.click(screen.getByRole('button',{name:'Build Task'}));
     await screen.findByText(/Frozen task frozen-1/);
+    fireEvent.change(screen.getByLabelText('Import JSON'),{target:{value:'{"draft":"preserve"}'}});
     fireEvent.click(screen.getByRole('button',{name:'Build Task'}));
     await waitFor(()=>expect(harness.freezeLifecycle).toHaveBeenCalledTimes(2));
     expect(harness.freezeLifecycle.mock.calls[1][4]).toBe(false);
     expect(screen.getByText(/Frozen task frozen-1/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Import JSON')).toHaveValue('{"draft":"preserve"}');
     fireEvent.click(screen.getByRole('button',{name:'Rebuild Task'}));
     await screen.findByText(/Frozen task rebuild-2/);
     expect(harness.freezeLifecycle.mock.calls[2][4]).toBe(true);
