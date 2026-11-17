@@ -115,7 +115,7 @@ export async function generateApiNarration(root:string,input:JobInput){
       segments:segments.map(x=>[x.sectionId,sha(x.text),x.seed,x.speed])}));
     jobId=sourceSha256.slice(0,24);
     const relativeBase='.studio/voice/jobs/'+jobId;
-    const folder=resolveProjectFile(root,relativeBase),output=resolveProjectFile(root,relativeBase+'/output');
+    const output=resolveProjectFile(root,relativeBase+'/output');
     const manifest=resolveProjectFile(root,relativeBase+'/source.json');
     const manifestData={schema:'nano-api-narration-v1',sourceSha256,voice,version,binding,endpoint,
       parts:segments.map(x=>({sectionId:x.sectionId,index:x.index,inputSha256:sha(x.text),seed:x.seed,speed:x.speed}))};
