@@ -193,7 +193,7 @@ describe('REG-TAB read-only external history and integrity',()=>{
     delete state.tasks!.script!.confirmedResponseSha256;
     delete state.tasks!.script!.confirmedResponsePath;
     writeState(root,state);
-    const second=JSON.stringify(JSON.parse(original),null,2)+'\\n';
+    const second=JSON.stringify(JSON.parse(original),null,2);
     const secondName='script-'+author.id+'-'+author.revision+'-'+sha(second)+'.json';
     fs.writeFileSync(path.join(root,'.studio/external/responses',secondName),second);
     const record=readExternalHistory(root,'script','author')[0];
