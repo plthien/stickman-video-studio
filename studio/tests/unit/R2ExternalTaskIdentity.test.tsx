@@ -117,6 +117,9 @@ describe('R2 explicit external reservation identity',()=>{
     fireEvent.change(input,{target:{value:'shot-2'}});
     expect(harness.freezeLifecycle).toHaveBeenCalledTimes(1);
     expect(screen.getByText(/Draft scope changed/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:'Build Task'}));
+    expect(harness.freezeLifecycle).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/Use Rebuild Task explicitly/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button',{name:'Rebuild Task'}));
     await waitFor(()=>expect(harness.freezeLifecycle).toHaveBeenCalledTimes(2));
     expect(harness.freezeLifecycle.mock.calls[1][4]).toBe(true);
