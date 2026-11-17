@@ -64,6 +64,16 @@ export function VoiceWorkspace() {
   const mergeAtWord=()=>{if(!review)return;setBoundaries(value=>value.filter(number=>number!==selectedBoundary));};
   const fail = (reason: unknown) => { setStatus('error'); setMessage(reason instanceof Error ? reason.message : String(reason)); };
   const act = async (work: () => Promise<unknown>, notice: string,afterSuccess?:()=>void) => { const scope=captureProjectSession();if(!id||!scope)return;setStatus('busy');setMessage(''); try { const result=await work();if(!isCurrentProjectSession(scope))return;if(result===null){setStatus('cancelled');setMessage('CANCELLED — no project data changed.');return;} if (window.studio){const next=await window.studio.projectState(scope.projectId);if(!setNativeIfSessionCurrent(scope,next))return;} afterSuccess?.();setStatus('ready'); showNotice(notice); } catch (reason) { if(isCurrentProjectSession(scope))fail(reason); } finally {if(isCurrentProjectSession(scope))void refreshVoiceOperations(scope).catch(()=>{});} };
+  const reportPlaybackError=(code:number|undefined)=>{
+    const category=code===1?'PLAYBACK_ABORTED':code===2?'MEDIA_LOADING_FAILED':
+      code===3?'WAV_DECODING_ERROR':code===4?'MEDIA_UNSUPPORTED_OR_REQUEST_DENIED':'MEDIA_UNKNOWN_ERROR';
+    setPlaybackError(category+' (MediaError '+String(code??'unavailable')+').');
+    const scope=captureProjectSession();
+    if(scope&&window.studio?.voicePlaybackUrl)
+      void window.studio.voicePlaybackUrl(scope.projectId).catch(error=>{
+        if(isCurrentProjectSession(scope))setPlaybackError('NARRATION_MISSING_OR_INTEGRITY_DENIED: '+String(error));
+      });
+  };
   const runNarration=async()=>{
     const scope=captureProjectSession(),action=jobAction?.action;
     if(!scope||!action||action==='running'||action==='blocked'||!window.studio)return;
@@ -105,7 +115,7 @@ export function VoiceWorkspace() {
       <strong>Listen to accepted narration</strong>
       <audio key={id+':'+audioSha+':'+playbackRetry} aria-label="Accepted narration audio" controls preload="metadata" src={playbackUrl} style={{width:'100%'}}
         onLoadedMetadata={()=>setPlaybackError('')}
-        onError={event=>setPlaybackError('Accepted narration WAV could not be played (MediaError code '+String(event.currentTarget.error?.code??'unknown')+').')}/>
+        onError={event=>reportPlaybackError(event.currentTarget.error?.code)}/>
     </div>:<div className="info">{voiceStale?'Narration is stale; regenerate or import approved WAV.':'No verified narration available for playback.'}</div>}
     {playbackError&&<div className="info error" role="alert">{playbackError}</div>}
     {playbackError&&playbackRetry<2&&<Button disabled={!id||status==='busy'} onClick={()=>{setPlaybackRetry(n=>n+1);setPlaybackUrl('');}}>Retry playback (read-only)</Button>}
