@@ -8,6 +8,20 @@ export function VoiceWorkspace() {
   const [status, setStatus] = useState<'idle'|'ready'|'busy'|'error'|'cancelled'>('idle'), [message, setMessage] = useState(''), [authorized, setAuthorized] = useState(false);
   const id = native?.project.id, script = native?.approvedScript?.text ?? '';
   useEffect(()=>{setVoice(native?.nano?.profileId??'');setProfiles([]);setAuthorized(false);},[id,native?.nano?.profileId]);
+  const [playbackUrl,setPlaybackUrl]=useState(''),[playbackError,setPlaybackError]=useState('');
+  const audioSha=native?.voice?.sha256,voiceStale=native?.voice?.stale;
+  useEffect(()=>{
+    let active=true;setPlaybackUrl('');setPlaybackError('');
+    const scope=captureProjectSession();
+    if(!scope||!audioSha||voiceStale||!window.studio?.voicePlaybackUrl)return()=>{active=false};
+    void window.studio.voicePlaybackUrl(scope.projectId).then(value=>{
+      if(active&&isCurrentProjectSession(scope))setPlaybackUrl(value);
+    }).catch(reason=>{
+      if(active&&isCurrentProjectSession(scope))
+        setPlaybackError('Narration playback unavailable: '+String(reason));
+    });
+    return()=>{active=false};
+  },[id,audioSha,voiceStale]);
   const hasAlignment = Boolean(native?.alignment);
   const wordsSha256 = native?.alignment?.wordsSha256;
   const captionRevision = native?.alignment?.captionReview?.revision;
@@ -31,7 +45,14 @@ export function VoiceWorkspace() {
       <Button disabled={!id||!voice||status==='busy'} onClick={()=>act(()=>window.studio!.longformRun(id!,{voice,resume:true,retryUncertain:true}),'Explicit uncertain retry completed.')}>Explicit retry</Button>
       <Button disabled={!id||status==='busy'} onClick={()=>act(()=>window.studio!.importWav(id!),'Approved WAV imported.')}>Import WAV</Button></div>
     {message&&<div className={`info ${status==='error'?'error':''}`} role={status==='error'?'alert':undefined}>{message}</div>}<div className="info">Exact text and language come from approved main-process project state. Uncertain requests are never auto-replayed.</div>
-  </Card><Card><CardHeader title="Narration evidence"/><dl className="kvs"><dt>Audio</dt><dd>{native?.voice?.path??'Not generated'}</dd><dt>Origin</dt><dd>{native?.voice?.origin??'Missing'}</dd><dt>SHA-256</dt><dd><code>{native?.voice?.sha256??'Missing'}</code></dd><dt>Long-form</dt><dd>{native?.longform?.status??'Not run'}</dd></dl></Card></div>
+  </Card><Card><CardHeader title="Narration evidence"/><dl className="kvs"><dt>Audio</dt><dd>{native?.voice?.path??'Not generated'}</dd><dt>Origin</dt><dd>{native?.voice?.origin??'Missing'}</dd><dt>SHA-256</dt><dd><code>{native?.voice?.sha256??'Missing'}</code></dd><dt>Long-form</dt><dd>{native?.longform?.status??'Not run'}</dd></dl>
+    {native?.voice&&!voiceStale&&playbackUrl?<div className="stack">
+      <strong>Listen to accepted narration</strong>
+      <audio key={id+':'+audioSha} aria-label="Accepted narration audio" controls preload="metadata" src={playbackUrl} style={{width:'100%'}}
+        onError={()=>setPlaybackError('Accepted narration WAV could not be played.')}/>
+    </div>:<div className="info">{voiceStale?'Narration is stale; regenerate or import approved WAV.':'No verified narration available for playback.'}</div>}
+    {playbackError&&<div className="info error" role="alert">{playbackError}</div>}
+  </Card></div>
   <Card><CardHeader title="ElevenLabs forced alignment" hint="Exact approved script + exact accepted WAV" action={<Badge tone="amber">USER AUTHORIZED ONLY</Badge>}/><Field label="Exact transcript uploaded"><Textarea readOnly value={script}/></Field>
     <label className="check"><input type="checkbox" checked={authorized} onChange={event=>setAuthorized(event.target.checked)}/> I authorize this upload and possible paid usage now.</label>
     <div className="actions"><Button variant="primary" disabled={!id||!native?.voice||native.voice.stale||!authorized||status==='busy'} onClick={()=>act(()=>window.studio!.align(id!,true),'ElevenLabs alignment saved.',()=>setAuthorized(false))}>Run forced alignment</Button><Button disabled={!id||!native?.voice||status==='busy'} onClick={()=>act(()=>window.studio!.importWords(id!),'Aligned words imported and captions generated.')}>Import aligned words JSON</Button></div>
