@@ -113,6 +113,18 @@ describe('P-01 through P-14 lifecycle prompt, lock, evidence and ancestry contra
     expect(readState(root).approvedScript?.sections[0].text).toContain('true cause');
   });
 
+  it('P-04 unresolved Recheck findings do not auto-activate a corrected Script',async()=>{
+    const {root}=await correctedScript();
+    const approvedBefore=readState(root).approvedScript?.sha256;
+    const recheck=freezeLifecycleTask(appPath,root,'script','recheck');
+    const unresolved=reviewPayload(recheck,['opening'],[finding('F-SCOPE','opening','open')],'script');
+    const staged=stageLifecycleResult(appPath,root,'script','recheck',
+      result(root,recheck,'recheck',unresolved));
+    await Promise.resolve(confirmLifecycleResult(root,staged.token));
+    expect(readState(root).approvedScript?.sha256).toBe(approvedBefore);
+    expect(readState(root).scriptCandidate?.sha256).not.toBe(approvedBefore);
+  });
+
   it('P-05/P-06 native Recheck binds exact published correction, rejecting unrelated review history',async()=>{
     const root=await nativeBaseline();
     const review=freezeLifecycleTask(appPath,root,'native','review');
@@ -171,6 +183,17 @@ describe('P-01 through P-14 lifecycle prompt, lock, evidence and ancestry contra
       result(root,captions,'media-review',captionClaim))).toThrow(/NOT_VERIFIED/);
     const receipt=readState(root).alignment!.captionReview!;
     expect(captions.prompt).toContain(receipt.sha256);
+    // A frozen attested captions package permits text/manifest coverage; this
+    // synthetic unit test does NOT claim real audio or rendered-frame inspection.
+    const attested=freezeLifecycleTask(appPath,root,'script','media-review',
+      {media:'captions',transferAcknowledged:true});
+    const captionReview={schema:'mode-b-review-v1',artifact_sha256:attested.artifactSha256,
+      status:'REVIEWED_WITH_FINDINGS',
+      coverage:{target_ids:attested.targetIds,modalities:['captions'],ranges:[],
+        media_sha256s:attested.mediaSha256s??[]},
+      findings:[finding('F-CAPTION','opening')]};
+    expect(()=>stageLifecycleResult(appPath,root,'script','media-review',
+      result(root,attested,'media-review',captionReview))).not.toThrow();
   });
 
   it('P-10 Film review refuses partial Native sample and accepts only full-duration registered scope',async()=>{
@@ -194,6 +217,12 @@ describe('P-01 through P-14 lifecycle prompt, lock, evidence and ancestry contra
     expect(film.targetIds).toEqual(['shot-1','shot-2']);
     expect(film.prompt).toContain('FILM MEDIA REVIEW');
     expect(film.prompt).not.toContain('SYNTHETIC_NOT_PLAYABLE');
+    const unsupported={schema:'mode-b-review-v1',artifact_sha256:film.artifactSha256,
+      status:'REVIEWED_WITH_FINDINGS',
+      coverage:{target_ids:film.targetIds,modalities:['picture'],ranges:[],media_sha256s:[]},
+      findings:[finding('F-FILM','shot-1')]};
+    expect(()=>stageLifecycleResult(appPath,root,'native','media-review',
+      result(root,film,'media-review',unsupported))).toThrow(/NOT_VERIFIED/);
   });
 
   it('P-12/P-13 lifecycle response examples contain frozen identity but never preset review outcomes',async()=>{
