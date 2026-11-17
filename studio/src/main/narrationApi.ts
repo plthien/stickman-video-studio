@@ -308,7 +308,7 @@ export async function generateApiNarration(root:string,input:JobInput){
       if(JSON.stringify(strictJson(fs.readFileSync(summaryPath,'utf8')))!==JSON.stringify(summary))
         throw new Error('NARRATION_SUMMARY_CONFLICT: saved final proof differs.');
     }else atomicJson(summaryPath,summary);
-    const longform={jobId,manifestPath:relativeBase+'/source.json',outputPath:relativeBase+'/output',
+    const longform:NonNullable<ReturnType<typeof readState>['longform']>={jobId,manifestPath:relativeBase+'/source.json',outputPath:relativeBase+'/output',
       status:'PASS' as const,sourceSha256,profileId:voice,profileVersion:version,
       resume:Boolean(input.resume),updatedAt:new Date().toISOString(),
       completedParts:segments.length,totalParts:segments.length,currentPart:segments.length,
