@@ -4,7 +4,7 @@ import {randomUUID} from 'node:crypto';
 import {atomicJson,readState,resolveProjectFile,sha,strictJson,writeState,type ExternalOperation,type Stage,type StudioState} from './services.js';
 import {compileAuthority} from './externalAuthority.js';
 import {rejectNativeUnsafePaths,validateAuthoring} from './sourceCitations.js';
-import {activateScriptCandidate,scriptCorrectionRechecked,freezeTask,sourceFingerprint,stageImport,confirmImport,validateScript,validateManifest,type ConfirmOptions} from './externalTasks.js';
+import {activateScriptCandidate,scriptCorrectionRechecked,freezeTask,sourceFingerprint,stageImport,confirmImport,validateScript,validateManifest,externalJsonFileDelivery,type ConfirmOptions} from './externalTasks.js';
 
 type Scope={targetIds?:string[];editableIds?:string[];editablePaths?:string[];findingIds?:string[];media?:'preview'|'film'|'voice'|'captions';transferAcknowledged?:boolean};
 type Artifact={value:unknown;sha256:string;id:string};
@@ -121,6 +121,87 @@ export function readFrozenExternalTask(appPath:string,root:string,stage:Stage,op
   }
   return {...task,prompt:fs.readFileSync(target,'utf8')};
 }
+/** Text-only independent review: the original Author appendix is the one full
+ * copy of normative creative authority; provenance outside it is hash-only. */
+function scriptReviewPrompt(
+  state:StudioState,artifact:Artifact,originalTask:string,
+  authority:ReturnType<typeof compileAuthority>,
+  relevantPrior:Array<{taskId:string;operation:ExternalOperation;value:unknown}>,
+  targetIds:string[],envelope:Record<string,unknown>,fileDelivery:string
+):string{
+  const current=artifact.value as {sections:Array<{id:string;text:string}>;authoring:unknown};
+  const brief={
+    project_id:state.project.id,topic:state.brief.topic,language:state.brief.language,
+    target_duration_seconds:state.brief.targetDuration??null,style:state.project.style,
+    ratio:state.brief.ratio,
+    audience:state.brief.audience??'',purpose:state.brief.purpose??''
+  };
+  const target={id:artifact.id,sha256:artifact.sha256,sections:current.sections,authoring:current.authoring};
+  const trace=authority.sources.map(source=>
+    '- '+source.path+' | original SHA256 '+source.sha256+
+    ' | extraction SHA256 '+source.extractionSha256+
+    ' | revision '+source.extractionRevision+
+    ' | source locations '+(source.locations??[]).join(', ')).join('\n');
+  const duration=state.brief.targetDuration;
+  return [
+    '# MODE B EXTERNAL SCRIPT REVIEW',
+    '## A — REVIEW MISSION',
+    'Independently evaluate the COMPLETE current Script artifact against the frozen project brief, selected original Mode B creative authority and approved creative requirements. Identify concrete narrative and creative problems supported by the supplied sections and authoring JSON. Do not rewrite narration, produce corrections or pretend to inspect unprovided audio/video.',
+    'This is an independent review, not a new Author task or an owner-approval gate. Cover each requested section and compare distant sections for contradictions. Do not invent findings to meet a quota.',
+    '## B — CURRENT PROJECT BRIEF',
+    JSON.stringify(brief,null,2),
+    'This brief is for review context, not a second copy of the narration or authoring JSON.',
+    '## C — IMMUTABLE REVIEW TARGET',
+    'This is the artifact being reviewed. Do not replace it with an earlier approved Script.',
+    JSON.stringify(target,null,2),
+    'Target id/sha256 are review-binding identities; do not modify this artifact or invent another candidate.',
+    '## D — REVIEW CRITERIA AND AUTHORITY',
+    'Evaluate all twelve dimensions across the supplied narration and authoring content. These are review responsibilities, NOT new JSON schema fields:',
+    'CR-01 Hook — immediate clarity, relevance, stakes and curiosity.',
+    'CR-02 Narrative structure — setup, progression, escalation and payoff.',
+    'CR-03 Causality — every important result follows established story rules.',
+    'CR-04 World rules — fictional assumptions are coherent and consistently applied.',
+    'CR-05 Characters — identity, motivation, behavior and emotional progression.',
+    'CR-06 Continuity — recurring props, clothing, geography and state changes, including across non-adjacent sections.',
+    'CR-07 Narration — natural spoken '+state.brief.language+', clarity, rhythm and unnecessary repetition.',
+    'CR-08 Duration — spoken pacing plausible for '+(typeof duration==='number'&&duration>0?duration+' seconds':'the requested creative target')+'; do not assert a verified WAV runtime, WPM, pauses or timestamps.',
+    'CR-09 B-style fit — whether important story events are visually communicable within selected '+state.project.style+' style, with actual acting/contact feasibility.',
+    'CR-10 Authoring consistency — sections agree with creative_direction, characters, continuity and other supplied creative choices.',
+    'CR-11 Visual storytelling — important story logic can be shown, not merely asserted in text.',
+    'CR-12 Voice and sound intent — creative intentions fit the established story events, not generic production presets.',
+    'The following deterministic source locations and hashes identify applicable ORIGINAL creative authority. Its full exact text is in Appendix H (the frozen Author task), not duplicated here:',
+    trace,
+    'Textual sections and authoring JSON are evidence for narrative, causal, continuity and style-feasibility findings. Neither source hashes nor local asset paths establish actual media inspection. Do not request Native ledgers, actual word timing, MP4 rendering, audio mixing, local CLI execution or asset acquisition.',
+    '## E — PRIOR FINDINGS',
+    JSON.stringify(relevantPrior,null,2),
+    'For a first review, [] means no prior findings; never fabricate earlier review results.',
+    '## F — REVIEW COVERAGE',
+    'Review every requested section individually and check cross-section logic; a supported issue can target multiple real section IDs. No artificial minimum number of findings.',
+    'Exact target section IDs: '+JSON.stringify(targetIds),
+    'For this text-only review use coverage.modalities=["script"], coverage.ranges=[], coverage.media_sha256s=[]. Set coverage.target_ids to every actually reviewed requested section ID. Do not fabricate audiovisual times, media SHA or inspected modalities.',
+    '## G — RESPONSE CONTRACT',
+    'Return the complete frozen mode-b-lifecycle-result-v1 envelope with unchanged project_id, task_id, revision, input_sha256, stage, operation and payload.artifact_sha256. The example below illustrates the JSON SHAPE ONLY; REVIEWED_NO_FINDINGS is NOT a default finding or assumed review result:',
+    JSON.stringify(envelope,null,2),
+    'Select status ONLY after evaluating actual textual coverage:',
+    'REVIEWED_WITH_FINDINGS — complete requested text coverage and at least one supported unresolved finding.',
+    'REVIEWED_NO_FINDINGS — complete requested text coverage and zero supported unresolved findings.',
+    'INSUFFICIENT_EVIDENCE — necessary textual evidence is missing/unusable for the requested assessment; missing WAV/MP4 alone does NOT cause this status.',
+    'NOT_VERIFIED — a specific requested verification cannot be established from the supplied evidence. Do not claim to know actual WAV duration, word timestamps, spoken performance quality, rendered frames, executed motion or final sound mix.',
+    'For every real finding use exactly: id, severity, status, target_ids, requirement, evidence, recommendation. The following is FORMAT ONLY and is NOT a finding against this project:',
+    JSON.stringify({id:'F-001',severity:'major',status:'open',target_ids:['<real-section-id>'],
+      requirement:'Specific violated creative requirement',
+      evidence:{kind:'manifest',detail:'Exact text discrepancy from supplied sections/authoring JSON'},
+      recommendation:'Concrete scoped correction preserving unrelated approved content'},null,2),
+    'severity: critical | major | minor. finding.status: open | resolved | uncertain. evidence.kind: manifest | inferred | unverified | observed. For direct Script JSON evidence use manifest; for reasoned inferences use inferred and label the inference. NEVER claim observed audiovisual evidence in text-only Script Review. Each finding must cite a real requested section ID; avoid unsupported new plot elements or invented media.',
+    'Return ONLY review findings and evidence coverage; do not rewrite sections, change authoring or produce a correction artifact.',
+    fileDelivery,
+    '## H — ORIGINAL FROZEN AUTHOR TASK (IMMUTABLE REFERENCE APPENDIX)',
+    'Original frozen Author task SHA256: '+sha(originalTask),
+    'This appendix defines the FROZEN AUTHORING REQUIREMENTS, NOT a new Author task. Do not follow its instruction to generate another Script. Its fictional/example JSON is NOT this Review response contract. The current immutable target in Section C is the ONLY Script candidate to evaluate. Do not change these appendix bytes or claim the example narration is the review target.',
+    originalTask
+  ].join('\n\n')+'\n';
+}
+
 export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,operation:Exclude<ExternalOperation,'author'>,scope:Scope={},rebuild=false){
   if(!['review','correct','recheck','media-review'].includes(operation))throw new Error('Unsupported lifecycle operation.');
   const state=readState(root),artifact=artifactFor(root,state,stage,operation),authority=compileAuthority(appPath,state.project.style,stage,operation);
@@ -185,13 +266,16 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
     {schema:'mode-b-correction-v1',artifact_sha256:artifact.sha256,finding_ids:findingIds,editable_ids:editableIds,editable_paths:editablePaths,
       artifact:stage==='script'?{schema:'mode-b-script-v1',sections:(artifact.value as {sections:unknown[]}).sections,authoring:(artifact.value as {authoring:unknown}).authoring}:
       artifact.value}:
-    {schema:'mode-b-review-v1',artifact_sha256:artifact.sha256,status:'INSUFFICIENT_EVIDENCE',
-      coverage:{target_ids:targetIds,modalities:[],ranges:[],media_sha256s:mediaTransferAttested?mediaSha256s:[]},findings:[]};
+    {schema:'mode-b-review-v1',artifact_sha256:artifact.sha256,
+      status:stage==='script'&&operation==='review'?'REVIEWED_NO_FINDINGS':'INSUFFICIENT_EVIDENCE',
+      coverage:{target_ids:targetIds,modalities:stage==='script'&&operation==='review'?['script']:[],ranges:[],media_sha256s:mediaTransferAttested?mediaSha256s:[]},findings:[]};
   const envelope={schema:'mode-b-lifecycle-result-v1',project_id:state.project.id,task_id:id,revision,input_sha256:inputSha256,stage,operation,payload:contract};
   const nativeOrScriptRules=authority.sources.map(source=>
     'BEGIN SOURCE '+source.path+' | full SHA256 '+source.sha256+' | extracted SHA256 '+source.extractionSha256+
     ' | revision '+source.extractionRevision+'\n'+source.text+'\nEND SOURCE '+source.path).join('\n\n');
-  const prompt=[
+  const fileDelivery=externalJsonFileDelivery(stage,operation,revision,id,scope.media);
+  const prompt=stage==='script'&&operation==='review'?
+    scriptReviewPrompt(state,artifact,originalTask,authority,relevantPrior,targetIds,envelope,fileDelivery):[
     '# MODE B EXTERNAL '+operation.toUpperCase(),
     'Manual ChatGPT handoff: return a single strict JSON object, no Markdown. Independent review is not owner approval.',
     'Original frozen author task is authoritative. Do not report observing files, frames, audio, motion or timestamps unless they were actually transferred into this ChatGPT conversation.',
@@ -205,7 +289,8 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
     'PRIOR FINDINGS AND UNCERTAINTY',JSON.stringify(relevantPrior,null,2),
     'EDITABLE SCOPE AND GLOBAL LOCKS',JSON.stringify({editableIds,editablePaths,locked:'all other section/shot IDs, fields and auxiliary ledgers',findingIds:findingIds},null,2),
     'ACTUAL EVIDENCE TRANSFER STATUS',JSON.stringify(evidencePack,null,2),
-    'JSON RESPONSE CONTRACT | replace the example status/findings with supported results only',JSON.stringify(envelope,null,2)
+    'JSON RESPONSE CONTRACT | replace the example status/findings with supported results only',JSON.stringify(envelope,null,2),
+    fileDelivery
   ].join('\n\n')+'\n';
   const relative='.studio/external/lifecycle/tasks/'+stage+'-'+operation+'-'+revision+'-'+id+'.md',target=resolveProjectFile(root,relative);
   fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,prompt,{encoding:'utf8',flag:'wx'});
