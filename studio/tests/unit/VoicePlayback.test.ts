@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {afterEach,describe,expect,it} from 'vitest';
-import {acceptedNarrationPlaybackUrl} from '../../src/main/voicePlayback';
+import {acceptedNarrationPlaybackUrl,verifyAcceptedNarrationRequest} from '../../src/main/voicePlayback';
 import {assertMediaRelative,readState,writeState} from '../../src/main/services';
 import {cleanup,fixture} from './SixIssueFixtures';
 
@@ -11,7 +11,11 @@ describe('accepted narration playback, no unapproved media',()=>{
   it('issues a project-scoped audio URL only for the current SHA-verified WAV',()=>{
     const {root}=fixture();
     const url=acceptedNarrationPlaybackUrl(root);
-    expect(url).toMatch(/^studio-media:\/\/[^/]+\/assets%2Faudio%2Fnarration\.wav\?sha=[a-f0-9]{64}$/);
+    expect(url).toMatch(/^studio-media:\/\/[^/]+\/assets\/audio\/narration\.wav\?sha=[a-f0-9]{64}$/);
+    expect(verifyAcceptedNarrationRequest(root,url)).toBe('assets/audio/narration.wav');
+    expect(()=>verifyAcceptedNarrationRequest(root,url.replace('sha=','hash='))).toThrow(/DENIED/);
+    expect(()=>verifyAcceptedNarrationRequest(root,url+'&sha=duplicate')).toThrow(/DENIED/);
+    expect(()=>verifyAcceptedNarrationRequest(root,url.replace('assets/audio/','assets/other/'))).toThrow(/DENIED/);
     expect(url).toContain(readState(root).voice!.sha256);
     expect(assertMediaRelative('assets/audio/narration.wav')).toBe('assets/audio/narration.wav');
     expect(()=>assertMediaRelative('assets/audio/unapproved.wav')).toThrow(/allowlisted/);
@@ -25,6 +29,8 @@ describe('accepted narration playback, no unapproved media',()=>{
     const file=path.join(root,voicePath);
     const wav=fs.readFileSync(file);wav[wav.length-1]^=1;fs.writeFileSync(file,wav);
     expect(()=>acceptedNarrationPlaybackUrl(root)).toThrow(/changed/);
+    const priorUrl=new URL('studio-media://'+readState(root).project.id+'/assets/audio/narration.wav?sha='+readState(root).voice!.sha256);
+    expect(()=>verifyAcceptedNarrationRequest(root,priorUrl.toString())).toThrow(/changed/);
     fs.unlinkSync(file);
     expect(()=>acceptedNarrationPlaybackUrl(root)).toThrow(/missing/);
   });
