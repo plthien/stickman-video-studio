@@ -4,11 +4,12 @@ import {createHash} from 'node:crypto';
 import {afterEach,describe,expect,it} from 'vitest';
 import {confirmLifecycleResult,freezeLifecycleTask,stageLifecycleResult,suggestedCorrectScope} from '../../src/main/externalLifecycle';
 import {freezeTask,stageImport,confirmImport,externalOutputFilename,validateScript} from '../../src/main/externalTasks';
+import {fixture as mediaFixture,stageNative,nativePayload,validator,cleanup as cleanupMediaFixtures} from './SixIssueFixtures';
 import {compileAuthority,SCRIPT_AUTHOR_EXTRACTION_REVISION} from '../../src/main/externalAuthority';
 import {projectId,readState,writeState,type StudioState} from '../../src/main/services';
 
 const roots:string[]=[];const appPath=path.resolve('.');
-afterEach(()=>roots.splice(0).forEach(root=>fs.rmSync(root,{recursive:true,force:true})));
+afterEach(()=>{roots.splice(0).forEach(root=>fs.rmSync(root,{recursive:true,force:true}));cleanupMediaFixtures();});
 function fixture(){const root=fs.mkdtempSync(path.join(os.tmpdir(),'r2-life-'));roots.push(root);fs.mkdirSync(path.join(root,'.studio'),{recursive:true});fs.writeFileSync(path.join(root,'project.json'),JSON.stringify({version:1,style:'B4',width:1080,height:1920,fps:30,voice:{path:'assets/audio/narration.wav'},captions:[],shots:[],sfx:[]}));const text='A storm closes in. The survivor must act.';const state:StudioState={schema:'mode-b-studio-state-v1',project:{id:projectId(root),root,title:'Survival',style:'B4',updatedAt:new Date().toISOString(),projectFile:path.join(root,'project.json')},brief:{topic:'survival',language:'English',ratio:'9:16'},external:{script:{revision:1,artifact:{},importedAt:new Date().toISOString()}},scriptCandidate:{sections:[{id:'opening',text},{id:'payoff',text:'A grounded solution pays off.'}],text:text+'\n\nA grounded solution pays off.',sha256:'',revision:1,importedAt:new Date().toISOString(),taskId:'author',authoring:{creative_direction:{premise:'causal survival'}}}};state.scriptCandidate!.sha256=(awaitHash(state.scriptCandidate!.text));fs.mkdirSync(path.join(root,'.studio/external/tasks'),{recursive:true});const authorPrompt='ORIGINAL FROZEN SCRIPT TASK: causal survival opening, accurate style requirements, preserve story causality.';fs.writeFileSync(path.join(root,'.studio/external/tasks/script-author.md'),authorPrompt);state.tasks={script:{id:'author',revision:1,inputSha256:'frozen',promptSha256:awaitHash(authorPrompt),promptPath:'.studio/external/tasks/script-author.md',status:'IMPORTED',createdAt:new Date().toISOString()}};fs.writeFileSync(path.join(root,'.studio/state.json'),JSON.stringify(state));return root}
 const awaitHash=(value:string)=>createHash('sha256').update(value).digest('hex');
 
@@ -304,6 +305,23 @@ describe('External creative lifecycle',()=>{
     // Native and media remain separately checked by the existing ten-task regression suite.
   });
 
+  it('REG-F01-04: Native Correct and Script Media Review retain their distinct contracts',async()=>{
+    const {root}=mediaFixture({style:'B1'});
+    freezeTask(appPath,root,'script');
+    const voice=freezeLifecycleTask(appPath,root,'script','media-review',{media:'voice'});
+    const captions=freezeLifecycleTask(appPath,root,'script','media-review',{media:'captions'});
+    expect(voice.prompt).toContain('VOICE MEDIA REVIEW');
+    expect(captions.prompt).toContain('CAPTIONS MEDIA REVIEW');
+    expect(voice.prompt).not.toContain('SCRIPT CORRECT — EXACT ARTIFACT CONTRACT');
+    expect(captions.prompt).not.toContain('SCRIPT CORRECT — EXACT ARTIFACT CONTRACT');
+    const pending=stageNative(root,nativePayload(root));
+    await confirmImport(appPath,root,pending.response.token,{validator:validator().run});
+    const nativeCorrect=freezeLifecycleTask(appPath,root,'native','correct',{editableIds:['shot-1']});
+    expect(nativeCorrect.prompt).toContain('NATIVE CORRECT');
+    expect(nativeCorrect.prompt).toContain('payload.artifact: one COMPLETE corrected current artifact');
+    expect(nativeCorrect.prompt).not.toContain('SCRIPT CORRECT — EXACT ARTIFACT CONTRACT');
+  });
+
   it('REG-03 / REG-04: supported text findings and no-findings statuses validate, fabricated claims do not',()=>{
     const root=timeFreezeFixture();
     const task=freezeLifecycleTask(appPath,root,'script','review');
@@ -472,6 +490,7 @@ describe('External creative lifecycle',()=>{
     expect(readState(root).approvedScript).toBeUndefined();
     const recheck=freezeLifecycleTask(appPath,root,'script','recheck',{findingIds:['F-001']});
     expect(recheck.prompt).toContain('SCRIPT RECHECK — TEXT EVIDENCE AND ACTIVATION GATE');
+    expect(recheck.prompt).not.toContain('SCRIPT CORRECT — EXACT ARTIFACT CONTRACT');
     expect(recheck.prompt).toContain('Missing WAV/MP4 does not automatically mean INSUFFICIENT_EVIDENCE');
     expect(recheck.prompt).toContain('Required exact finding IDs: ["F-001"]');
     const reviewed=stageLifecycleResult(appPath,root,'script','recheck',wrap(recheck,'recheck',{
