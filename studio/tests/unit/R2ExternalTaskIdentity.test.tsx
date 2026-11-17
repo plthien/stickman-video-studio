@@ -56,8 +56,9 @@ describe('R2 explicit external reservation identity',()=>{
     expect(screen.queryByRole('button',{name:/Confirm reviewed import/})).not.toBeInTheDocument();
     fireEvent.change(screen.getByPlaceholderText('S03, S04'),{target:{value:'shot-1'}});
     fireEvent.click(screen.getByRole('button',{name:'Build Task'}));
-    await waitFor(()=>expect(screen.getByRole('button',{name:'Validate import'})).toBeEnabled());
+    await screen.findByText('Frozen task frozen-1');
     expect(screen.getByRole('textbox',{name:'Import JSON'})).toHaveValue('');
+    expect(screen.getByRole('button',{name:'Validate import'})).toBeDisabled();
     // Explicit Build creates a new frozen response identity and clears the
     // JSON that belonged to the earlier, unfrozen context.
     fireEvent.change(screen.getByLabelText('Choose JSON file'),{
