@@ -30,7 +30,10 @@ export function narrationParts(sections:ReadonlyArray<{id:string;text:string}>):
       const boundaries=/\s+/g;
       for(const match of remaining.slice(0,API_MAX_CHARS).matchAll(boundaries)){
         const end=(match.index??0)+match[0].length;
-        if(end>API_MAX_CHARS/2&&end<=API_MAX_CHARS)cut=end;
+        // Do not divide an inline paralinguistic marker at a whitespace.
+        const prefix=remaining.slice(0,end);
+        if(end>API_MAX_CHARS/2&&end<=API_MAX_CHARS&&
+          prefix.lastIndexOf('[')<=prefix.lastIndexOf(']'))cut=end;
       }
       if(cut<1)throw new Error('NANO_OUTER_SAFE_BOUNDARY_UNAVAILABLE: section contains an overlong unbroken span.');
       chunks.push(remaining.slice(0,cut));
@@ -122,6 +125,18 @@ export async function generateApiNarration(root:string,input:JobInput){
         throw new Error('NARRATION_MANIFEST_CHANGED: saved job does not match source.');
     }else atomicJson(manifest,manifestData);
     const old=readState(root);
+    // Idempotent repeat must not republish identical WAV and invalidate current
+    // alignment/caption approval merely because Generate was clicked twice.
+    if(old.longform?.jobId===jobId&&old.longform.status==='PASS'&&
+      old.voice&&!old.voice.stale&&fs.existsSync(resolveProjectFile(root,relativeBase+'/output/final.wav'))){
+      const final=fs.readFileSync(resolveProjectFile(root,relativeBase+'/output/final.wav'));
+      const info=inspectWavBuffer(final);
+      if(info.sha256!==old.voice.sha256||
+        sha(fs.readFileSync(resolveProjectFile(root,old.voice.path)))!==info.sha256)
+        throw new Error('NARRATION_PUBLISHED_AUDIO_CHANGED: verified output differs from accepted WAV.');
+      return {jobId,path:old.voice.path,sha256:info.sha256,duration:info.duration,
+        summary:strictJson(fs.readFileSync(resolveProjectFile(root,relativeBase+'/output/summary.json'),'utf8'))};
+    }
     if(old.longform?.jobId===jobId&&old.longform.status==='UNCERTAIN'&&!input.retryUncertain)
       throw new Error('NANO_UNCERTAIN: explicit retry is required for this saved job.');
     const wavs:Buffer[]=[];
@@ -203,7 +218,7 @@ export async function generateApiNarration(root:string,input:JobInput){
     const published=acceptNarration(root,{wav:finalWav,expectedScriptSha256:script.sha256,
       voice:{origin:'NANO_LONGFORM',profileId:voice,profileVersion:version,referenceBinding:binding,
         receipt:{schema:'nano-api-assembled-receipt-v1',sourceSha256,summary}},
-      nano:{endpoint:endpoint.replace(/\/$/,''),profileId:voice},longform});
+      nano:{endpoint:new URL(endpoint).origin,profileId:voice},longform});
     return {jobId,path:published.path,sha256:info.sha256,duration:info.duration,summary};
   }catch(error){
     const message=error instanceof Error?error.message:String(error);
