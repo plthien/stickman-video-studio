@@ -518,6 +518,9 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   if(!Array.isArray(requested)||new Set(requested).size!==requested.length||
     requested.some(id=>typeof id!=='string'||!allTargetIds.includes(id)))
     throw new Error('Review target scope contains fabricated or duplicate entity IDs.');
+  if(operation==='media-review'&&stage==='native'&&scope.media==='preview'&&
+    (typeof mediaDuration!=='number'||!Number.isFinite(mediaDuration)||mediaDuration<=0))
+    throw new Error('MEDIA_COVERAGE_INVALID: partial Preview requires a verified sample duration.');
   const nativeRange=operation==='media-review'&&stage==='native'&&scope.media==='preview'?mediaDuration:undefined;
   const eligibleIds=typeof nativeRange==='number'?
     (artifact.value as {manifest:{shots:Array<{id:string;start:number;end:number}>}}).manifest.shots
@@ -718,6 +721,9 @@ export function stageLifecycleResult(appPath:string,root:string,stage:Stage,oper
       const previous=current.value as {sections:unknown[];authoring:unknown};
       validateLocks(stage,{schema:'mode-b-script-v1',sections:previous.sections,authoring:previous.authoring},
         checked,task.editableIds??[],task.editablePaths??[]);
+      if(task.findingIds?.length&&canonical(checked)===
+        canonical({schema:'mode-b-script-v1',sections:previous.sections,authoring:previous.authoring}))
+        throw new Error('SCRIPT_CORRECT_NO_OP: unresolved findings require an actual authorized Script change.');
     }else{
       const previous=current.value as {manifest:Record<string,unknown>;shot_ledger:unknown;sound_script:unknown;asset_needs:unknown};
       validateManifest(state,root,corrected);
