@@ -66,24 +66,25 @@ describe('R2 explicit external reservation identity',()=>{
     expect(harness.stageLifecycle).not.toHaveBeenCalled();
   });
   it('discards a selected JSON file read after switching the native project session',async()=>{
-    let pending:{result:string|null;onload:(()=>void)|null}|null=null;
+    const delayed:{current:DelayedFileReader|null}={current:null};
     class DelayedFileReader {
       result:string|null=null;
       onload:(()=>void)|null=null;
       onerror:(()=>void)|null=null;
-      readAsText(){pending=this;}
+      readAsText(){delayed.current=this;}
     }
     vi.stubGlobal('FileReader',DelayedFileReader);
     const view=render(<ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider>);
     fireEvent.change(screen.getByLabelText('Choose JSON file'),{
       target:{files:[new File(['{"stale":"old project"}'],'old.json',{type:'application/json'})]}
     });
-    expect(pending).not.toBeNull();
+    expect(delayed.current).not.toBeNull();
     harness.projectId='project-B';
     view.rerender(<ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider>);
     await waitFor(()=>expect(harness.readFrozen).toHaveBeenCalledWith('project-B','script','author'));
     act(()=>{
-      if(pending){pending.result='{"stale":"old project"}';pending.onload?.();}
+      const reader=delayed.current;
+      if(reader){reader.result='{"stale":"old project"}';reader.onload?.();}
     });
     expect(screen.getByRole('textbox',{name:'Import JSON'})).toHaveValue('');
     expect(harness.stageImport).not.toHaveBeenCalled();
