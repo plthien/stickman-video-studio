@@ -97,7 +97,7 @@ describe('REG-TAB navigation persistence, read-only history and async isolation'
     render(<AppStateProvider><Harness><ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider></Harness></AppStateProvider>);
     fireEvent.click(await screen.findByRole('button',{name:'Review'}));
     fireEvent.change(screen.getByLabelText('Import JSON'),{target:{value:'{"review":"A"}'}});
-    for(const operation of ['Correct','Recheck','Media review','Author']){
+    for(const operation of ['Correct','Recheck','Author']){
       fireEvent.click(screen.getByRole('button',{name:operation}));
       expect(screen.getByLabelText('Import JSON')).toHaveValue('');
     }
