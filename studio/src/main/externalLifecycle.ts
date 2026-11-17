@@ -137,6 +137,14 @@ function scriptReviewPrompt(
     audience:state.brief.audience??'',purpose:state.brief.purpose??''
   };
   const target={id:artifact.id,sha256:artifact.sha256,sections:current.sections,authoring:current.authoring};
+  // Frozen identity is complete, but this is intentionally NOT a review result.
+  // The reviewer must supply status, coverage and findings after evaluation.
+  const identity={
+    schema:envelope.schema,project_id:envelope.project_id,task_id:envelope.task_id,
+    revision:envelope.revision,input_sha256:envelope.input_sha256,
+    stage:envelope.stage,operation:envelope.operation,
+    payload:{schema:'mode-b-review-v1',artifact_sha256:artifact.sha256}
+  };
   const trace=authority.sources.map(source=>
     '- '+source.path+' | original SHA256 '+source.sha256+
     ' | extraction SHA256 '+source.extractionSha256+
@@ -180,19 +188,32 @@ function scriptReviewPrompt(
     'Exact target section IDs: '+JSON.stringify(targetIds),
     'For this text-only review use coverage.modalities=["script"], coverage.ranges=[], coverage.media_sha256s=[]. Set coverage.target_ids to every actually reviewed requested section ID. Do not fabricate audiovisual times, media SHA or inspected modalities.',
     '## G — RESPONSE CONTRACT',
-    'Return the complete frozen mode-b-lifecycle-result-v1 envelope with unchanged project_id, task_id, revision, input_sha256, stage, operation and payload.artifact_sha256. The example below illustrates the JSON SHAPE ONLY; REVIEWED_NO_FINDINGS is NOT a default finding or assumed review result:',
-    JSON.stringify(envelope,null,2),
+    'Frozen identity (immutable fields, NOT a complete review result):',
+    JSON.stringify(identity,null,2),
+    'Review payload field contract (no preset outcome):',
+    'payload.schema: mode-b-review-v1 (use the real frozen value above).',
+    'payload.artifact_sha256: use the exact immutable target SHA256 from the frozen identity above.',
+    'payload.status: select exactly one of REVIEWED_WITH_FINDINGS, REVIEWED_NO_FINDINGS, INSUFFICIENT_EVIDENCE, NOT_VERIFIED after independent evaluation. This is a required string field, not a preselected conclusion.',
+    'payload.coverage: an object with exactly target_ids, modalities, ranges, media_sha256s. For full text-only Script review, use this exact coverage structure with the requested frozen section IDs (do not invent targets):',
+    JSON.stringify({target_ids:targetIds,modalities:['script'],ranges:[],media_sha256s:[]},null,2),
+    'payload.findings: an array of real, evidence-supported findings; use [] only if the actual review warrants no findings. Do not create a finding to satisfy a quota.',
+    'The Review response has no preset outcome. Independently evaluate every requested section and the complete authoring JSON before choosing payload.status and constructing payload.findings. Do not infer REVIEWED_NO_FINDINGS merely because an example contains an empty findings array. Return a complete valid JSON envelope using the frozen identity and the actual review conclusions.',
+    'Assemble exactly one complete JSON object using the immutable frozen identity and all required review payload fields. Do not submit the identity-only reference as the result. Keep all frozen IDs and hashes unchanged, without adding filename metadata or extra schema fields.',
     'Select status ONLY after evaluating actual textual coverage:',
     'REVIEWED_WITH_FINDINGS — complete requested text coverage and at least one supported unresolved finding.',
-    'REVIEWED_NO_FINDINGS — complete requested text coverage and zero supported unresolved findings.',
+    'REVIEWED_NO_FINDINGS — complete requested text coverage and zero supported unresolved findings. REVIEWED_NO_FINDINGS is NOT a default.',
     'INSUFFICIENT_EVIDENCE — necessary textual evidence is missing/unusable for the requested assessment; missing WAV/MP4 alone does NOT cause this status.',
     'NOT_VERIFIED — a specific requested verification cannot be established from the supplied evidence. Do not claim to know actual WAV duration, word timestamps, spoken performance quality, rendered frames, executed motion or final sound mix.',
-    'For every real finding use exactly: id, severity, status, target_ids, requirement, evidence, recommendation. The following is FORMAT ONLY and is NOT a finding against this project:',
-    JSON.stringify({id:'F-001',severity:'major',status:'open',target_ids:['<real-section-id>'],
-      requirement:'Specific violated creative requirement',
-      evidence:{kind:'manifest',detail:'Exact text discrepancy from supplied sections/authoring JSON'},
-      recommendation:'Concrete scoped correction preserving unrelated approved content'},null,2),
-    'severity: critical | major | minor. finding.status: open | resolved | uncertain. evidence.kind: manifest | inferred | unverified | observed. For direct Script JSON evidence use manifest; for reasoned inferences use inferred and label the inference. NEVER claim observed audiovisual evidence in text-only Script Review. Each finding must cite a real requested section ID; avoid unsupported new plot elements or invented media.',
+    'Finding field contract (no sample finding and no placeholder target IDs):',
+    'id — unique finding ID (1–80 characters, ASCII letters, digits, underscore or hyphen).',
+    'severity — critical | major | minor.',
+    'status — open | resolved | uncertain.',
+    'target_ids — non-empty array containing ONLY real section IDs listed in REVIEW COVERAGE; for a cross-section finding list each supported real target ID.',
+    'requirement — non-empty specific creative requirement violated by this finding.',
+    'evidence — object with kind and detail; kind is manifest | inferred | unverified | observed. Use manifest for direct Script/authoring JSON evidence; inferred only with explicit reasoning. Never use observed to claim audio/video inspection in text-only Script Review.',
+    'evidence.detail — non-empty concrete evidence drawn from the supplied Script and authoring JSON. Do not supply source_sha256 or time_range without actual supporting evidence.',
+    'recommendation — concrete repair guidance for the referenced sections, preserving unrelated approved content and avoiding unnecessary new story events.',
+    'Never fabricate a finding, copy a format illustration, add missing media evidence, or insert unverified section IDs.',
     'Return ONLY review findings and evidence coverage; do not rewrite sections, change authoring or produce a correction artifact.',
     fileDelivery,
     '## H — ORIGINAL FROZEN AUTHOR TASK (IMMUTABLE REFERENCE APPENDIX)',
@@ -267,8 +288,10 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
       artifact:stage==='script'?{schema:'mode-b-script-v1',sections:(artifact.value as {sections:unknown[]}).sections,authoring:(artifact.value as {authoring:unknown}).authoring}:
       artifact.value}:
     {schema:'mode-b-review-v1',artifact_sha256:artifact.sha256,
-      status:stage==='script'&&operation==='review'?'REVIEWED_NO_FINDINGS':'INSUFFICIENT_EVIDENCE',
-      coverage:{target_ids:targetIds,modalities:stage==='script'&&operation==='review'?['script']:[],ranges:[],media_sha256s:mediaTransferAttested?mediaSha256s:[]},findings:[]};
+      ...(stage==='script'&&operation==='review'?{}:{
+        status:'INSUFFICIENT_EVIDENCE',
+        coverage:{target_ids:targetIds,modalities:[],ranges:[],media_sha256s:mediaTransferAttested?mediaSha256s:[]},findings:[]
+      })};
   const envelope={schema:'mode-b-lifecycle-result-v1',project_id:state.project.id,task_id:id,revision,input_sha256:inputSha256,stage,operation,payload:contract};
   const nativeOrScriptRules=authority.sources.map(source=>
     'BEGIN SOURCE '+source.path+' | full SHA256 '+source.sha256+' | extracted SHA256 '+source.extractionSha256+
