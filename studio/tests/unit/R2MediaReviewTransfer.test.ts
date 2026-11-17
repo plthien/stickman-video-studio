@@ -29,7 +29,7 @@ const envelope=(root:string,task:ReturnType<typeof freezeLifecycleTask>,sha256:s
   stage:'native',operation:'media-review',payload:{
     schema:'mode-b-review-v1',artifact_sha256:task.artifactSha256,
     status:'REVIEWED_WITH_FINDINGS',
-    coverage:{target_ids:['shot-1','shot-2'],modalities:['picture'],ranges:[{start:0,end:1}],
+    coverage:{target_ids:['shot-1'],modalities:['picture'],ranges:[{start:0,end:1}],
       media_sha256s:[sha256]},
     findings:[{id:'F-AV-001',severity:'major',status:'open',target_ids:['shot-1'],
       requirement:'Meaningful principal-picture action in the actual sample',
@@ -62,6 +62,21 @@ describe('R2 honest actual-media review handoff',()=>{
     expect(()=>stageLifecycleResult(appPath,root,'native','media-review',envelope(root,task,previewSha256)))
       .toThrow(/NOT_VERIFIED|media provenance/);
     expect(readState(root).approval).toBeUndefined();
+  });
+  it('prevents off-sample shot selection in an actual 20-second Preview before freezing',async()=>{
+    const {root}=await previewFixture();
+    const task=freezeLifecycleTask(appPath,root,'native','media-review',{media:'preview'});
+    expect(task.targetIds).toEqual(['shot-1']);
+    expect(task.prompt).toContain('Frozen eligible target IDs: ["shot-1"]');
+    expect(()=>freezeLifecycleTask(appPath,root,'native','media-review',
+      {media:'preview',targetIds:['shot-2']})).toThrow(/out-of-sample/);
+  });
+  it('rejects unsupported stage/media-kind combinations at the backend boundary',async()=>{
+    const {root}=await previewFixture();
+    expect(()=>freezeLifecycleTask(appPath,root,'script','media-review',{media:'preview'})).toThrow(/INVALID_MEDIA_KIND/);
+    expect(()=>freezeLifecycleTask(appPath,root,'native','media-review',{media:'voice'})).toThrow(/INVALID_MEDIA_KIND/);
+    expect(()=>freezeLifecycleTask(appPath,root,'script','media-review',{media:'film'})).toThrow(/INVALID_MEDIA_KIND/);
+    expect(()=>freezeLifecycleTask(appPath,root,'native','media-review',{media:'captions'})).toThrow(/INVALID_MEDIA_KIND/);
   });
   it('rejects media-review target timestamps beyond the actual preview',async()=>{
     const {root,previewSha256}=await previewFixture();
