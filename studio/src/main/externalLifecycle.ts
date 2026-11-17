@@ -597,7 +597,8 @@ Do not modify the Script during Recheck.`
 }
 
 export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,operation:Exclude<ExternalOperation,'author'>,scope:Scope={},rebuild=false){
-  if(!['review','correct','recheck','media-review'].includes(operation))throw new Error('Unsupported lifecycle operation.');
+  if(operation==='media-review')throw new Error('MEDIA_REVIEW_DISABLED: legacy history is read-only.');
+  if(!['review','correct','recheck'].includes(operation))throw new Error('Unsupported lifecycle operation.');
   if(operation==='media-review'&&!(stage==='script'&&(scope.media==='voice'||scope.media==='captions')||
     stage==='native'&&(scope.media==='preview'||scope.media==='film')))
     throw new Error('INVALID_MEDIA_KIND: Script only supports voice/captions; Native only supports preview/film.');
@@ -699,6 +700,8 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   const inputSha256=sha(JSON.stringify({...snapshot,sourceContextSha256,authorityFingerprint}));
   if(!rebuild&&prior?.status==='FROZEN'&&prior.inputSha256===inputSha256&&fs.existsSync(resolveProjectFile(root,prior.promptPath)))
     return{...prior,prompt:fs.readFileSync(resolveProjectFile(root,prior.promptPath),'utf8')};
+  if(!rebuild&&prior?.status==='FROZEN')
+    throw new Error('FROZEN_TASK_REBUILD_REQUIRED: explicitly Rebuild the current frozen task.');
   if(prior){
     state.externalTaskArchive??=[];
     state.externalTaskArchive.push({stage,operation,task:{...prior,status:prior.status==='IMPORTED'?'IMPORTED':'STALE'}});
@@ -844,6 +847,7 @@ function validateReview(payload:Record<string,unknown>,task:NonNullable<StudioSt
     throw new Error('INSUFFICIENT_EVIDENCE: no-findings media review needs user-attested actual attachments and explicit observed coverage.');
 }
 export function stageLifecycleResult(appPath:string,root:string,stage:Stage,operation:Exclude<ExternalOperation,'author'>,text:string){
+  if(operation==='media-review')throw new Error('MEDIA_REVIEW_DISABLED: legacy history is read-only.');
   const state=readState(root),task=state.lifecycle?.tasks[`${stage}:${operation}`];if(!task||task.status!=='FROZEN')throw new Error('No current frozen lifecycle task exists.');
   const current=artifactFor(root,state,stage,operation);if(current.sha256!==task.artifactSha256)throw new Error('Lifecycle artifact is stale.');assertLifecycleFresh(appPath,root,state,task);
   const value=strictJson(text) as Record<string,unknown>;exact(value,['schema','project_id','task_id','revision','input_sha256','stage','operation','payload']);
@@ -1038,6 +1042,7 @@ export function confirmLifecycleResult(appPathOrRoot:string,rootOrToken:string,m
   const file=pendingPath(root);
   if(!fs.existsSync(file))throw new Error('No pending lifecycle result.');
   const pending=strictJson(fs.readFileSync(file,'utf8')) as Record<string,unknown>,state=readState(root);
+  if(pending.operation==='media-review')throw new Error('MEDIA_REVIEW_DISABLED: legacy history is read-only.');
   if(pending.token!==token||pending.projectId!==state.project.id)throw new Error('Lifecycle confirmation token/project mismatch.');
   const key=String(pending.stage)+':'+String(pending.operation),task=state.lifecycle?.tasks[key];
   if(!task||task.id!==pending.taskId)throw new Error('Lifecycle task is stale or replayed.');
