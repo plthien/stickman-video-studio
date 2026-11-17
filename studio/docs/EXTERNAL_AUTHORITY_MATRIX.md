@@ -79,7 +79,7 @@ provide a guessed WPM.
 The presentation renderer omits synthetic file-heading fallbacks and avoids
 duplicating an original Markdown heading if its first selected source block
 already begins with that heading. It never mutates `blocks[].text`.
-The selected source line ranges, the six preexisting style-specific excerpts,
+The selected source line ranges, the six previously selected excerpts,
 and ten additional owner-authorized shared excerpts retain source/column
 provenance and original Git-blob fail-closed identity.
 
