@@ -3,7 +3,7 @@ import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {afterEach,describe,expect,it} from 'vitest';
 import {confirmLifecycleResult,freezeLifecycleTask,stageLifecycleResult} from '../../src/main/externalLifecycle';
-import {freezeTask,stageImport,confirmImport} from '../../src/main/externalTasks';
+import {freezeTask,stageImport,confirmImport,externalOutputFilename} from '../../src/main/externalTasks';
 import {compileAuthority,SCRIPT_AUTHOR_EXTRACTION_REVISION} from '../../src/main/externalAuthority';
 import {projectId,readState,writeState,type StudioState} from '../../src/main/services';
 
@@ -109,10 +109,148 @@ describe('External creative lifecycle',()=>{
     expect(preAppendix).toContain('REVIEWED_NO_FINDINGS is NOT a default');
     expect(preAppendix).toContain('modalities=["script"]');
     expect(preAppendix).toContain('"media_sha256s": []');
-    expect(preAppendix).toContain('F-001');
-    expect(preAppendix).toContain('FORMAT ONLY');
+    expect(preAppendix).toContain('Finding field contract (no sample finding and no placeholder target IDs):');
+    expect(preAppendix).not.toContain('"<real-section-id>"');
     expect(preAppendix).not.toContain('INSUFFICIENT_EVIDENCE: no-findings media review');
   });
+
+  it('CONTRACT REG-01: frozen Script Review identity has no preset review status or findings',()=>{
+    const root=timeFreezeFixture(),task=freezeLifecycleTask(appPath,root,'script','review');
+    const g=task.prompt.split('## G — RESPONSE CONTRACT')[1]?.split('## H — ORIGINAL FROZEN AUTHOR TASK')[0]??'';
+    const reference=g.split('Frozen identity (immutable fields, NOT a complete review result):\n\n')[1]
+      ?.split('\n\nReview payload field contract (no preset outcome):')[0];
+    expect(reference).toBeTruthy();
+    const frozen=JSON.parse(reference!) as Record<string,unknown>;
+    expect(frozen).toEqual({
+      schema:'mode-b-lifecycle-result-v1',project_id:readState(root).project.id,
+      task_id:task.id,revision:task.revision,input_sha256:task.inputSha256,
+      stage:'script',operation:'review',
+      payload:{schema:'mode-b-review-v1',artifact_sha256:task.artifactSha256}
+    });
+    const payload=frozen.payload as Record<string,unknown>;
+    expect(payload).not.toHaveProperty('status');
+    expect(payload).not.toHaveProperty('findings');
+    expect(payload).not.toHaveProperty('coverage');
+    expect(g).not.toMatch(/"status"\s*:\s*"(?:REVIEWED_NO_FINDINGS|REVIEWED_WITH_FINDINGS|INSUFFICIENT_EVIDENCE|NOT_VERIFIED)"/);
+    expect(g).toContain('The Review response has no preset outcome.');
+    expect(g).toContain('Independently evaluate every requested section and the complete authoring JSON');
+    expect(g).toContain('Assemble exactly one complete JSON object');
+    for(const status of ['REVIEWED_WITH_FINDINGS','REVIEWED_NO_FINDINGS','INSUFFICIENT_EVIDENCE','NOT_VERIFIED'])
+      expect(g).toContain(status+' —');
+    expect(g).toContain('missing WAV/MP4 alone does NOT cause this status');
+    const requested=readState(root).scriptCandidate!.sections.map(row=>row.id);
+    expect(g).toContain(JSON.stringify({target_ids:requested,modalities:['script'],ranges:[],media_sha256s:[]},null,2));
+  });
+  it('CONTRACT REG-02: finding reference uses real frozen target inventory and never a fake target placeholder',()=>{
+    const root=timeFreezeFixture(),task=freezeLifecycleTask(appPath,root,'script','review');
+    const prompt=task.prompt,g=prompt.split('## G — RESPONSE CONTRACT')[1]?.split('## H — ORIGINAL FROZEN AUTHOR TASK')[0]??'';
+    expect(g).toContain('Finding field contract (no sample finding and no placeholder target IDs):');
+    expect(prompt).not.toContain('<real-section-id>');
+    for(const field of ['id','severity','status','target_ids','requirement','evidence','evidence.detail','recommendation'])
+      expect(g).toContain(field+' —');
+    expect(g).toContain('target_ids — non-empty array containing ONLY real section IDs listed in REVIEW COVERAGE');
+    expect(g).toContain('manifest for direct Script/authoring JSON evidence');
+    expect(g).toContain('Never use observed to claim audio/video inspection');
+    expect(g).not.toContain('"id": "F-001"');
+    expect(g).not.toContain('Backpack motion does not establish jacket');
+    expect(g).toContain('Do not supply source_sha256 or time_range without actual supporting evidence');
+    expect(g).toContain('recommendation — concrete repair guidance');
+  });
+  it('CONTRACT REG-03: all supported Script review decisions remain import-compatible; fake target and schema fail closed',()=>{
+    type Case={status:string; findings:unknown[];targetIds?:string[]};
+    // Each case gets an independent frozen task and pending journal.
+    const cases:Case[]=[
+      {status:'REVIEWED_WITH_FINDINGS',findings:[{
+        id:'F-001',severity:'major',status:'open',target_ids:['opening'],
+        requirement:'Story setup must support the opening claim.',
+        evidence:{kind:'manifest',detail:'Text content in the synthetic fixture'},
+        recommendation:'Clarify the related narration while preserving other sections.'
+      }]},
+      {status:'REVIEWED_NO_FINDINGS',findings:[]},
+      {status:'INSUFFICIENT_EVIDENCE',targetIds:[],findings:[{
+        id:'F-uncertain',severity:'minor',status:'uncertain',target_ids:['opening'],
+        requirement:'Required evidence for a hypothetical additional claim.',
+        evidence:{kind:'unverified',detail:'Synthetic status-contract fixture: evidence was not supplied for this hypothetical verification.'},
+        recommendation:'Provide the missing textual evidence for this hypothetical verification.'
+      }]}
+    ];
+    for(const item of cases){
+      const root=fixture(),task=freezeLifecycleTask(appPath,root,'script','review'),state=readState(root);
+      const envelope={
+        schema:'mode-b-lifecycle-result-v1',project_id:state.project.id,
+        task_id:task.id,revision:task.revision,input_sha256:task.inputSha256,
+        stage:'script',operation:'review',payload:{
+          schema:'mode-b-review-v1',artifact_sha256:task.artifactSha256,
+          status:item.status,
+          coverage:{target_ids:item.targetIds??['opening','payoff'],modalities:['script'],ranges:[],media_sha256s:[]},
+          findings:item.findings
+        }
+      };
+      expect(()=>stageLifecycleResult(appPath,root,'script','review',JSON.stringify(envelope))).not.toThrow();
+    }
+    const root=fixture(),task=freezeLifecycleTask(appPath,root,'script','review'),state=readState(root);
+    const wrap=(findings:unknown[])=>JSON.stringify({
+      schema:'mode-b-lifecycle-result-v1',project_id:state.project.id,
+      task_id:task.id,revision:task.revision,input_sha256:task.inputSha256,
+      stage:'script',operation:'review',payload:{
+        schema:'mode-b-review-v1',artifact_sha256:task.artifactSha256,status:'REVIEWED_WITH_FINDINGS',
+        coverage:{target_ids:['opening','payoff'],modalities:['script'],ranges:[],media_sha256s:[]},findings
+      }
+    });
+    const supported={id:'F-001',severity:'major',status:'open',target_ids:['opening'],
+      requirement:'Real requirement',evidence:{kind:'manifest',detail:'Text source evidence'},
+      recommendation:'Specific repair'};
+    expect(()=>stageLifecycleResult(appPath,root,'script','review',
+      wrap([{...supported,target_ids:['invented_section']}]))).toThrow(/unknown.*target/i);
+    expect(()=>stageLifecycleResult(appPath,root,'script','review',
+      wrap([{...supported,evidence:{kind:'imaginary',detail:'Unsupported evidence'}}]))).toThrow(/evidence/i);
+  });
+  it('CONTRACT REG-04 / REG-05: reuse preserves frozen identity/filename; rebuild rejects the old response',()=>{
+    const root=fixture(),first=freezeLifecycleTask(appPath,root,'script','review');
+    const originalFile=fs.readFileSync(path.join(root,first.promptPath),'utf8');
+    const same=freezeLifecycleTask(appPath,root,'script','review');
+    expect([same.id,same.revision,same.inputSha256,same.promptSha256])
+      .toEqual([first.id,first.revision,first.inputSha256,first.promptSha256]);
+    expect(same.prompt).toBe(originalFile);
+    const filename=externalOutputFilename('script','review',first.revision,first.id);
+    expect(first.prompt).toContain('JSON FILE DELIVERY — REQUIRED');
+    expect(first.prompt).toContain(filename);
+    expect(first.prompt).toContain('actual attachment/download artifact');
+    expect(first.prompt).toContain('never claim creation or fabricate a download link');
+    const oldResult=JSON.stringify({
+      schema:'mode-b-lifecycle-result-v1',project_id:readState(root).project.id,
+      task_id:first.id,revision:first.revision,input_sha256:first.inputSha256,
+      stage:'script',operation:'review',payload:{
+        schema:'mode-b-review-v1',artifact_sha256:first.artifactSha256,
+        status:'REVIEWED_NO_FINDINGS',coverage:{target_ids:['opening','payoff'],modalities:['script'],ranges:[],media_sha256s:[]},findings:[]
+      }
+    });
+    const rebuilt=freezeLifecycleTask(appPath,root,'script','review',{},true);
+    expect(rebuilt.id).not.toBe(first.id);
+    expect(rebuilt.revision).toBe(first.revision+1);
+    expect(rebuilt.inputSha256).toBe(first.inputSha256);
+    const nextFilename=externalOutputFilename('script','review',rebuilt.revision,rebuilt.id);
+    expect(nextFilename).not.toBe(filename);
+    expect(rebuilt.prompt).toContain(nextFilename);
+    expect(()=>stageLifecycleResult(appPath,root,'script','review',oldResult)).toThrow(/binding mismatch/i);
+  });
+  it('CONTRACT REG-06: other stage/operation prompts retain their separate response contracts',()=>{
+    const root=fixture();
+    const correct=freezeLifecycleTask(appPath,root,'script','correct',{editableIds:['opening']});
+    const recheck=freezeLifecycleTask(appPath,root,'script','recheck');
+    for(const task of [correct,recheck]){
+      expect(task.prompt).toContain('ORIGINAL FROZEN AUTHOR TASK | SHA256');
+      expect(task.prompt).toContain('JSON RESPONSE CONTRACT | replace the example status/findings');
+      expect(task.prompt).not.toContain('Frozen identity (immutable fields, NOT a complete review result):');
+      expect(task.prompt).not.toContain('Finding field contract (no sample finding');
+    }
+    expect(correct.prompt).toContain('"schema": "mode-b-correction-v1"');
+    expect(recheck.prompt).toContain('SCRIPT RECHECK — TEXT EVIDENCE AND ACTIVATION GATE');
+    const scripted=freezeLifecycleTask(appPath,root,'script','review');
+    expect(scripted.prompt).toContain('Frozen identity (immutable fields, NOT a complete review result):');
+    // Native and media remain separately checked by the existing ten-task regression suite.
+  });
+
   it('REG-03 / REG-04: supported text findings and no-findings statuses validate, fabricated claims do not',()=>{
     const root=timeFreezeFixture();
     const task=freezeLifecycleTask(appPath,root,'script','review');
