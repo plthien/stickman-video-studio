@@ -5,7 +5,7 @@ import { Badge, Button, Card, CardHeader, Field, Input, Textarea } from '../../c
 const tabs = ['Script', 'Native'] as const; type PromptTab = (typeof tabs)[number]; type SyntaxResult = 'idle' | 'valid' | 'invalid';
 const operations=['Author','Review','Correct','Recheck','Media review'] as const;type Operation=(typeof operations)[number];
 type MediaKind='preview'|'film'|'voice'|'captions';
-type History=import('../../../main/externalHistory').ExternalHistoryRecord;
+type History=import('../../../shared/externalHistory').ExternalHistoryRecord;
 interface TabValues {
   json:string;result:SyntaxResult;prompt:string;pending:StudioStagedImport|null;
   nativeMediaStatus:StudioStagedImport|null;error:string;previewSeconds:number;
