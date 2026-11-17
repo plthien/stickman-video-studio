@@ -76,3 +76,56 @@ describe('ElevenLabs settings and generated voice preview',()=>{
     expect(screen.queryByLabelText('Accepted narration audio')).not.toBeInTheDocument();
   });
 });
+
+
+describe('Voice actions use main-process eligibility, not permanently enabled buttons',()=>{
+  const withProfile=(id:string)=>{const value=project(id,true);value.nano={
+    endpoint:'http://127.0.0.1:3901',profileId:'voice'
+  };return value;};
+  it('GEN-02/UI: PASS offers Regenerate only and sends the regenerate intent',async()=>{
+    const state=withProfile('voice-regen'),run=vi.fn(async()=>({jobId:'new-attempt'}));
+    bridge({
+      voicePlaybackUrl:async()=> 'studio-media://voice-regen/assets/audio/narration.wav?sha='+'a'.repeat(64),
+      narrationAction:async()=>({action:'regenerate',reason:'PASS',completed:1,total:1,status:'PASS'}),
+      timingEvidence:async()=>false,longformRun:run,projectState:async()=>state
+    });
+    render(<AppStateProvider><Seed state={state}><VoiceWorkspace/></Seed></AppStateProvider>);
+    fireEvent.click(await screen.findByRole('button',{name:'Regenerate narration'}));
+    await waitFor(()=>expect(run).toHaveBeenCalledWith('voice-regen',{voice:'voice',regenerate:true}));
+    expect(screen.queryByRole('button',{name:'Resume narration'})).not.toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:/Explicit Retry/})).not.toBeInTheDocument();
+  });
+  it('GEN-05/06: UNCERTAIN replay requires a separate confirmation gesture',async()=>{
+    const state=withProfile('voice-uncertain'),run=vi.fn(async()=>({jobId:'recovered'}));
+    bridge({
+      voicePlaybackUrl:async()=> 'studio-media://voice-uncertain/assets/audio/narration.wav?sha='+'a'.repeat(64),
+      narrationAction:async()=>({action:'retry',reason:'UNCERTAIN',completed:1,total:2,status:'UNCERTAIN'}),
+      timingEvidence:async()=>false,longformRun:run,projectState:async()=>state
+    });
+    const confirm=vi.spyOn(window,'confirm').mockReturnValue(false);
+    render(<AppStateProvider><Seed state={state}><VoiceWorkspace/></Seed></AppStateProvider>);
+    const button=await screen.findByRole('button',{name:'Explicit Retry uncertain part'});
+    fireEvent.click(button);
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(run).not.toHaveBeenCalled();
+    confirm.mockReturnValue(true);
+    fireEvent.click(button);
+    await waitFor(()=>expect(run).toHaveBeenCalledWith('voice-uncertain',
+      {voice:'voice',resume:true,retryUncertain:true}));
+  });
+  it('PB-05: bounded read-only playback retry never invokes Nano synthesis',async()=>{
+    const state=withProfile('voice-player'),run=vi.fn(),url=vi.fn(async()=>
+      'studio-media://voice-player/assets/audio/narration.wav?sha='+'a'.repeat(64));
+    bridge({
+      voicePlaybackUrl:url,
+      narrationAction:async()=>({action:'regenerate',reason:'PASS',completed:1,total:1,status:'PASS'}),
+      timingEvidence:async()=>false,longformRun:run
+    });
+    render(<AppStateProvider><Seed state={state}><VoiceWorkspace/></Seed></AppStateProvider>);
+    const player=await screen.findByLabelText('Accepted narration audio');
+    fireEvent.error(player);
+    fireEvent.click(await screen.findByRole('button',{name:'Retry playback (read-only)'}));
+    await waitFor(()=>expect(url).toHaveBeenCalledTimes(2));
+    expect(run).not.toHaveBeenCalled();
+  });
+});
