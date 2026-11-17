@@ -241,7 +241,7 @@ describe('External creative lifecycle',()=>{
       ?.split('## JSON FILE DELIVERY — REQUIRED')[0]??'';
     expect(contract).toContain('payload.artifact must be a COMPLETE mode-b-script-v1 object');
     expect(contract).toContain('containing EXACTLY these three top-level fields:');
-    expect([...contract.matchAll(/^([1-3])\\. (schema|sections|authoring)$/gm)]
+    expect([...contract.matchAll(/^([1-3])\. (schema|sections|authoring)$/gm)]
       .map(match=>match[2])).toEqual(['schema','sections','authoring']);
     expect(contract).toContain('Must equal "mode-b-script-v1"');
     expect(contract).toContain('Each section must contain EXACTLY:');
@@ -254,7 +254,7 @@ describe('External creative lifecycle',()=>{
     expect(contract).toContain('Return the complete corrected artifact, not a partial patch.');
     for(const field of ['text','sha256','revision','importedAt','taskId',
       'approvedAt','approvedBy','approvalNote'])
-      expect(contract).toContain('- '+field+'\\n');
+      expect(contract).toContain('- '+field+'\n');
     expect(contract).toContain('but they are NOT fields of mode-b-script-v1.');
     expect(task.prompt.split('SCRIPT CORRECT — EXACT ARTIFACT CONTRACT').length).toBe(2);
   });
@@ -300,6 +300,7 @@ describe('External creative lifecycle',()=>{
     expect(()=>freezeLifecycleTask(appPath,root,'script','recheck')).toThrow(/RECHECK_LINEAGE_REQUIRED/);
     const scripted=freezeLifecycleTask(appPath,root,'script','review');
     expect(scripted.prompt).toContain('Frozen identity (immutable fields, NOT a complete review result):');
+    expect(scripted.prompt).not.toContain('SCRIPT CORRECT — EXACT ARTIFACT CONTRACT');
     // Native and media remain separately checked by the existing ten-task regression suite.
   });
 
@@ -381,6 +382,21 @@ describe('External creative lifecycle',()=>{
     expect(correct.editableIds).toEqual(['opening']);
     expect(correct.prompt).toContain('F-open');
     expect(correct.prompt).toContain('"opening"');
+    // REG-F01-03: retain real review scope, frozen response identity and the full
+    // current immutable target; only static output-contract prose is new.
+    const currentTarget=readState(root).scriptCandidate!;
+    expect(correct.prompt).toContain(JSON.stringify({
+      id:'script-'+currentTarget.revision,
+      sha256:awaitHash(JSON.stringify(currentTarget)),value:currentTarget
+    },null,2));
+    expect(correct.prompt).toContain(JSON.stringify({
+      target_ids:correct.targetIds,editable_ids:correct.editableIds,
+      editable_paths:correct.editablePaths,finding_ids:correct.findingIds,
+      correction_lineage:null
+    },null,2));
+    for(const value of [correct.id,correct.inputSha256,correct.artifactSha256])
+      expect(correct.prompt).toContain(value);
+    expect(correct.prompt).toContain('SCRIPT CORRECT — EXACT ARTIFACT CONTRACT');
     const updated=readState(root);
     updated.scriptCandidate!.sections[0].text='A completely new Script version.';
     updated.scriptCandidate!.text=updated.scriptCandidate!.sections.map(x=>x.text).join('\n\n');
