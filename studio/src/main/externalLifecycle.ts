@@ -139,7 +139,9 @@ function evidence(root:string,state:StudioState,scope:Scope){
     const report=strictJson(fs.readFileSync(reportFile,'utf8')) as Record<string,unknown>;
     const observedDuration=typeof report.duration==='number'&&Number.isFinite(report.duration)&&report.duration>0?report.duration:null;
     const sampleDuration=selected==='preview'?state.nativeReadiness?.checkedSeconds??state.nativeReadiness?.previewSeconds:null;
-    const end=observedDuration??sampleDuration??null;
+    const end=selected==='preview'&&typeof sampleDuration==='number'&&Number.isFinite(sampleDuration)&&sampleDuration>0?
+      (observedDuration!==null?Math.min(observedDuration,sampleDuration):sampleDuration):
+      observedDuration??null;
     return{status:'AVAILABLE_LOCALLY_NOT_TRANSFERRED',modalities:[],ranges:[{start:0,end}],
       duration_source:observedDuration!==null?'REGISTERED_NATIVE_QA_REPORT':sampleDuration!==null?'ORIGINAL_SAMPLE_VALIDATION':'NOT_VERIFIED',
       files:[{path:row.path,sha256:row.sha256,reportPath:row.reportPath,reportSha256:row.reportSha256}]};
@@ -521,6 +523,13 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   if(operation==='media-review'&&stage==='native'&&scope.media==='preview'&&
     (typeof mediaDuration!=='number'||!Number.isFinite(mediaDuration)||mediaDuration<=0))
     throw new Error('MEDIA_COVERAGE_INVALID: partial Preview requires a verified sample duration.');
+  if(operation==='media-review'&&stage==='native'&&scope.media==='film'){
+    const shots=(artifact.value as {manifest:{shots:Array<{end:number}>}}).manifest.shots??[];
+    const timelineEnd=shots.length?shots[shots.length-1].end:0;
+    if(typeof mediaDuration!=='number'||!Number.isFinite(mediaDuration)||
+      !Number.isFinite(timelineEnd)||timelineEnd<=0||mediaDuration+0.06<timelineEnd)
+      throw new Error('MEDIA_COVERAGE_INVALID: Film requires registered complete duration covering all Native shots.');
+  }
   const nativeRange=operation==='media-review'&&stage==='native'&&scope.media==='preview'?mediaDuration:undefined;
   const eligibleIds=typeof nativeRange==='number'?
     (artifact.value as {manifest:{shots:Array<{id:string;start:number;end:number}>}}).manifest.shots
