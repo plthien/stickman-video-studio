@@ -33,7 +33,38 @@ function safeRead(root:string,relative:string,expectedSha:string,errors:string[]
 /** A response file can exist before confirmation. STALE legacy recovery needs
  * independent persisted evidence connecting this task to a published artifact.
  */
-function legacyAuthorPublished(state:StudioState,stage:Stage,task:TaskRecord,payload?:unknown):boolean{
+/** Stale legacy Native tasks have no old task-ID receipt; only a current
+ * retired Author task whose committed Native revision files and state artifact
+ * agree with the exact candidate response can count as confirmed.
+ */
+function legacyNativePublicationMatches(root:string,state:StudioState,task:TaskRecord,payload?:unknown):boolean{
+  const published=state.external.native,active=state.tasks?.native;
+  if(!published||!active||active.id!==task.id||
+    typeof task.createdAt!=='string'||!Number.isFinite(Date.parse(task.createdAt))||
+    !Number.isFinite(Date.parse(published.importedAt))||
+    Date.parse(published.importedAt)<Date.parse(task.createdAt)||
+    !Number.isInteger(published.revision)||published.revision<1)return false;
+  if(payload===undefined)return true; // Candidate scan only: no confirmation.
+  if(!payload||typeof payload!=='object'||Array.isArray(payload))return false;
+  try{
+    const proposed=payload as Record<string,unknown>;
+    const artifact=published.artifact as Record<string,unknown>;
+    if(!artifact||canonical(artifact.manifest)!==canonical(proposed.manifest)||
+      canonical(artifact.shotLedger)!==canonical(proposed.shot_ledger)||
+      canonical(artifact.soundScript)!==canonical(proposed.sound_script)||
+      canonical(artifact.assetNeeds)!==canonical(proposed.asset_needs))return false;
+    const revision=published.revision;
+    const manifestPath=resolveProjectFile(root,'.studio/revisions/native-'+revision+'.json');
+    const authoringPath=resolveProjectFile(root,'.studio/revisions/native-authoring-'+revision+'.json');
+    const manifest=strictJson(fs.readFileSync(manifestPath,'utf8'));
+    const authoring=strictJson(fs.readFileSync(authoringPath,'utf8')) as Record<string,unknown>;
+    return canonical(manifest)===canonical(proposed.manifest)&&
+      canonical(authoring.shot_ledger)===canonical(proposed.shot_ledger)&&
+      canonical(authoring.sound_script)===canonical(proposed.sound_script)&&
+      canonical(authoring.asset_needs)===canonical(proposed.asset_needs);
+  }catch{return false;}
+}
+function legacyAuthorPublished(root:string,state:StudioState,stage:Stage,task:TaskRecord,payload?:unknown):boolean{
   const archived=state.externalTaskArchive?.some(item=>item.stage===stage&&item.operation==='author'&&
     item.task.id===task.id&&item.task.revision===task.revision&&
     item.task.inputSha256===task.inputSha256&&item.task.status==='IMPORTED');
@@ -43,9 +74,7 @@ function legacyAuthorPublished(state:StudioState,stage:Stage,task:TaskRecord,pay
     return Boolean(candidate?.taskId===task.id&&state.external.script&&
       (payload===undefined||canonical(state.external.script.artifact)===canonical(payload)));
   }
-  // Old Native publication revisions do not carry Author task IDs; matching
-  // timestamps or similar manifests alone cannot prove this task was Confirmed.
-  return false;
+  return legacyNativePublicationMatches(root,state,task,payload);
 }
 function legacyAuthorResponse(root:string,state:StudioState,stage:Stage,task:TaskRecord,errors:string[],requiresProof=false):string|null{
   const folder='.studio/external/responses';
@@ -71,7 +100,7 @@ function legacyAuthorResponse(root:string,state:StudioState,stage:Stage,task:Tas
         parsed.task_id!==task.id||parsed.revision!==task.revision||
         parsed.input_sha256!==task.inputSha256||parsed.stage!==stage||
         !parsed.payload||typeof parsed.payload!=='object'||Array.isArray(parsed.payload))continue;
-      if(requiresProof&&!legacyAuthorPublished(state,stage,task,parsed.payload))continue;
+      if(requiresProof&&!legacyAuthorPublished(root,state,stage,task,parsed.payload))continue;
       verified.push(bytes.toString('utf8'));
     }catch{ /* An invalid/corrupt file cannot become historical evidence. */ }
   }
@@ -97,7 +126,7 @@ function readOne(root:string,state:StudioState,stage:Stage,operation:ExternalOpe
   // STALE only controls actionability. It must not erase a verifiably
   // confirmed publication, nor turn an unconfirmed staged response into one.
   if(status==='IMPORTED'||status==='STALE'&&
-      (operation==='author'?authorReceipt||legacyAuthorPublished(state,stage,task):
+      (operation==='author'?authorReceipt||legacyAuthorPublished(root,state,stage,task):
         lifecyclePublished)){
     if(operation==='author'){
       const responseSha=task.confirmedResponseSha256;
