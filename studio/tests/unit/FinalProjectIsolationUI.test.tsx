@@ -17,7 +17,7 @@ const project=(id:string,extra:Partial<NativeStudioState>={}):NativeStudioState=
 const preview={path:'output/preview.mp4',sha256:'a'.repeat(64),reportPath:'output/preview-report.json'};
 const A=project('A',{preview}),B=project('B');
 function Harness({children,first=A}:{children:ReactNode;first?:NativeStudioState}){const{native,setNative}=useAppState();useEffect(()=>setNative(first),[]);return <><button onClick={()=>setNative(B)}>Switch B</button><button onClick={()=>setNative(first)}>Reopen A</button><output aria-label="active-project">{native?.project.id??'none'}</output>{children}</>}
-const bridge=(value:Record<string,unknown>)=>Object.defineProperty(window,'studio',{value:{setNanoEndpoint:async()=>B,freezeTask:async(id:string,stage:string)=>({prompt:`${id}-${stage}-prompt`}),mediaUrl:async()=>'',pendingMedia:async()=>null,projectState:async()=>A,...value},configurable:true});
+const bridge=(value:Record<string,unknown>)=>Object.defineProperty(window,'studio',{value:{setNanoEndpoint:async()=>B,freezeTask:async(id:string,stage:string)=>({id:'test-frozen-'+id+'-'+stage,revision:1,prompt:`${id}-${stage}-prompt`}),mediaUrl:async()=>'',pendingMedia:async()=>null,projectState:async()=>A,...value},configurable:true});
 const candidate={token:'pending-A',status:'STAGED',missing:[{key:'shot-1:image-1',kind:'image',path:'assets/a.png',shotId:'shot-1',layerId:'image-1'}],fulfillments:{}};
 const caption={words:[{word:'A-WORD',start:0,end:1},{word:'tail',start:1,end:2}],original:[{start:0,end:2,text:'A-WORD tail'}],originalBoundaries:[2],draft:null,approved:null};
 
