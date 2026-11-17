@@ -49,6 +49,7 @@ export function ExternalWorkspace(){
     (stage==='script'?(reviewMediaKind==='captions'?'captions':'voice'):
       (reviewMediaKind==='film'?'film':'preview')):undefined;
   const projectId=native?.project.id;
+  const projectEpoch=captureProjectSession()?.epoch;
   const sessionKey=[projectId??'none',stage,operation,mediaKind??'-'].join('|');
   const activeKey=useRef(sessionKey);activeKey.current=sessionKey;
   const local=tabs[sessionKey]??emptyTab();
@@ -85,7 +86,7 @@ export function ExternalWorkspace(){
   useEffect(()=>{
     for(const name of ['freeze','validate','pending','confirm','export','jsonFile','history'] as const)
       requests.current[name]+=1;
-  },[projectId,stage,operation,mediaKind]);
+  },[projectId,projectEpoch,stage,operation,mediaKind]);
   const suggested=native?.suggestedCorrectScope?.[stage as 'script'|'native'];
   useEffect(()=>{
     if(operation!=='Correct'||!suggested?.reviewTaskId||
@@ -138,7 +139,7 @@ export function ExternalWorkspace(){
           patch(expectedKey,next);
         }).catch(reason=>{if(isActive())patch(expectedKey,{error:String(reason)});});
     return()=>{active=false;};
-  },[projectId,stage,operation,mediaKind]);
+  },[projectId,projectEpoch,stage,operation,mediaKind]);
   const reloadHistory=(project:string,expectedKey=sessionKey)=>{
     if(!window.studio?.readHistory)return;
     const session=captureProjectSession(),sequence=++requests.current.history;
