@@ -1,8 +1,7 @@
 import fs from 'node:fs';
-import path from 'node:path';
 import { alignmentText, captureAlignmentPin, publishAlignment, validateAlignment } from './alignment.js';
 import {generateApiNarration} from './narrationApi.js';
-import { acceptNarration, inspectWavBuffer, readState, sha, strictJson } from './services.js';
+import { acceptNarration, inspectWavBuffer, readState, strictJson } from './services.js';
 
 /** A single API-only narration path for one or many approved sections.
  * No VOICE_STUDIO_ROOT, Python subprocess or producer checkout is required. */
