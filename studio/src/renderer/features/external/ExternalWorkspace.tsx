@@ -136,21 +136,22 @@ export function ExternalWorkspace(){
   },[projectId,stage,operation,mediaKind]);
   const reloadHistory=(project:string,expectedKey=sessionKey)=>{
     if(!window.studio?.readHistory)return;
-    const session=captureProjectSession();
+    const session=captureProjectSession(),sequence=++requests.current.history;
     const op=operation==='Author'?'author':lifecycleOperation;
     void window.studio.readHistory(project,stage,op,mediaKind).then(rows=>{
-      if(activeKey.current===expectedKey&&session&&isCurrentProjectSession(session)&&projectId===project)
+      if(activeKey.current===expectedKey&&session&&sequence===requests.current.history&&isCurrentProjectSession(session)&&projectId===project)
         patch(expectedKey,{history:rows,historyLoading:false});
     }).catch(reason=>{
-      if(activeKey.current===expectedKey&&session&&isCurrentProjectSession(session))patch(expectedKey,{error:'History read: '+String(reason)});
+      if(activeKey.current===expectedKey&&session&&sequence===requests.current.history&&isCurrentProjectSession(session))patch(expectedKey,{error:'History read: '+String(reason)});
     });
   };
   const buildTask=async(forceRebuild=false)=>{
     if(!native||!window.studio)return;
     const session=captureProjectSession(),expectedStage=stage,expectedOperation=operation,sequence=++requests.current.freeze;
+    requests.current.history+=1;
     if(!session)return;
     const snapshot=lifecycleScope(),key=JSON.stringify(snapshot);
-    const rebuild=Boolean(forceRebuild||(frozenTaskId&&scopeDirty));
+    const rebuild=Boolean(forceRebuild||(frozenTaskId&&scopeDirty)||taskReadOnly);
     try{
       const task=expectedOperation==='Author'?
         await window.studio.freezeTask(session.projectId,expectedStage,rebuild):
@@ -162,7 +163,7 @@ export function ExternalWorkspace(){
       patch(sessionKey,{history:[],historySelectedId:''});
       reloadHistory(session.projectId,sessionKey);
       showNotice(rebuild?'Task rebuilt. Previous exported responses are now stale.':'Frozen task ready to export.');
-    }catch(reason){if(sequence===requests.current.freeze&&isCurrentProjectSession(session))setError(String(reason));}
+    }catch(reason){if(sequence===requests.current.freeze&&activeKey.current===sessionKey&&isCurrentProjectSession(session))setError(String(reason));}
   };
   const change=(value:string)=>{requests.current.jsonFile+=1;setJson(value);setResult('idle');setPending(null);setNativeMediaStatus(null);setDraftConsent(false);setError('');};
   const importJsonFile=(file:File)=>{
@@ -171,19 +172,19 @@ export function ExternalWorkspace(){
     if(!/\.json$/i.test(file.name)){setError('Choose a .json file.');return;}
     const reader=new FileReader();
     reader.onload=()=>{
-      if(sequence!==requests.current.jsonFile||!isCurrentProjectSession(session))return;
+      if(sequence!==requests.current.jsonFile||activeKey.current!==sessionKey||!isCurrentProjectSession(session))return;
       if(typeof reader.result!=='string'){setError('Unable to read the selected JSON file.');return;}
       try{JSON.parse(reader.result)}catch{setError('Selected file is not valid JSON.');return;}
       change(reader.result);
       showNotice('JSON loaded from '+file.name+'. Review the content, then select Validate import.');
     };
-    reader.onerror=()=>{if(sequence===requests.current.jsonFile&&isCurrentProjectSession(session))setError('Unable to read the selected JSON file.');};
+    reader.onerror=()=>{if(sequence===requests.current.jsonFile&&activeKey.current===sessionKey&&isCurrentProjectSession(session))setError('Unable to read the selected JSON file.');};
     reader.readAsText(file);
   };
-  const refreshPending=async()=>{if(!native||!window.studio||stage!=='native')return;const scope=captureProjectSession(),expectedStage=stage,expectedOperation=operation,sequence=++requests.current.pending;if(!scope)return;try{const value=await window.studio.pendingMedia(native.project.id);if(!isCurrentProjectSession(scope)||expectedStage!==stage||expectedOperation!==operation||sequence!==requests.current.pending)return;if(operation==='Author')setPending(value);else setNativeMediaStatus(value);setError('');}catch(reason){if(isCurrentProjectSession(scope)&&expectedStage===stage&&expectedOperation===operation&&sequence===requests.current.pending)setError(String(reason));}};
-  const validate=async()=>{const scope=captureProjectSession(),expectedStage=stage,expectedOperation=operation,sequence=++requests.current.validate;try{if(!native||!scope||!window.studio||!canImport)throw new Error('A current FROZEN task is required to validate an import.');const value=operation==='Author'?await window.studio.stageImport(native.project.id,expectedStage,json):await window.studio.stageLifecycle(native.project.id,expectedStage,lifecycleOperation,json);if(!isCurrentProjectSession(scope)||expectedStage!==stage||expectedOperation!==operation||sequence!==requests.current.validate)return;setPending(value);setNativeMediaStatus(null);setResult('valid');}catch(reason){if(scope&&(!isCurrentProjectSession(scope)||expectedStage!==stage||sequence!==requests.current.validate))return;setResult('invalid');setError(reason instanceof Error?reason.message:String(reason));}};
-  const copy=()=>{const scope=captureProjectSession(),expectedStage=stage;if(!scope||!visiblePrompt)return;void navigator.clipboard.writeText(visiblePrompt).then(()=>{if(isCurrentProjectSession(scope)&&expectedStage===stage)showNotice(`${tab} prompt copied.`)}).catch(reason=>{if(isCurrentProjectSession(scope)&&expectedStage===stage)setError('Clipboard ERROR: '+String(reason))})};
-  const exportFile=async()=>{if(!native||!window.studio)return;const scope=captureProjectSession(),expectedStage=stage,sequence=++requests.current.export;if(!scope)return;try{const file=await window.studio.exportPrompt(native.project.id,expectedStage,operation==='Author'?'author':lifecycleOperation);if(file&&isCurrentProjectSession(scope)&&expectedStage===stage&&sequence===requests.current.export)showNotice('Prompt exported: '+file);}catch(reason){if(isCurrentProjectSession(scope)&&expectedStage===stage&&sequence===requests.current.export)setError(String(reason));}};
+  const refreshPending=async()=>{if(!native||!window.studio||stage!=='native')return;const scope=captureProjectSession(),expectedStage=stage,expectedOperation=operation,sequence=++requests.current.pending;if(!scope)return;try{const value=await window.studio.pendingMedia(native.project.id);if(!isCurrentProjectSession(scope)||expectedStage!==stage||expectedOperation!==operation||sequence!==requests.current.pending||activeKey.current!==sessionKey)return;if(operation==='Author')setPending(value);else setNativeMediaStatus(value);setError('');}catch(reason){if(isCurrentProjectSession(scope)&&expectedStage===stage&&expectedOperation===operation&&sequence===requests.current.pending&&activeKey.current===sessionKey)setError(String(reason));}};
+  const validate=async()=>{const scope=captureProjectSession(),expectedStage=stage,expectedOperation=operation,sequence=++requests.current.validate;try{if(!native||!scope||!window.studio||!canImport)throw new Error('A current FROZEN task is required to validate an import.');const value=operation==='Author'?await window.studio.stageImport(native.project.id,expectedStage,json):await window.studio.stageLifecycle(native.project.id,expectedStage,lifecycleOperation,json);if(!isCurrentProjectSession(scope)||expectedStage!==stage||expectedOperation!==operation||sequence!==requests.current.validate||activeKey.current!==sessionKey)return;setPending(value);setNativeMediaStatus(null);setResult('valid');}catch(reason){if(scope&&(!isCurrentProjectSession(scope)||expectedStage!==stage||sequence!==requests.current.validate||activeKey.current!==sessionKey))return;setResult('invalid');setError(reason instanceof Error?reason.message:String(reason));}};
+  const copy=()=>{const scope=captureProjectSession(),expectedStage=stage;if(!scope||!visiblePrompt)return;void navigator.clipboard.writeText(visiblePrompt).then(()=>{if(isCurrentProjectSession(scope)&&expectedStage===stage&&activeKey.current===sessionKey)showNotice(`${tab} prompt copied.`)}).catch(reason=>{if(isCurrentProjectSession(scope)&&expectedStage===stage&&activeKey.current===sessionKey)setError('Clipboard ERROR: '+String(reason))})};
+  const exportFile=async()=>{if(!native||!window.studio)return;const scope=captureProjectSession(),expectedStage=stage,sequence=++requests.current.export;if(!scope)return;try{const file=await window.studio.exportPrompt(native.project.id,expectedStage,operation==='Author'?'author':lifecycleOperation);if(file&&isCurrentProjectSession(scope)&&expectedStage===stage&&sequence===requests.current.export&&activeKey.current===sessionKey)showNotice('Prompt exported: '+file);}catch(reason){if(isCurrentProjectSession(scope)&&expectedStage===stage&&sequence===requests.current.export&&activeKey.current===sessionKey)setError(String(reason));}};
   const exportMediaPack=async()=>{if(!native||!window.studio)return;const scope=captureProjectSession(),expectedKey=sessionKey;if(!scope||!mediaKind)return;try{const value=await window.studio.reviewPack(scope.projectId,mediaKind);if(isCurrentProjectSession(scope)&&activeKey.current===expectedKey)setReviewFolder(value.folder??value.path);}catch(reason){if(isCurrentProjectSession(scope)&&activeKey.current===expectedKey)setError(String(reason));}};
   const taskReadOnly=Boolean(selectedHistory&&selectedHistory.status!=='FROZEN'&&
     (!frozenTaskId||selectedHistory.id!==frozenTaskId));
@@ -209,7 +210,7 @@ export function ExternalWorkspace(){
           setFrozenTaskId('');setFrozenScopeKey('');setPrompt('');
           reloadHistory(scope.projectId,sessionKey);
           // Correct scope is filled when Correct is opened, not into Review's tab state.
-          showNotice(operation==='Author'&&expectedStage==='native'?(state.nativeReadiness?.fullReady?'FULL_READY · original native validator PASS.':'SAMPLE_READY draft · not full render ready.'):expectedStage==='script'&&operation==='Author'?'Script imported and automatically activated for Voice.':expectedStage==='script'&&operation==='Correct'?'Script correction imported; Recheck is required before automatic activation.':expectedStage==='script'&&operation==='Recheck'?'Script Recheck imported; a clean result automatically activates the corrected Script.':`${tab} ${operation} imported.`);}catch(reason){if(!isCurrentProjectSession(scope)||expectedStage!==stage||sequence!==requests.current.confirm)return;setResult('invalid');setError(String(reason));}}}>Confirm reviewed import {operation==='Author'&&stage==='native'?'(original native CLI validation)':''}</Button>
+          showNotice(operation==='Author'&&expectedStage==='native'?(state.nativeReadiness?.fullReady?'FULL_READY · original native validator PASS.':'SAMPLE_READY draft · not full render ready.'):expectedStage==='script'&&operation==='Author'?'Script imported and automatically activated for Voice.':expectedStage==='script'&&operation==='Correct'?'Script correction imported; Recheck is required before automatic activation.':expectedStage==='script'&&operation==='Recheck'?'Script Recheck imported; a clean result automatically activates the corrected Script.':`${tab} ${operation} imported.`);}catch(reason){if(!isCurrentProjectSession(scope)||expectedStage!==stage||sequence!==requests.current.confirm||activeKey.current!==sessionKey)return;setResult('invalid');setError(String(reason));}}}>Confirm reviewed import {operation==='Author'&&stage==='native'?'(original native CLI validation)':''}</Button>
       </>}
       {stage==='script'&&native?.scriptCandidate&&<div className="info">
         <strong>{native.approvedScript?.sha256===native.scriptCandidate.sha256&&JSON.stringify(native.approvedScript.authoring??null)===JSON.stringify(native.scriptCandidate.authoring??null)?'ACTIVE SCRIPT':'PENDING SCRIPT'} revision {native.scriptCandidate.revision}</strong> · {native.approvedScript?.sha256===native.scriptCandidate.sha256&&JSON.stringify(native.approvedScript.authoring??null)===JSON.stringify(native.scriptCandidate.authoring??null)
