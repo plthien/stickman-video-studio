@@ -13,7 +13,7 @@ const FINAL_MAX_SECONDS=900;
 const active=new Set<string>();
 type Part={sectionId:string;index:number;text:string;seed:number;speed:number};
 export type JobInput={voice?:string;resume?:boolean;retryUncertain?:boolean;regenerate?:boolean};
-export type NarrationAction='generate'|'regenerate'|'resume'|'retry'|'running';
+export type NarrationAction='generate'|'regenerate'|'resume'|'retry'|'running'|'blocked';
 type PartReceipt={schema:string;index:number;inputSha256:string;wavSha256:string;
   receiptToken:string;proof:string;profileVersion:number;referenceSha256:string;binding:string};
 
@@ -104,10 +104,31 @@ export function narrationAction(root:string):{action:NarrationAction;reason:stri
   if(!job)return{action:'generate',reason:'No generation attempt.',completed:0,total:0,status:'READY'};
   const progress={completed:job.completedParts??0,total:job.totalParts??0,currentPart:job.currentPart,status:job.status,detail:job.detail};
   if(job.status==='PASS')return{action:'regenerate',reason:'The previous narration attempt passed.',...progress};
+  const blocked=(reason:string)=>({action:'blocked' as const,reason,...progress});
+  const current=readState(root),script=current.approvedScript;
+  if(!script)return blocked('An approved Script is required to recover the saved attempt.');
+  try{
+    const source=strictJson(fs.readFileSync(resolveProjectFile(root,job.manifestPath),'utf8')) as Record<string,unknown>;
+    const parts=narrationParts(script.sections);
+    const saved=Array.isArray(source.parts)?source.parts as Array<Record<string,unknown>>:[];
+    const matching=saved.length===parts.length&&parts.every((item,index)=>saved[index].sectionId===item.sectionId&&
+      saved[index].index===item.index&&saved[index].inputSha256===sha(item.text));
+    const expectedEndpoint=nanoBase(current.nano?.endpoint??'http://127.0.0.1:3901').toString();
+    if(source.sourceSha256!==job.sourceSha256||source.voice!==job.profileId||
+      source.endpoint!==expectedEndpoint||!matching||sha(script.text)!==script.sha256)
+      return blocked('Saved attempt does not match the approved Script, voice or Nano endpoint.');
+  }catch{return blocked('Saved generation manifest cannot be verified.');}
+  if(job.detail&&/CACHED_PART_INVALID|FINAL_CONFLICT|SUMMARY_CONFLICT|MANIFEST_CHANGED|ORPHAN_CONFLICT/.test(job.detail))
+    return blocked('Saved attempt contains conflicting or corrupt evidence: '+job.detail);
   const dir=resolveProjectFile(root,job.outputPath);
   const files=fs.existsSync(dir)?fs.readdirSync(dir):[];
-  const uncertain=files.some(x=>/^part-\d+\.inflight\.json$/.test(x));
-  if(uncertain||job.status==='UNCERTAIN')return{action:'retry',reason:'The outcome of a dispatched part is uncertain; replay requires authorization.',...progress};
+  const incomplete=files.some(name=>{
+    const match=/^(part-\d+)\.(wav|json)$/.exec(name);
+    return Boolean(match&&!files.includes(match[1]+(match[2]==='wav'?'.json':'.wav')));
+  });
+  const uncertain=files.some(x=>/^part-\d+\.inflight\.json$/.test(x))||incomplete;
+  if(uncertain)return{action:'retry',reason:'A pending or partial Nano request requires explicit owner-authorized replay.',...progress};
+  if(job.status==='UNCERTAIN')return blocked('Uncertain job has no identifiable pending request; inspect saved evidence before retry.');
   return{action:'resume',reason:'Recover the saved attempt; verified parts will be reused.',...progress};
 }
 
