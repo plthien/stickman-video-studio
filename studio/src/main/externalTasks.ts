@@ -141,6 +141,8 @@ export function freezeTask(appPath: string, root: string, stage: Stage, rebuild 
   const state = readState(root); const context = projectContext(state, root, stage); const sources = sourceBundle(appPath, state.project.style,stage);
   const inputSha256 = sourceFingerprint(appPath, root, stage); const prior = state.tasks?.[stage];
   if (!rebuild && prior && prior.inputSha256 === inputSha256 && fs.existsSync(resolveProjectFile(root, prior.promptPath))) return { ...prior, prompt: readUtf8(resolveProjectFile(root, prior.promptPath)) };
+  if(!rebuild&&prior?.status==='FROZEN')
+    throw new Error('FROZEN_TASK_REBUILD_REQUIRED: explicitly Rebuild the current frozen task.');
   if(prior){
     state.externalTaskArchive??=[];
     state.externalTaskArchive.push({stage,operation:'author',task:{...prior,status:prior.status==='IMPORTED'?'IMPORTED':'STALE'}});
