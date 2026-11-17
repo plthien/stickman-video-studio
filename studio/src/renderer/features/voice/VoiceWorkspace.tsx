@@ -6,10 +6,39 @@ export function VoiceWorkspace() {
   const { native, captureProjectSession,isCurrentProjectSession,setNativeIfSessionCurrent, showNotice, nanoEndpoint, setNanoEndpoint } = useAppState();
   const [profiles, setProfiles] = useState<Array<Record<string, unknown>>>([]), [voice, setVoice] = useState(native?.nano?.profileId ?? '');
   const [status, setStatus] = useState<'idle'|'ready'|'busy'|'error'|'cancelled'>('idle'), [message, setMessage] = useState(''), [authorized, setAuthorized] = useState(false);
+  const [jobAction,setJobAction]=useState<null|{action:'generate'|'regenerate'|'resume'|'retry'|'running';reason:string;completed:number;total:number;currentPart?:number;status:string;detail?:string}>(null);
+  const [timingEvidence,setTimingEvidence]=useState(false);
   const id = native?.project.id, script = native?.approvedScript?.text ?? '';
   useEffect(()=>{setVoice(native?.nano?.profileId??'');setProfiles([]);setAuthorized(false);},[id,native?.nano?.profileId]);
-  const [playbackUrl,setPlaybackUrl]=useState(''),[playbackError,setPlaybackError]=useState('');
+  const [playbackUrl,setPlaybackUrl]=useState(''),[playbackError,setPlaybackError]=useState(''),[playbackRetry,setPlaybackRetry]=useState(0);
   const audioSha=native?.voice?.sha256,voiceStale=native?.voice?.stale;
+  const refreshVoiceOperations=async(scope=captureProjectSession())=>{
+    if(!scope||!window.studio?.narrationAction)return;
+    const [next,evidence]=await Promise.all([
+      window.studio.narrationAction(scope.projectId),
+      window.studio.timingEvidence?.(scope.projectId)??Promise.resolve(false)
+    ]);
+    if(isCurrentProjectSession(scope)){setJobAction(next);setTimingEvidence(evidence);}
+  };
+  useEffect(()=>{
+    setJobAction(null);setTimingEvidence(false);
+    const scope=captureProjectSession();
+    if(!scope||!window.studio?.narrationAction)return;
+    void refreshVoiceOperations(scope).catch(error=>{
+      if(isCurrentProjectSession(scope))setMessage('Voice status unavailable: '+String(error));
+    });
+  },[id,audioSha,native?.longform?.status]);
+  useEffect(()=>{
+    if(status!=='busy'||!id)return;
+    const timer=window.setInterval(()=>{
+      const scope=captureProjectSession();
+      if(!scope)return;
+      void Promise.all([window.studio!.projectState(scope.projectId),window.studio!.narrationAction(scope.projectId)])
+        .then(([state,next])=>{if(setNativeIfSessionCurrent(scope,state))setJobAction(next);})
+        .catch(()=>{/* The operation's own handler reports errors. */});
+    },1500);
+    return()=>window.clearInterval(timer);
+  },[id,status]);
   useEffect(()=>{
     let active=true;setPlaybackUrl('');setPlaybackError('');
     const scope=captureProjectSession();
@@ -21,7 +50,7 @@ export function VoiceWorkspace() {
         setPlaybackError('Narration playback unavailable: '+String(reason));
     });
     return()=>{active=false};
-  },[id,audioSha,voiceStale]);
+  },[id,audioSha,voiceStale,playbackRetry]);
   const hasAlignment = Boolean(native?.alignment);
   const wordsSha256 = native?.alignment?.wordsSha256;
   const captionRevision = native?.alignment?.captionReview?.revision;
@@ -33,29 +62,57 @@ export function VoiceWorkspace() {
   const splitAtWord=()=>{const number=selectedBoundary;if(!review||number<1||number>=review.words.length)return;setBoundaries(value=>[...new Set([...value,number])].sort((a,b)=>a-b));};
   const mergeAtWord=()=>{if(!review)return;setBoundaries(value=>value.filter(number=>number!==selectedBoundary));};
   const fail = (reason: unknown) => { setStatus('error'); setMessage(reason instanceof Error ? reason.message : String(reason)); };
-  const act = async (work: () => Promise<unknown>, notice: string,afterSuccess?:()=>void) => { const scope=captureProjectSession();if(!id||!scope)return;setStatus('busy');setMessage(''); try { const result=await work();if(!isCurrentProjectSession(scope))return;if(result===null){setStatus('cancelled');setMessage('CANCELLED — no project data changed.');return;} if (window.studio){const next=await window.studio.projectState(scope.projectId);if(!setNativeIfSessionCurrent(scope,next))return;} afterSuccess?.();setStatus('ready'); showNotice(notice); } catch (reason) { if(isCurrentProjectSession(scope))fail(reason); } };
+  const act = async (work: () => Promise<unknown>, notice: string,afterSuccess?:()=>void) => { const scope=captureProjectSession();if(!id||!scope)return;setStatus('busy');setMessage(''); try { const result=await work();if(!isCurrentProjectSession(scope))return;if(result===null){setStatus('cancelled');setMessage('CANCELLED — no project data changed.');return;} if (window.studio){const next=await window.studio.projectState(scope.projectId);if(!setNativeIfSessionCurrent(scope,next))return;} afterSuccess?.();setStatus('ready'); showNotice(notice); } catch (reason) { if(isCurrentProjectSession(scope))fail(reason); } finally {if(isCurrentProjectSession(scope))void refreshVoiceOperations(scope).catch(()=>{});} };
+  const runNarration=async()=>{
+    const scope=captureProjectSession(),action=jobAction?.action;
+    if(!scope||!action||action==='running'||!window.studio)return;
+    if(action==='retry'&&!window.confirm('The previous Nano request may already have produced audio. Explicitly authorize replay of only the uncertain part?'))return;
+    const input={voice,...(action==='regenerate'?{regenerate:true}:{}),
+      ...(action==='resume'?{resume:true}:{}),
+      ...(action==='retry'?{resume:true,retryUncertain:true}:{})};
+    setStatus('busy');setMessage('');
+    try{
+      await window.studio.longformRun(scope.projectId,input);
+      if(!isCurrentProjectSession(scope))return;
+      const next=await window.studio.projectState(scope.projectId);
+      if(!setNativeIfSessionCurrent(scope,next))return;
+      setStatus('ready');showNotice(action==='regenerate'?'New narration attempt verified.':'Narration job verified.');
+    }catch(error){if(isCurrentProjectSession(scope))fail(error);}
+    finally{
+      if(isCurrentProjectSession(scope)){
+        try{
+          const next=await window.studio.projectState(scope.projectId);
+          setNativeIfSessionCurrent(scope,next);
+          await refreshVoiceOperations(scope);
+        }catch(error){if(isCurrentProjectSession(scope))setMessage('Voice state refresh failed: '+String(error));}
+      }
+    }
+  };
   return <div className="grid wide-left"><div className="stack"><Card>
     <CardHeader title="VoiceStudio Chatterbox Nano" hint="Direct owner API · localhost:3901" action={<Badge tone={status==='ready'?'mint':status==='error'?'amber':'neutral'}>{status.toUpperCase()}</Badge>}/>
     <Field label="Local endpoint"><Input value={nanoEndpoint} onChange={event=>setNanoEndpoint(event.target.value)}/></Field>
     <Field label="Confirmed voice profile"><Select value={voice} onChange={event=>setVoice(event.target.value)}><option value="">Select discovered profile</option>{profiles.map(item=><option key={String(item.id)} value={String(item.id)}>{String(item.name??item.id)} · v{String(item.version)}</option>)}</Select></Field>
     <Field label="Approved narration (project source, read only)"><Textarea readOnly value={script}/></Field>
     <div className="actions"><Button disabled={!window.studio||status==='busy'} onClick={async()=>{const scope=captureProjectSession();if(!scope)return;setStatus('busy');try{const result=await window.studio!.nanoDiscover(nanoEndpoint);if(!isCurrentProjectSession(scope))return;setProfiles(result.profiles);setStatus(result.ready?'ready':'error');setMessage(result.ready?`${result.profiles.length} confirmed profile(s); producer ready.`:'Producer readiness failed.')}catch(reason){if(isCurrentProjectSession(scope))fail(reason)}}}>Discover producer</Button>
-      <Button variant="primary" disabled={!id||!script||!voice||status==='busy'} onClick={()=>act(()=>window.studio!.longformRun(id!,{voice}),'API narration verified and published.')}>Generate narration</Button>
-      <Button disabled={!id||!voice||status==='busy'} onClick={()=>act(()=>window.studio!.longformRun(id!,{voice,resume:true}),'Owner assembler resumed.')}>Resume</Button>
-      <Button disabled={!id||!voice||status==='busy'} onClick={()=>act(()=>window.studio!.longformRun(id!,{voice,resume:true,retryUncertain:true}),'Explicit uncertain retry completed.')}>Explicit retry</Button>
+      <Button variant="primary" disabled={!id||!script||!voice||status==='busy'||!jobAction||jobAction.action==='running'} onClick={()=>void runNarration()}>{jobAction?.action==='generate'?'Generate narration':jobAction?.action==='regenerate'?'Regenerate narration':jobAction?.action==='resume'?'Resume narration':jobAction?.action==='retry'?'Explicit Retry uncertain part':jobAction?.action==='running'?'Generation running':'Checking job state...'}</Button>
       <Button disabled={!id||status==='busy'} onClick={()=>act(()=>window.studio!.importWav(id!),'Approved WAV imported.')}>Import WAV</Button></div>
+    <div className="info">Recovery: {jobAction?.reason??'Checking saved job state'} · Parts {jobAction?.completed??0}/{jobAction?.total??0} · Current part {jobAction?.currentPart??'-'} · {jobAction?.status??'UNKNOWN'}{jobAction?.detail?' · '+jobAction.detail:''}</div>
+    <Button disabled={!id||status==='busy'} onClick={()=>void refreshVoiceOperations().catch(fail)}>Refresh Voice status</Button>
     {message&&<div className={`info ${status==='error'?'error':''}`} role={status==='error'?'alert':undefined}>{message}</div>}<div className="info">Exact text and language come from approved main-process project state. Uncertain requests are never auto-replayed.</div>
   </Card><Card><CardHeader title="Narration evidence"/><dl className="kvs"><dt>Audio</dt><dd>{native?.voice?.path??'Not generated'}</dd><dt>Origin</dt><dd>{native?.voice?.origin??'Missing'}</dd><dt>SHA-256</dt><dd><code>{native?.voice?.sha256??'Missing'}</code></dd><dt>Long-form</dt><dd>{native?.longform?.status??'Not run'}</dd></dl>
     {native?.voice&&!voiceStale&&playbackUrl?<div className="stack">
       <strong>Listen to accepted narration</strong>
-      <audio key={id+':'+audioSha} aria-label="Accepted narration audio" controls preload="metadata" src={playbackUrl} style={{width:'100%'}}
-        onError={()=>setPlaybackError('Accepted narration WAV could not be played.')}/>
+      <audio key={id+':'+audioSha+':'+playbackRetry} aria-label="Accepted narration audio" controls preload="metadata" src={playbackUrl} style={{width:'100%'}}
+        onLoadedMetadata={()=>setPlaybackError('')}
+        onError={event=>setPlaybackError('Accepted narration WAV could not be played (MediaError code '+String(event.currentTarget.error?.code??'unknown')+').')}/>
     </div>:<div className="info">{voiceStale?'Narration is stale; regenerate or import approved WAV.':'No verified narration available for playback.'}</div>}
     {playbackError&&<div className="info error" role="alert">{playbackError}</div>}
+    {playbackError&&playbackRetry<2&&<Button disabled={!id||status==='busy'} onClick={()=>{setPlaybackRetry(n=>n+1);setPlaybackUrl('');}}>Retry playback (read-only)</Button>}
   </Card></div>
   <Card><CardHeader title="ElevenLabs forced alignment" hint="Exact approved script + exact accepted WAV" action={<Badge tone="amber">USER AUTHORIZED ONLY</Badge>}/><Field label="Exact transcript uploaded"><Textarea readOnly value={script}/></Field>
     <label className="check"><input type="checkbox" checked={authorized} onChange={event=>setAuthorized(event.target.checked)}/> I authorize this upload and possible paid usage now.</label>
-    <div className="actions"><Button variant="primary" disabled={!id||!native?.voice||native.voice.stale||!authorized||status==='busy'} onClick={()=>act(()=>window.studio!.align(id!,true),'ElevenLabs alignment saved.',()=>setAuthorized(false))}>Run forced alignment</Button><Button disabled={!id||!native?.voice||status==='busy'} onClick={()=>act(()=>window.studio!.importWords(id!),'Aligned words imported and captions generated.')}>Import aligned words JSON</Button></div>
+    <div className="actions"><Button variant="primary" disabled={!id||!native?.voice||native.voice.stale||!authorized||status==='busy'} onClick={()=>act(()=>window.studio!.align(id!,true),'ElevenLabs alignment saved.',()=>setAuthorized(false))}>Run forced alignment</Button><Button disabled={!id||!native?.voice||status==='busy'} onClick={()=>act(()=>window.studio!.importWords(id!),'Aligned words imported and captions generated.')}>Import aligned words JSON</Button>
+    <Button disabled={!id||!native?.voice||native.voice.stale||!timingEvidence||status==='busy'} onClick={()=>act(()=>window.studio!.repairTiming(id!),'Saved provider response revalidated without a paid upload.')}>Repair Timing (saved response)</Button></div>
     <div className="info">Vietnamese support is not assumed. Import owner-verified word timestamps when live language coverage is unconfirmed. Secrets remain main-process only.</div><dl className="kvs"><dt>Words file</dt><dd>{native?.alignment?.path??'Not aligned'}</dd><dt>Origin</dt><dd>{native?.alignment?.origin??'Missing'}</dd></dl>
   </Card>
   <Card><CardHeader title="Semantic caption review" hint="Original Core grouping · real WORDS · owner-approved revision" action={<Badge tone={review?.approved?'mint':'amber'}>{review?.approved?'APPROVED r'+review.approved.revision:'REVIEW REQUIRED'}</Badge>}/>
