@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import path from 'node:path';
 import {readState,resolveProjectFile,sha,strictJson,type ExternalOperation,type Stage,type StudioState} from './services.js';
 
 type TaskRecord=Record<string,unknown>;
@@ -21,8 +20,8 @@ function canonical(value:unknown):string{
   return JSON.stringify(value);
 }
 const validTask=(value:TaskRecord,stage:Stage,operation:ExternalOperation)=>
-  typeof value.id==='string'&&/^[a-f0-9-]{36}$/i.test(value.id)&&
-  Number.isInteger(value.revision)&&Number(value.revision)>0&&
+  typeof value.id==='string'&&/^[A-Za-z0-9_-]{1,100}$/.test(value.id)&&
+  typeof value.revision==='number'&&Number.isInteger(value.revision)&&value.revision>0&&
   typeof value.promptPath==='string'&&typeof value.promptSha256==='string'&&
   ['FROZEN','IMPORTED','STALE'].includes(String(value.status))&&
   (operation==='author'||value.stage===stage&&value.operation===operation);
@@ -84,8 +83,13 @@ function readOne(root:string,state:StudioState,stage:Stage,operation:ExternalOpe
               else {
                 confirmedJson=bytes.toString('utf8');
                 const rows=(parsed.payload as {findings?:unknown})?.findings;
-                if(Array.isArray(rows))findings=rows.filter((x):x is ExternalHistoryRecord['findings'][number]=>
-                  Boolean(x)&&typeof x==='object'&&typeof x.id==='string'&&typeof x.status==='string');
+                if(Array.isArray(rows))findings=rows.filter((x):x is ExternalHistoryRecord['findings'][number]=>{
+                  if(!x||typeof x!=='object')return false;
+                  const row=x as Record<string,unknown>;
+                  return typeof row.id==='string'&&typeof row.status==='string'&&
+                    typeof row.severity==='string'&&Array.isArray(row.target_ids)&&
+                    typeof row.requirement==='string';
+                });
               }
             }catch{errors.push('RESPONSE_INVALID_JSON');}
           }
