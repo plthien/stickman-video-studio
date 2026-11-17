@@ -118,7 +118,7 @@ export function narrationAction(root:string):{action:NarrationAction;reason:stri
       source.endpoint!==expectedEndpoint||!matching||sha(script.text)!==script.sha256)
       return blocked('Saved attempt does not match the approved Script, voice or Nano endpoint.');
   }catch{return blocked('Saved generation manifest cannot be verified.');}
-  if(job.detail&&/CACHED_PART_INVALID|FINAL_CONFLICT|SUMMARY_CONFLICT|MANIFEST_CHANGED|ORPHAN_CONFLICT/.test(job.detail))
+  if(job.detail&&/CACHED_PART_INVALID|FINAL_CONFLICT|SUMMARY_CONFLICT|MANIFEST_CHANGED|ORPHAN_CONFLICT|PROFILE_CHANGED|RECOVERY_INCOMPATIBLE/.test(job.detail))
     return blocked('Saved attempt contains conflicting or corrupt evidence: '+job.detail);
   const dir=resolveProjectFile(root,job.outputPath);
   const files=fs.existsSync(dir)?fs.readdirSync(dir):[];
