@@ -34,7 +34,9 @@ function canonicalCharacterWords(raw:Record<string,unknown>,transcript:string,du
   if(!spans.length)throw new Error('ELEVENLABS_CHARACTER_TIMING_INVALID: no spoken words.');
   let previousEnd=0;
   const words=spans.map((match,index)=>{
-    const begin=match.index,finish=begin+match[0].length;
+    const begin=match.index??-1;
+    if(begin<0)throw new Error('ELEVENLABS_CHARACTER_COVERAGE_INVALID: missing transcript match index.');
+    const finish=begin+match[0].length;
     const covered=characters.filter(x=>x.finish>begin&&x.begin<finish);
     if(!covered.length||covered[0].begin>begin||covered[covered.length-1].finish<finish)
       throw new Error('ELEVENLABS_CHARACTER_COVERAGE_INVALID: index='+index);
