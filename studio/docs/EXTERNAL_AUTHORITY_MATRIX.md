@@ -211,6 +211,22 @@ negative cases and old-result/identity rejection. **Source/test existence is
 not a claim that the tests were executed**; run the Windows gates against the
 final HEAD and report actual outputs independently.
 
+For a reproducible local export of the frozen synthetic test prompts
+(the entire 10-combination matrix plus the remaining Captions and Film kinds),
+run from `studio` in PowerShell:
+
+```powershell
+$env:R2_PROMPT_SNAPSHOT_DIR = "D:\R2PromptSnapshots"
+npx vitest run tests/unit/R2ExternalJsonOutput.test.ts tests/unit/ExternalLifecyclePromptContracts.test.ts
+```
+
+The opted-in fixtures write `mode_b_*.prompt.md` snapshots with byte-verified
+SHA-256 checks and print `R2_FROZEN_PROMPT_EVIDENCE` /
+`R2_MEDIA_PROMPT_EVIDENCE` records (bytes, lines, hash and filename).
+These are explicitly **synthetic fixture prompts**, not the owner's real media
+or an External ChatGPT result. The test runner must actually pass before
+any locally generated hashes/counts may be reported as verified.
+
 ## Measurement and verification policy
 
 Compare actual frozen Script Task byte sizes on identical project inputs before
