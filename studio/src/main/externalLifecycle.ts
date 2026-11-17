@@ -433,7 +433,46 @@ function dedicatedLifecyclePrompt(
     'payload.editable_ids: exact listed authorized IDs, in listed order.',
     'payload.editable_paths: exact listed authorized pointers, in listed order.',
     'payload.artifact: one COMPLETE corrected current artifact with schema and all required nested fields. Do not use an unchanged artifact as an example answer or omit locked fields.',
-    'No payload.status, payload.coverage or payload.findings fields are permitted for Correct.'
+    'No payload.status, payload.coverage or payload.findings fields are permitted for Correct.',
+    ...(stage==='script'&&operation==='correct'?[
+      `SCRIPT CORRECT — EXACT ARTIFACT CONTRACT
+
+payload.artifact must be a COMPLETE mode-b-script-v1 object
+containing EXACTLY these three top-level fields:
+
+1. schema
+   Must equal "mode-b-script-v1".
+
+2. sections
+   Complete ordered array of all original sections.
+   Each section must contain EXACTLY:
+   - id: unchanged existing section ID
+   - text: spoken narration
+
+   Preserve all section IDs and their original order.
+   Modify text ONLY for explicitly authorized editable section IDs.
+   Preserve every locked section text exactly.
+
+3. authoring
+   Complete authoring object from the current target.
+   Preserve it unchanged unless a specific authoring field path
+   has been explicitly authorized.
+
+Do NOT copy Script candidate metadata into payload.artifact:
+- text
+- sha256
+- revision
+- importedAt
+- taskId
+- approvedAt
+- approvedBy
+- approvalNote
+
+These fields may exist in the immutable target context,
+but they are NOT fields of mode-b-script-v1.
+
+Return the complete corrected artifact, not a partial patch.`
+    ]:[])
   ];
   const kind=operation==='media-review'?(mediaKind??'UNKNOWN'):null;
   return [
