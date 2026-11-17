@@ -850,6 +850,92 @@ function validateReview(payload:Record<string,unknown>,task:NonNullable<StudioSt
     (!task.mediaTransferAttested||!coverage.modalities.length||!mediaSha256s.length))
     throw new Error('INSUFFICIENT_EVIDENCE: no-findings media review needs user-attested actual attachments and explicit observed coverage.');
 }
+/** Retire a disabled Media Review proposal without silently discarding it.
+ * The shared pending path is released only after original bytes and an
+ * identity-bound recovery receipt are durably archived and re-verified.
+ * Author/Review/Correct/Recheck pending proposals never enter this path.
+ */
+function recoverDisabledMediaReviewPending(root:string,state:StudioState):void{
+  const originalPath=pendingPath(root);
+  if(!fs.existsSync(originalPath))return;
+  const original=fs.readFileSync(originalPath);
+  let pending:Record<string,unknown>;
+  const blocked=(reason:string):never=>{
+    throw new Error('LEGACY_MEDIA_REVIEW_PENDING_RECOVERY_REQUIRED: '+reason);
+  };
+  try{
+    const parsed=strictJson(original.toString('utf8'));
+    if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))blocked('pending is not an object');
+    pending=parsed as Record<string,unknown>;
+  }catch{blocked('pending JSON is unreadable or corrupt');}
+  if(pending!.operation!=='media-review')return;
+  if(fs.existsSync(nativeCorrectionJournal(root)))blocked('native publication journal still exists');
+  if(pending!.projectId!==state.project.id||
+    !['script','native'].includes(String(pending!.stage))||
+    typeof pending!.taskId!=='string'||!/^[A-Za-z0-9_-]{1,100}$/.test(pending!.taskId)||
+    typeof pending!.token!=='string'||pending!.token.length<1||
+    typeof pending!.responseSha256!=='string'||!/^[a-f0-9]{64}$/.test(pending!.responseSha256)||
+    !pending!.payload||typeof pending!.payload!=='object'||Array.isArray(pending!.payload))
+    blocked('legacy pending has no verified project/task/response identity');
+  const stage=pending!.stage as Stage,taskId=pending!.taskId as string;
+  const current=state.lifecycle?.tasks[stage+':media-review'];
+  const historical=state.externalTaskArchive?.find(row=>row.stage===stage&&row.operation==='media-review'&&row.task.id===taskId)?.task;
+  const task=current?.id===taskId?current:historical;
+  if(!task||task.stage!==stage||task.operation!=='media-review'||
+    task.id!==taskId||!Number.isInteger(task.revision)||
+    typeof task.inputSha256!=='string'||!['FROZEN','STALE'].includes(String(task.status))||
+    state.lifecycle?.artifacts[taskId])
+    blocked('legacy task cannot be linked or publication status is uncertain');
+  const responseFile=resultPath(root,taskId);
+  if(!fs.existsSync(responseFile))blocked('legacy response file is missing');
+  const responseBytes=fs.readFileSync(responseFile);
+  if(sha(responseBytes)!==pending!.responseSha256)blocked('legacy response SHA mismatch');
+  let response:Record<string,unknown>;
+  try{
+    const parsed=strictJson(responseBytes.toString('utf8'));
+    if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))blocked('response is not an object');
+    response=parsed as Record<string,unknown>;
+  }catch{blocked('legacy response JSON is corrupt');}
+  if(response!.schema!=='mode-b-lifecycle-result-v1'||
+    response!.project_id!==state.project.id||response!.stage!==stage||
+    response!.operation!=='media-review'||response!.task_id!==taskId||
+    response!.revision!==task.revision||response!.input_sha256!==task.inputSha256||
+    canonical(response!.payload)!==canonical(pending!.payload))
+    blocked('legacy response envelope or payload does not match frozen task');
+  const digest=sha(original);
+  const archiveRelative='.studio/external/lifecycle/archived-pending/media-review-'+digest+'.json';
+  const receiptRelative='.studio/external/lifecycle/archived-pending/media-review-'+digest+'.receipt.json';
+  const archive=resolveProjectFile(root,archiveRelative);
+  const receipt=resolveProjectFile(root,receiptRelative);
+  fs.mkdirSync(path.dirname(archive),{recursive:true});
+  // A partial temporary write from an interrupted process never replaces
+  // the original pending or an already verified immutable archive.
+  if(!fs.existsSync(archive)){
+    const temp=archive+'.'+randomUUID()+'.tmp';
+    try{
+      fs.writeFileSync(temp,original,{flag:'wx'});
+      if(sha(fs.readFileSync(temp))!==digest)blocked('temporary archive SHA mismatch');
+      fs.renameSync(temp,archive);
+    }finally{if(fs.existsSync(temp))fs.unlinkSync(temp);}
+  }
+  if(sha(fs.readFileSync(archive))!==digest)blocked('archived pending bytes failed verification');
+  const record={schema:'legacy-media-review-pending-recovery-v1',projectId:state.project.id,
+    stage,operation:'media-review',taskId,token:pending!.token,
+    responseSha256:pending!.responseSha256,originalSha256:digest,
+    originalPath:'.studio/external/lifecycle/pending.json',archivePath:archiveRelative};
+  if(fs.existsSync(receipt)){
+    let saved:Record<string,unknown>;
+    try{saved=strictJson(fs.readFileSync(receipt,'utf8')) as Record<string,unknown>;}
+    catch{blocked('archival receipt is corrupt');}
+    if(canonical(saved)!==canonical(record))blocked('archival receipt conflicts with original pending');
+  }else atomicJson(receipt,record);
+  if(canonical(strictJson(fs.readFileSync(receipt,'utf8')))!==canonical(record)||
+    sha(fs.readFileSync(archive))!==digest)blocked('archive receipt verification failed');
+  // Do not delete a shared pending that changed between validation and archive.
+  if(!fs.existsSync(originalPath)||!fs.readFileSync(originalPath).equals(original))
+    blocked('shared pending changed during recovery');
+  fs.unlinkSync(originalPath);
+}
 export function stageLifecycleResult(appPath:string,root:string,stage:Stage,operation:Exclude<ExternalOperation,'author'>,text:string){
   requireActiveLifecycleOperation(operation);
   const state=readState(root),task=state.lifecycle?.tasks[`${stage}:${operation}`];if(!task||task.status!=='FROZEN')throw new Error('No current frozen lifecycle task exists.');
@@ -885,6 +971,7 @@ export function stageLifecycleResult(appPath:string,root:string,stage:Stage,oper
     validateReview(payload,task,operation);
   }
   const responseSha256=sha(text),savedPath=resultPath(root,task.id),stagingPath=pendingPath(root);
+  if(fs.existsSync(stagingPath))recoverDisabledMediaReviewPending(root,state);
   if(fs.existsSync(stagingPath)){
     const existing=strictJson(fs.readFileSync(stagingPath,'utf8')) as Record<string,unknown>;
     if(existing.projectId!==state.project.id||existing.taskId!==task.id||existing.responseSha256!==responseSha256)
