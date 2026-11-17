@@ -75,5 +75,14 @@ describe('UT-MF07 project-keyed renderer state',()=>{
   it('MF07-2 Create passes and backend persists target duration',async()=>{const source=fs.readFileSync(path.resolve('src/renderer/features/project/ProjectForm.tsx'),'utf8');expect(source).toContain('targetDuration: project.duration');const parent=fs.mkdtempSync(path.join(os.tmpdir(),'duration-ut-'));try{const made=await createProjectStaged(appPath,createInput(parent),{runner:createRunner()});expect(readState(made.root).brief.targetDuration).toBe(42)}finally{fs.rmSync(parent,{recursive:true,force:true})}});
   it('MF07-3 Open rehydrates duration and ratio',()=>{const source=fs.readFileSync(path.resolve('src/renderer/features/project/ProjectForm.tsx'),'utf8');expect(source).toContain('duration: state.brief.targetDuration??0');expect(source).toContain('ratio: state.brief.ratio')});
   it('MF07-4 voice profile resets by project/profile identity',()=>{const source=fs.readFileSync(path.resolve('src/renderer/features/voice/VoiceWorkspace.tsx'),'utf8');expect(source).toContain("setVoice(native?.nano?.profileId??'')");expect(source).toContain('[id,native?.nano?.profileId]')});
-  it('MF07-5 External JSON/pending/prompt reset on project switch',()=>{const source=fs.readFileSync(path.resolve('src/renderer/features/external/ExternalWorkspace.tsx'),'utf8');for(const reset of ["setJson('')","setResult('idle')","setPending(null)","setPrompt('')"])expect(source).toContain(reset);expect(source).toContain('[projectId,setJson,setResult]')});
+  it('MF07-5 External JSON/pending/prompt are project/stage/operation/media-keyed without tab-navigation reset',()=>{
+    const source=fs.readFileSync(path.resolve('src/renderer/features/external/ExternalWorkspace.tsx'),'utf8');
+    expect(source).toContain("const sessionKey=[projectId??'none',stage,operation,mediaKind??'-'].join('|')");
+    expect(source).toContain('const local=tabs[sessionKey]??emptyTab()');
+    expect(source).toContain('patch(sessionKey,{[name]:value}');
+    expect(source).toContain('isCurrentProjectSession(session)');
+    expect(source).toContain('activeKey.current===sessionKey');
+    expect(source).not.toContain('[projectId,setJson,setResult]');
+    expect(source).not.toMatch(/useEffect\(\(\)=>\{setJson\(''\);setResult\('idle'\);setPending\(null\);/);
+  });
 });
