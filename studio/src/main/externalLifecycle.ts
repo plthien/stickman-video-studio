@@ -303,7 +303,8 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
     for(const finding of p.findings??[])latestFindingStatus.set(finding.id,finding.status??'uncertain');
   }
   const reviewFindings=[...latestFindingStatus].filter(([,status])=>status!=='resolved').map(([id])=>id);
-  const findingIds=scope.findingIds??(operation==='correct'?suggested?.findingIds??[]:operation==='recheck'?[...new Set(reviewFindings)]:[]);
+  const findingIds=operation==='correct'?(scope.findingIds?.length?scope.findingIds:suggested?.findingIds??[]):
+    scope.findingIds??(operation==='recheck'?[...new Set(reviewFindings)]:[]);
   if(new Set(findingIds).size!==findingIds.length||findingIds.some(id=>typeof id!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(id)))
     throw new Error('Invalid finding scope.');
   if(operation==='recheck'&&reviewFindings.some(id=>!findingIds.includes(id)))
