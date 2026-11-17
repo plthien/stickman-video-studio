@@ -135,6 +135,25 @@ describe('Voice actions use main-process eligibility, not permanently enabled bu
       {voice:'frozen-current',resume:true,retryUncertain:true}));
     expect(confirm).toHaveBeenCalledTimes(1);
   });
+  it('MF07-4/GEN-08: switching projects replaces pending pinned profile, not reuse the prior voice',async()=>{
+    const first=withProfile('voice-project-A');
+    first.nano!.profileId='old-accepted-A';
+    first.longform={status:'UNCERTAIN',jobId:'pending-A',profileId:'frozen-A',
+      completedParts:0,totalParts:1};
+    const second=withProfile('voice-project-B');
+    second.nano!.profileId='accepted-B';
+    bridge({
+      voicePlaybackUrl:async(id:string)=> 'studio-media://'+id+'/assets/audio/narration.wav?sha='+'a'.repeat(64),
+      narrationAction:async()=>({action:'blocked',reason:'not eligible',completed:0,total:0,status:'BLOCKED'}),
+      timingEvidence:async()=>false
+    });
+    const view=render(<AppStateProvider><Seed state={first}><VoiceWorkspace/></Seed></AppStateProvider>);
+    const profile=await screen.findByLabelText('Confirmed voice profile') as HTMLSelectElement;
+    await waitFor(()=>expect(profile.value).toBe('frozen-A'));
+    view.rerender(<AppStateProvider><Seed state={second}><VoiceWorkspace/></Seed></AppStateProvider>);
+    await waitFor(()=>expect((screen.getByLabelText('Confirmed voice profile') as HTMLSelectElement).value).toBe('accepted-B'));
+    expect(screen.queryByRole('option',{name:/frozen-A/})).not.toBeInTheDocument();
+  });
   it('PB-05: bounded read-only playback retry never invokes Nano synthesis',async()=>{
     const state=withProfile('voice-player'),run=vi.fn(),url=vi.fn(async()=>
       'studio-media://voice-player/assets/audio/narration.wav?sha='+'a'.repeat(64));
