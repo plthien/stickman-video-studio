@@ -37,7 +37,7 @@ describe('V5 no-sample / zero-fallback production behavior',()=>{
       fs.writeFileSync(file,JSON.stringify(manifest));
       const state=readState(sample.root);
       state.approvedScript!.sections=[{id:'a',text:'One two'},{id:'b',text:'three'}];
-      state.approvedScript!.text='One two\\n\\nthree';
+      state.approvedScript!.text='One two\n\nthree';
       state.approvedScript!.sha256=sha(state.approvedScript!.text);
       state.nano={endpoint,profileId:'owner'};
       writeState(sample.root,state);
