@@ -937,7 +937,8 @@ function recoverDisabledMediaReviewPending(root:string,state:StudioState):void{
   if(canonical(strictJson(fs.readFileSync(receipt,'utf8')))!==canonical(record)||
     sha(fs.readFileSync(archive))!==digest)blocked('archive receipt verification failed');
   for(const file of [archive,receipt]){
-    const handle=fs.openSync(file,'r');
+    // On Windows, FlushFileBuffers requires a handle with write access.
+    const handle=fs.openSync(file,'r+');
     try{fs.fsyncSync(handle);}finally{fs.closeSync(handle);}
   }
   // Do not delete a shared pending that changed between validation and archive.
