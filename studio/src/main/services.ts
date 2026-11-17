@@ -190,7 +190,7 @@ export const mediaUrl = (root: string, relative: string) => `studio-media://${pr
 export function assertMediaRelative(relative: string) {
   const normalized = relative.replaceAll('\\', '/');
   if (normalized.startsWith('/') || normalized.split('/').some(part => !part || part === '.' || part === '..' || part.startsWith('.'))) throw new Error('Invalid media path.');
-  if (!/^(?:assets\/(?:images|sfx)|output)\/[\p{L}\p{N}_.@+ -]+\.(?:png|jpe?g|webp|wav|mp3|m4a|aac|ogg|flac|mp4|webm|srt|vtt)$/iu.test(normalized)) throw new Error('Path is not an allowlisted project media file.');
+  if (normalized !== 'assets/audio/narration.wav' && !/^(?:assets\/(?:images|sfx)|output)\/[\p{L}\p{N}_.@+ -]+\.(?:png|jpe?g|webp|wav|mp3|m4a|aac|ogg|flac|mp4|webm|srt|vtt)$/iu.test(normalized)) throw new Error('Path is not an allowlisted project media file.');
   return normalized;
 }
 export const fileFetchUrl = (root: string, relative: string) => pathToFileURL(resolveProjectFile(root, relative)).toString();
