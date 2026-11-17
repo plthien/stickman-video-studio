@@ -53,9 +53,9 @@ const SCRIPT_AUTHOR_BLOB_SHA1:Record<string,string>={
  */
 const SCRIPT_AUTHOR_BLOCKS:Record<string,Array<readonly [number,number]>>={
   'SKILL.md':[[19,19],[21,23],[25,25]],
-  'references/autopilot.md':[[5,5],[11,15],[17,19],[25,25],[43,43],[49,52]],
-  'references/autopilot-production-qa.md':[[5,9],[19,27],[29,34],[40,42],[44,46],[48,48]],
-  'references/autopilot-sound-system.md':[[5,7],[18,24],[61,72],[80,80],[84,91]],
+  'references/autopilot.md':[[5,5],[11,11],[13,13],[21,21],[25,25],[43,43]],
+  'references/autopilot-production-qa.md':[[9,9],[21,21],[23,24],[27,27],[33,34],[42,42],[48,48]],
+  'references/autopilot-sound-system.md':[[7,7],[18,24],[61,61],[63,63],[72,72]],
   'references/b1-minimal-handdrawn.md':[[7,13],[15,15],[19,23],[29,31]],
   'references/b2-colorful-handdrawn.md':[[7,13],[17,17],[19,19],[21,21],[23,25]],
   'references/b3-television.md':[[11,13],[29,39],[41,43],[47,57],[69,73]],
@@ -72,9 +72,28 @@ const SCRIPT_AUTHOR_MIXED_SENTENCES:Record<string,readonly [string,string]>={
   'references/autopilot-production-qa.md:L48-L48':['B1–B4 styles, languages, previews and films use','at a time**.'],
   'references/b4-survival-storytelling.md:L61-L61':['Default to English and **fix the main narrator','unless the user explicitly chooses otherwise.'],
   'references/b4-audio-direction.md:L9-L9':['Brian remains the narrator across scenes,','not a new actor.'],
-  'references/b4-audio-direction.md:L32-L32':['Fit picture to the approved voice,','with no fixed SFX-only title pad.']
+  'references/b4-audio-direction.md:L32-L32':['Fit picture to the approved voice,','with no fixed SFX-only title pad.'],
+  'references/autopilot.md:L11-L11':['Each B style defines its own visuals/characters','B4 retains its explicit Brian contract.'],
+  'references/autopilot.md:L13-L13':['Resolve each setting in this order:','there is no mandatory shared TTS vendor.'],
+  'references/autopilot.md:L21-L21':['Choose the palette from this story;','unrelated B styles.'],
+  'references/autopilot.md:L25-L25':['1. Resolve the source/topic','narration language.'],
+  'references/autopilot.md:L43-L43':['- **Story-led casting:**','merely for variety.'],
+  'references/autopilot-production-qa.md:L21-L21':['Give the **first 30 seconds**','not faster cuts or louder effects.'],
+  'references/autopilot-production-qa.md:L27-L27':['If copy is supplied or already approved','do not promise virality.'],
+  'references/autopilot-sound-system.md:L61-L61':['Every added cue must answer','why this moment needs it**.'],
+  'references/autopilot-sound-system.md:L63-L63':['Choose a palette from the particular story','not from the B number alone.'],
+  'references/autopilot-sound-system.md:L72-L72':['Near-silence and complete silence are different choices.','fixed 0.5/2-second gap for every story.']
 };
 export const SCRIPT_AUTHOR_EXTRACTION_REVISION='script-author-complete-blocks-v4';
+/** Presentation only: group original source blocks without copying their headings. */
+export function renderScriptAuthorGroups(groups:ReadonlyArray<readonly [string,readonly string[]]>) {
+  return groups.map(([heading,blocks])=>{
+    const exactBlocks=blocks.join('\n\n');
+    return heading && blocks[0]!==heading && !blocks[0]?.startsWith(heading+'\n')
+      ? heading+'\n'+exactBlocks
+      : exactBlocks;
+  }).join('\n\n');
+}
 export function extractScriptAuthor(full:string,relative:string){
   const spans=SCRIPT_AUTHOR_BLOCKS[relative],expectedBlob=SCRIPT_AUTHOR_BLOB_SHA1[relative];
   if(!spans?.length||!expectedBlob)throw new Error('REBUILD_REQUIRED: missing Script Author requirement inventory: '+relative);
@@ -107,11 +126,11 @@ export function extractScriptAuthor(full:string,relative:string){
       location='L'+start+':C'+(fromIndex+1)+'-C'+(toIndex+to.length);
     }
     if(!excerpt.trim())throw new Error('REBUILD_REQUIRED: empty Script Author source block: '+relative);
-    const heading=lines.slice(0,start).reverse().find(row=>/^#{2,5} /.test(row))??'# '+relative;
+    const heading=lines.slice(0,start).reverse().find(row=>/^#{2,5} /.test(row))??'';
     const grouped=sections.get(heading)??[];grouped.push(excerpt);sections.set(heading,grouped);
     locations.push(location);blocks.push({location,text:excerpt});
   }
-  const text=[...sections].map(([heading,blocks])=>heading+'\n'+blocks.join('\n\n')).join('\n\n');
+  const text=renderScriptAuthorGroups([...sections]);
   return{text,headings:[...sections.keys()],locations,blocks};
 }
 
