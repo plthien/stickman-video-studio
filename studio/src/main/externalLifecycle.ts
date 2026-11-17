@@ -334,6 +334,139 @@ function scriptReviewPrompt(
   ].join('\n\n')+'\n';
 }
 
+
+/** A distinct executable mission per lifecycle operation. The original Author
+ * task is evidence of original rules, never an instruction to author again.
+ * Identity and field contract are separated so no review verdict is prefilled.
+ */
+function dedicatedLifecyclePrompt(
+  state:StudioState,stage:Stage,operation:Exclude<ExternalOperation,'author'>,
+  artifact:Artifact,originalTask:string,authority:ReturnType<typeof compileAuthority>,
+  prior:Array<{taskId:string;operation:ExternalOperation;value:unknown}>,
+  targetIds:string[],findingIds:string[],editableIds:string[],editablePaths:string[],
+  evidencePack:unknown,mediaKind:Scope['media'],lineage:Lineage|null,
+  envelope:Record<string,unknown>,fileDelivery:string
+):string{
+  const current=artifact.value;
+  const payload=envelope.payload as {schema:string;artifact_sha256:string};
+  const identity={schema:envelope.schema,project_id:envelope.project_id,task_id:envelope.task_id,
+    revision:envelope.revision,input_sha256:envelope.input_sha256,stage,operation,
+    payload:{schema:payload.schema,artifact_sha256:artifact.sha256}};
+  const brief={project_id:state.project.id,topic:state.brief.topic,language:state.brief.language,
+    style:state.project.style,ratio:state.brief.ratio,
+    target_duration_seconds:state.brief.targetDuration??null,
+    audience:state.brief.audience??'',purpose:state.brief.purpose??''};
+  const sourceTrace=authority.sources.map(source=>'- '+source.path+
+    ' | source SHA256 '+source.sha256+' | extraction SHA256 '+source.extractionSha256+
+    ' | revision '+source.extractionRevision+
+    (source.locations?.length?' | locations '+source.locations.join(', '):'')).join('\n');
+  const kindInstructions:Record<'voice'|'captions'|'preview'|'film',string[]>={
+    voice:[
+      'VOICE MEDIA REVIEW — assess actual transferred WAV only if genuinely listened to: spoken text fidelity, missing/repeated words, diction, natural pauses, expressive delivery, perceived pacing, clipping/noise.',
+      'Reading Script text or having a WAV path/SHA does not prove audibility, performance, real duration or voice quality.'
+    ],
+    captions:[
+      'CAPTIONS MEDIA REVIEW — assess actual approved caption text/word-alignment files: wording, sequence, coverage and semantic one-line B-style grouping.',
+      'Check caption timing only against real supplied timing data; verify audible synchronization only if the actual WAV was transferred and listened to. Claim rendered legibility only if actual frames were viewed.'
+    ],
+    preview:[
+      'PREVIEW MEDIA REVIEW — examine only the actually supplied preview sample and its frozen interval, not the entire film. Consider hook, acting/contact, transitions, visual continuity, meaningful motion, and captions.',
+      'Review voice/SFX only if corresponding audio was genuinely listened to. Frozen target IDs include ONLY shots intersecting the verified preview interval. Never infer motion from contact sheets alone.'
+    ],
+    film:[
+      'FILM MEDIA REVIEW — review full actual film for across-shot narrative pacing, scene continuity, acting, compositing, captions, sound/voice and render defects ONLY where the media was actually watched/heard.',
+      'A full-film registered file or media pack alone proves no external observation. If only a sample was transferred, do not claim full-film coverage or unseen shots.'
+    ]
+  };
+  const missions=stage==='script'?{
+    review:['SCRIPT REVIEW — independently assess complete current narration and authoring creative quality; do not write a new Script.'],
+    correct:[
+      'SCRIPT CORRECT — repair the supported unresolved findings through a COMPLETE corrected mode-b-script-v1 artifact. This is not a fresh Author task.',
+      'For section-level locks change ONLY sections[i].text for explicitly editable existing section IDs; retain every section ID/order and every locked section byte-for-byte. Preserve the whole authoring tree unless a specific existing authoring path was explicitly authorized.',
+      'The intended repair must materially address the described problem, not reproduce the unchanged artifact. Never modify other sections or invent media, word timings or CLI results. The result stays a candidate pending independent Recheck.'
+    ],
+    recheck:[
+      'SCRIPT RECHECK — TEXT EVIDENCE AND ACTIVATION GATE. Independently inspect the CURRENT corrected candidate and all requested sections against the original confirmed Review findings.',
+      'For EACH required frozen finding ID provide its own finding with a supported status resolved, open or uncertain; account for possible new causal or continuity regressions. Missing WAV/MP4 does not automatically mean INSUFFICIENT_EVIDENCE.',
+      'Choose REVIEWED_NO_FINDINGS only if all frozen findings are demonstrably resolved, full requested textual coverage is complete and no newly supported unresolved finding exists. Do not rewrite Script or trigger approval yourself.'
+    ],
+    'media-review':kindInstructions[mediaKind as 'voice'|'captions']
+  }[operation]:{
+    review:[
+      'NATIVE REVIEW — independently review the CURRENT complete Native manifest, shot ledger, sound script and asset needs against the original B-style requirements.',
+      'Assess planned shot meaning, continuity, timing consistency, visual feasibility, media references and sound intentions from the manifest only. Do not claim recorded motion, heard audio or CLI verification without actual supplied media.'
+    ],
+    correct:[
+      'NATIVE CORRECT — repair the supported scoped findings through a COMPLETE corrected Native artifact containing manifest, shot_ledger, sound_script and asset_needs.',
+      'Preserve shot IDs/order, locked fields, approved narration, voice and caption timing, rights mappings and unrelated media. Change only the listed exact shot IDs or narrow existing field pointers.',
+      'Do not claim generated images/audio, original CLI validation, preview approval or rendering. Intentional no-op and durable publication/recovery remain possible in Native; do not invent verification to justify one.'
+    ],
+    recheck:[
+      'NATIVE RECHECK — assess the exact published current Native artifact against the confirmed correction and its original Review findings, including auxiliary-only creative metadata.',
+      'Account for EACH frozen finding ID with supported resolved/open/uncertain evidence. Verify manifest feasibility from supplied Native JSON, but do not claim actual movement, synchronized sound, rendered frames or original CLI PASS without observed media.',
+      'Select a review status only after independent evaluation. Do not authorize or auto-approve an encoded film.'
+    ],
+    'media-review':kindInstructions[mediaKind as 'voice'|'captions']
+  }[operation];
+  const statusContract=[
+    'payload.status is REQUIRED and NOT PRESELECTED. Choose independently after reviewing actual evidence:',
+    'REVIEWED_WITH_FINDINGS: all requested available evidence covered, one or more supported unresolved findings.',
+    'REVIEWED_NO_FINDINGS: complete requested evidenced coverage, no unresolved findings; NOT a default.',
+    'INSUFFICIENT_EVIDENCE: evidence necessary for the specified review is missing or unusable.',
+    'NOT_VERIFIED: a requested verification cannot be established from supplied evidence.',
+    'payload.coverage has exactly target_ids,modalities,ranges,media_sha256s. target_ids must be actual reviewed IDs within the frozen inventory. Use script/manifest for inspectable text only; do not claim picture, motion or sound observation without actual media examination.',
+    'For each finding include exactly id, severity (critical|major|minor), status (open|resolved|uncertain), target_ids (real IDs), requirement, evidence (kind, detail and supported optional SHA/time range), recommendation.',
+    'Allowed evidence.kind: manifest|inferred|unverified|observed. observed claims require genuine inspection of supplied media, source_sha256 tied to attested primary media and real supported in-range time/target. Never fabricate observations.',
+    'Use [] for findings only when that is the truthful outcome. Never invent a finding to meet a quota.',
+    'Construct ONE COMPLETE mode-b-lifecycle-result-v1 JSON object with the exact frozen identity and the required payload fields. The identity reference below is NOT a completed result.'
+  ];
+  const correctionContract=[
+    'payload.schema: mode-b-correction-v1; payload.artifact_sha256: exact frozen target SHA.',
+    'payload.finding_ids: exact required frozen IDs, in listed order.',
+    'payload.editable_ids: exact listed authorized IDs, in listed order.',
+    'payload.editable_paths: exact listed authorized pointers, in listed order.',
+    'payload.artifact: one COMPLETE corrected current artifact with schema and all required nested fields. Do not use an unchanged artifact as an example answer or omit locked fields.',
+    'No payload.status, payload.coverage or payload.findings fields are permitted for Correct.'
+  ];
+  const kind=operation==='media-review'?(mediaKind??'UNKNOWN'):null;
+  return [
+    '# MODE B EXTERNAL '+stage.toUpperCase()+' '+operation.toUpperCase()+(kind?' — '+kind.toUpperCase():''),
+    '## A — OPERATION-SPECIFIC MISSION',...missions,
+    '## B — PROJECT BRIEF',JSON.stringify(brief,null,2),
+    '## C — ONE IMMUTABLE CURRENT TARGET',
+    'Only this artifact is current. Do not replace it with an earlier approved Script, a previous Native manifest or the Author appendix.',
+    JSON.stringify({id:artifact.id,sha256:artifact.sha256,value:current},null,2),
+    '## D — EXACT SCOPE AND CORRECTION LINEAGE',
+    JSON.stringify({target_ids:targetIds,editable_ids:editableIds,editable_paths:editablePaths,
+      finding_ids:findingIds,correction_lineage:lineage?{
+        correct_task_id:lineage.correctTaskId,source_review_task_id:lineage.reviewTaskId}:null},null,2),
+    'Confirmed applicable prior evidence (exclude unrelated media reviews, old artifacts and stage history):',
+    JSON.stringify(prior,null,2),
+    '## E — ORIGINAL MODE B CREATIVE AUTHORITY',
+    'The original frozen Author appendix below contains the full applicable requirements. Its instructions to produce a new Author response are NOT executable for this task. SHA/provenance outside the appendix is informational; no extra independent rules are invented here.',
+    sourceTrace,
+    '## F — EVIDENCE AND REVIEW COVERAGE',
+    operation==='media-review'?
+      'The local package and its SHA prove local bytes, NOT transfer or actual inspection. transferAcknowledged is only the owner declaration of manual transfer. Report observations only for files actually provided AND examined in this conversation. Auxiliary contact sheets are stills, not motion evidence. Use time bounds only when verified from transferred media.':
+      'The supplied current Script/Native artifact is inspectable textual/manifest evidence. Do not claim actual video, voice, motion, caption playback, media QA or CLI execution without real external evidence.',
+    JSON.stringify(evidencePack,null,2),
+    'Frozen eligible target IDs: '+JSON.stringify(targetIds),
+    '## G — RESPONSE CONTRACT — NO PRESET OUTCOME',
+    'FROZEN IDENTITY (reference only, incomplete response):',
+    JSON.stringify(identity,null,2),
+    ...(operation==='correct'?correctionContract:statusContract),
+    ...(operation==='recheck'?[
+      'Required exact finding IDs: '+JSON.stringify(findingIds),
+      'Every required finding ID must appear with supported resolved/open/uncertain status. A clean recheck requires all required findings resolved and all requested current targets covered.'
+    ]:[]),
+    '## JSON FILE DELIVERY — REQUIRED',fileDelivery.replace(/^## JSON FILE DELIVERY — REQUIRED\n/,''),
+    '## H — ORIGINAL FROZEN AUTHOR TASK — IMMUTABLE REFERENCE APPENDIX',
+    'Original Author task SHA256: '+sha(originalTask),
+    'This appendix is a normative reference, NOT a new Author mission, result example, current target or response contract. Ignore any older JSON filename/output instruction inside it; Section G and the current JSON file delivery govern this task.',
+    originalTask
+  ].join('\n\n')+'\n';
+}
+
 export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,operation:Exclude<ExternalOperation,'author'>,scope:Scope={},rebuild=false){
   if(!['review','correct','recheck','media-review'].includes(operation))throw new Error('Unsupported lifecycle operation.');
   if(operation==='media-review'&&!(stage==='script'&&(scope.media==='voice'||scope.media==='captions')||
