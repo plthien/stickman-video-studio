@@ -182,26 +182,24 @@ describe('REG-TAB navigation persistence, read-only history and async isolation'
     expect(screen.queryByLabelText('Confirmed JSON history')).not.toBeInTheDocument();
     expect(screen.getByRole('button',{name:'Validate import'})).toBeDisabled();
   });
-  it('REG-TAB-09 isolates Voice/Captions and Preview/Film drafts with transfer acknowledgements',async()=>{
+  it('REG-F04-01/REG-TAB-09 exposes only Author/Review/Correct/Recheck with isolated Script/Native drafts',async()=>{
     bridge({readFrozen:async()=>null,readHistory:async()=>[]});
     render(<AppStateProvider><Harness><ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider></Harness></AppStateProvider>);
-    fireEvent.click(await screen.findByRole('button',{name:'Media review'}));
-    fireEvent.change(screen.getByLabelText('Import JSON'),{target:{value:'{"voice":"draft"}'}});
-    fireEvent.click(screen.getByRole('checkbox'));
-    fireEvent.change(screen.getByLabelText('Review media scope'),{target:{value:'captions'}});
-    expect(screen.getByLabelText('Import JSON')).toHaveValue('');
-    expect(screen.getByRole('checkbox')).not.toBeChecked();
-    fireEvent.change(screen.getByLabelText('Import JSON'),{target:{value:'{"captions":"draft"}'}});
-    fireEvent.change(screen.getByLabelText('Review media scope'),{target:{value:'voice'}});
-    expect(screen.getByLabelText('Import JSON')).toHaveValue('{"voice":"draft"}');
-    expect(screen.getByRole('checkbox')).toBeChecked();
+    for(const operation of ['Author','Review','Correct','Recheck'])
+      expect(screen.getByRole('button',{name:operation})).toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:'Media review'})).not.toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:'Export actual media pack'})).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Review media scope')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:'Review'}));
+    fireEvent.change(screen.getByLabelText('Import JSON'),{target:{value:'{"script":"review"}'}});
     fireEvent.click(screen.getByRole('button',{name:'Native'}));
-    expect(screen.getByLabelText('Review media scope')).toHaveValue('preview');
-    fireEvent.change(screen.getByLabelText('Import JSON'),{target:{value:'{"preview":"draft"}'}});
-    fireEvent.change(screen.getByLabelText('Review media scope'),{target:{value:'film'}});
     expect(screen.getByLabelText('Import JSON')).toHaveValue('');
+    fireEvent.change(screen.getByLabelText('Import JSON'),{target:{value:'{"native":"review"}'}});
     fireEvent.click(screen.getByRole('button',{name:'Script'}));
-    expect(screen.getByLabelText('Review media scope')).toHaveValue('voice');
-    expect(screen.getByLabelText('Import JSON')).toHaveValue('{"voice":"draft"}');
+    expect(screen.getByLabelText('Import JSON')).toHaveValue('{"script":"review"}');
+    fireEvent.click(screen.getByRole('button',{name:'Recheck'}));
+    expect(screen.getByLabelText('Import JSON')).toHaveValue('');
+    fireEvent.click(screen.getByRole('button',{name:'Review'}));
+    expect(screen.getByLabelText('Import JSON')).toHaveValue('{"script":"review"}');
   });
 });
