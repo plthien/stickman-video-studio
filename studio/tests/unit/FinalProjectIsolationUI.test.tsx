@@ -44,6 +44,34 @@ describe('REG-03 final project-session isolation',()=>{
       expect.objectContaining({editableIds:['first_attempt','escalation','rescue'],findingIds:['SR4-CAUSAL-01']}),false));
   });
 
+  it('AUTO-CORRECT-03: confirmed Review immediately supplies Correct scope within the same project',async()=>{
+    const initial=project('A',{lifecycle:{tasks:{},artifacts:{}}});
+    const scope={editableIds:['first_attempt','escalation','rescue'],findingIds:['SR4-CAUSAL-01'],reviewTaskId:'review-task'};
+    const confirmed=project('A',{lifecycle:{tasks:{},artifacts:{'review-task':{
+      taskId:'review-task',stage:'script',operation:'review',artifactSha256:'review-result',
+      status:'REVIEWED_WITH_FINDINGS',createdAt:'2026-11-17T04:00:00.000Z',
+      value:{status:'REVIEWED_WITH_FINDINGS',findings:[{id:'SR4-CAUSAL-01',severity:'major',status:'open',
+        target_ids:scope.editableIds,requirement:'Causality bridge'}]}
+    }}},suggestedCorrectScope:{script:scope,native:{editableIds:[],findingIds:[],reviewTaskId:null}}});
+    const freezeLifecycle=vi.fn(async()=>({id:'review-task',prompt:'Script Review task prompt'}));
+    bridge({
+      readFrozen:async()=>null,freezeLifecycle,
+      stageLifecycle:async()=>({token:'ready',status:'STAGED',before:{},after:{},changes:1}),
+      confirmLifecycle:async()=>confirmed
+    });
+    render(<AppStateProvider><Harness first={initial}><ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider></Harness></AppStateProvider>);
+    fireEvent.click(await screen.findByRole('button',{name:'Review'}));
+    fireEvent.click(screen.getByRole('button',{name:'Build Task'}));
+    await screen.findByText('Script Review task prompt');
+    fireEvent.change(screen.getByLabelText('Import JSON'),{target:{value:'{"result":"review"}'}});
+    fireEvent.click(screen.getByRole('button',{name:'Validate import'}));
+    fireEvent.click(await screen.findByRole('button',{name:'Confirm reviewed import'}));
+    await waitFor(()=>expect(screen.getByText('Script Review imported.')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button',{name:'Correct'}));
+    await waitFor(()=>expect(screen.getByDisplayValue('first_attempt, escalation, rescue')).toBeInTheDocument());
+    expect(screen.getByDisplayValue('SR4-CAUSAL-01')).toBeInTheDocument();
+    expect(screen.getByText(/Auto-filled from confirmed Review/)).toBeInTheDocument();
+  });
   it('REG03-F06 validate Script response cannot become Native pending',async()=>{const staged=deferred<StudioStagedImport>();bridge({stageImport:()=>staged.promise,exportPrompt:async()=>null});render(<AppStateProvider><Harness><ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider></Harness></AppStateProvider>);fireEvent.click(await screen.findByRole('button',{name:'Build Task'}));await screen.findByText('A-script-prompt');fireEvent.change(screen.getByLabelText('Import JSON'),{target:{value:'{"script":"A"}'}});fireEvent.click(screen.getByRole('button',{name:'Validate import'}));fireEvent.click(screen.getByRole('button',{name:'Native'}));staged.resolve({token:'script-A',stage:'script',before:{},after:{},changes:1,status:'STAGED',missing:[],fulfillments:{}});await flush();expect(screen.queryByText(/Schema valid/)).not.toBeInTheDocument();expect(screen.queryByText(/BEFORE/)).not.toBeInTheDocument()});
   it('REG03-F07 caption refresh after draft cannot display A words on B',async()=>{const gate=deferred<typeof caption>(),captionReview=vi.fn().mockResolvedValueOnce(caption).mockReturnValueOnce(gate.promise);const aligned=project('A',{preview,alignment:{path:'words.json',captionsPath:'captions.json',audioSha256:'a',wordsSha256:'b',cuesSha256:'c'}});bridge({captionReview,captionDraft:async()=>({}),projectState:async()=>aligned});render(<AppStateProvider><Harness first={aligned}><VoiceWorkspace/></Harness></AppStateProvider>);await screen.findByText(/Actual aligned words:.*A-WORD/);fireEvent.click(screen.getByRole('button',{name:'Save reviewed grouping draft'}));await waitFor(()=>expect(captionReview).toHaveBeenCalledTimes(2));fireEvent.click(screen.getByRole('button',{name:'Switch B'}));gate.resolve(caption);await flush();expect(screen.queryByText(/A-WORD/)).not.toBeInTheDocument();expect(screen.getByLabelText('active-project')).toHaveTextContent('B')});
   it('REG03-F08 Nano Discover A response cannot replace B profile list',async()=>{const gate=deferred<{ready:boolean;profiles:Array<Record<string,unknown>>}>();bridge({nanoDiscover:()=>gate.promise});render(<AppStateProvider><Harness><VoiceWorkspace/></Harness></AppStateProvider>);fireEvent.click(await screen.findByRole('button',{name:'Discover producer'}));fireEvent.click(screen.getByRole('button',{name:'Switch B'}));gate.resolve({ready:true,profiles:[{id:'A-voice',name:'A Voice',version:1}]});await flush();expect(screen.queryByRole('option',{name:/A Voice/})).not.toBeInTheDocument();expect(screen.queryByText(/confirmed profile/)).not.toBeInTheDocument()});
