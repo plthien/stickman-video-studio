@@ -2,8 +2,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {afterEach,describe,expect,it} from 'vitest';
-import {acceptedNarrationPlaybackUrl,verifyAcceptedNarrationRequest} from '../../src/main/voicePlayback';
-import {assertMediaRelative,readState,writeState} from '../../src/main/services';
+import {acceptedNarrationPlaybackUrl,verifyAcceptedNarrationRequest,serveAcceptedNarration} from '../../src/main/voicePlayback';
+import {assertMediaRelative,readState,writeState,sha} from '../../src/main/services';
 import {cleanup,fixture} from './SixIssueFixtures';
 
 afterEach(cleanup);
@@ -34,4 +34,37 @@ describe('accepted narration playback, no unapproved media',()=>{
     fs.unlinkSync(file);
     expect(()=>acceptedNarrationPlaybackUrl(root)).toThrow(/missing/);
   });
+  it('PB-01/02: the canonical protocol response is a decodable WAV with byte-range support',async()=>{
+    const {root,voicePath}=fixture(),url=acceptedNarrationPlaybackUrl(root);
+    const actual=fs.readFileSync(path.join(root,voicePath));
+    const full=serveAcceptedNarration(root,url,null);
+    expect(full.status).toBe(200);
+    expect(full.headers.get('content-type')).toBe('audio/wav');
+    expect(full.headers.get('accept-ranges')).toBe('bytes');
+    expect(Buffer.from(await full.arrayBuffer())).toEqual(actual);
+    const partial=serveAcceptedNarration(root,url,'bytes=0-43');
+    expect(partial.status).toBe(206);
+    expect(partial.headers.get('content-range')).toBe('bytes 0-43/'+actual.length);
+    expect(Buffer.from(await partial.arrayBuffer())).toEqual(actual.subarray(0,44));
+    const suffix=serveAcceptedNarration(root,url,'bytes=-2');
+    expect(suffix.status).toBe(206);
+    expect(Buffer.from(await suffix.arrayBuffer())).toEqual(actual.subarray(-2));
+    expect(serveAcceptedNarration(root,url,'bytes=999999999-').status).toBe(416);
+  });
+  it('PB-03/04/06: only current project and current SHA may fetch media',()=>{
+    const {root,voicePath}=fixture(),url=acceptedNarrationPlaybackUrl(root);
+    const wrongProject=url.replace(new URL(url).hostname,'a'.repeat(24));
+    expect(()=>serveAcceptedNarration(root,wrongProject,null)).toThrow(/DENIED/);
+    expect(()=>serveAcceptedNarration(root,url.replace('sha=','hash='),null)).toThrow(/DENIED/);
+    const oldBytes=fs.readFileSync(path.join(root,voicePath)),nextBytes=Buffer.from(oldBytes);
+    nextBytes[nextBytes.length-1]^=1;
+    fs.writeFileSync(path.join(root,voicePath),nextBytes);
+    expect(()=>serveAcceptedNarration(root,url,null)).toThrow(/changed|DENIED/);
+    const state=readState(root);state.voice!.sha256=sha(nextBytes);writeState(root,state);
+    const current=acceptedNarrationPlaybackUrl(root);
+    expect(current).not.toBe(url);
+    expect(()=>serveAcceptedNarration(root,url,null)).toThrow(/DENIED/);
+    expect(serveAcceptedNarration(root,current,null).status).toBe(200);
+  });
+
 });
