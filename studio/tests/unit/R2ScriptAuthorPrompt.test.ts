@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {afterEach,describe,expect,it} from 'vitest';
-import {compileAuthority,extractScriptAuthor,SCRIPT_AUTHOR_EXTRACTION_REVISION} from '../../src/main/externalAuthority';
+import {compileAuthority,extractScriptAuthor,renderScriptAuthorGroups,SCRIPT_AUTHOR_EXTRACTION_REVISION} from '../../src/main/externalAuthority';
 import {freezeTask,sourceFingerprint,stageImport,validateScript} from '../../src/main/externalTasks';
 import {nativeSkillRoot,readState,sha,writeState} from '../../src/main/services';
 import {appPath,cleanup,fixture} from './SixIssueFixtures';
@@ -59,8 +59,8 @@ describe('R2 focused source-exact Script Author handoff',()=>{
             expect(block.text).toBe(row.slice(Number(partial[2])-1,Number(partial[3])));
           }
         }
-        expect((source.blocks??[]).some(b=>b.text.includes('\n'))).toBe(true);
       }
+      expect(author.sources.some(source=>source.blocks?.some(block=>block.text.includes('\n')))).toBe(true);
       const styleSource=author.sources.find(source=>source.path.includes('/'+style.toLowerCase()+'-'));
       expect(styleSource).toBeDefined();
       const all=author.sources.map(source=>source.text).join('\n');
@@ -141,6 +141,104 @@ describe('R2 focused source-exact Script Author handoff',()=>{
       for(const rule of expected[i])expect(source.text).toContain(rule);
     }
   });
+
+  it('REG-01 / REG-02: B1 60s frozen Script contains creative rules without B3/Native production instructions',()=>{
+    const root=sample(),task=freezeTask(appPath,root,'script');
+    const prompt=task.prompt;
+    for(const required of [
+      'What If Time Froze for One Minute?', '"style": "B1"', '60 seconds',
+      'Slender proportions', 'Act with the whole body',
+      'first 30 seconds', 'semantic subtitles with at most one visible line',
+      'Sound must communicate place', 'Place/continuity',
+      'hook', 'escalation', 'payoff', 'continuity', 'visual communicability'
+    ])expect(prompt).toContain(required);
+    for(const forbidden of [
+      'B3 has independent design/motion requirements',
+      'Maintain a compact project-local shot ledger',
+      'actual word times', 'The renderer accepts local keyframes',
+      '## Suspense / apocalypse module',
+      'low industrial air/drone', 'distant zombie horde',
+      'Fill every required shot, ledger',
+      'For native authoring, payload.manifest',
+      'Run node scripts/autopilot.mjs doctor',
+      'Check the encoded main-picture region',
+      'Connect cue IDs to the sound/rights manifest'
+    ])expect(prompt).not.toContain(forbidden);
+  });
+  it('REG-03: common suspense module excluded for all Script styles; selected B authority remains',()=>{
+    for(const style of ['B1','B2','B3','B4']){
+      const compiled=compileAuthority(appPath,style,'script','author');
+      const sound=compiled.sources.find(source=>source.path==='references/autopilot-sound-system.md');
+      expect(sound).toBeDefined();
+      expect(sound!.text).toContain('Sound must communicate place');
+      expect(sound!.text).toContain('Build three **functional layers**');
+      expect(sound!.text).toContain('These are available roles');
+      expect(sound!.text).toContain('Near-silence and complete silence are different choices.');
+      expect(sound!.text).not.toContain('## Suspense / apocalypse module');
+      expect(sound!.text).not.toContain('low industrial air/drone');
+      const styleReference=compiled.sources.find(source=>source.path.includes(
+        '/'+style.toLowerCase()+'-'));
+      expect(styleReference).toBeDefined();
+      if(style==='B3')expect(styleReference!.text).toContain('If narration names a behavior');
+      if(style==='B4'){
+        expect(styleReference!.text).toContain('Story-led horror visibility gate');
+        expect(styleReference!.text).toContain('deliberate-hold exception');
+        expect(compiled.sources.some(s=>s.path==='references/b4-audio-direction.md')).toBe(true);
+      }
+    }
+  });
+  it('REG-04: authorized shared-source ranges and all mixed sentence boundaries stay exact',()=>{
+    const expected={
+      'references/autopilot.md':['L5-L5','L11:','L13:','L21:','L25:','L43:'],
+      'references/autopilot-production-qa.md':['L9-L9','L21:','L23-L24','L27:','L33-L34','L42-L42','L48:'],
+      'references/autopilot-sound-system.md':['L7-L7','L18-L24','L61:','L63:','L72:']
+    };
+    const compiled=compileAuthority(appPath,'B1','script','author');
+    for(const [relative,starts] of Object.entries(expected)){
+      const source=compiled.sources.find(row=>row.path===relative)!;
+      expect(source).toBeDefined();
+      expect(source.locations).toHaveLength(starts.length);
+      for(let i=0;i<starts.length;i++){
+        expect(source.locations![i].startsWith(starts[i])).toBe(true);
+      }
+      const original=fs.readFileSync(path.join(nativeSkillRoot(appPath).root,relative),'utf8');
+      expect(()=>extractScriptAuthor(original.replace(/\r?\n/g,'\r\n'),relative)).not.toThrow();
+    }
+  });
+  it('REG-05: source heading is rendered exactly once, even with heading in first block',()=>{
+    const original='## Visual language\n- Preserve the source rule.';
+    expect(renderScriptAuthorGroups([['## Visual language',[original]]])).toBe(original);
+    const grouped=renderScriptAuthorGroups([['## First 30 seconds: picture, sound and copy together',
+      ['Give the first 30 seconds a dedicated hook pass.']]]);
+    expect(grouped).toBe('## First 30 seconds: picture, sound and copy together\n'+
+      'Give the first 30 seconds a dedicated hook pass.');
+    expect(renderScriptAuthorGroups([['',['A selected rule before any Markdown heading.']]]))
+      .toBe('A selected rule before any Markdown heading.');
+    for(const style of ['B1','B2','B3','B4']){
+      const compiled=compileAuthority(appPath,style,'script','author');
+      for(const source of compiled.sources){
+        expect(source.text).not.toMatch(/(^|\n)(#{2,5} [^\n]+)\n\2(\n|$)/);
+        for(const block of source.blocks??[])expect(source.text).toContain(block.text);
+      }
+    }
+  });
+  it('REG-07 / REG-08: freezing Script cannot change Native task or previously approved assets',()=>{
+    const {root}=fixture({style:'B1'});
+    const nativeBefore=freezeTask(appPath,root,'native');
+    const nativeSha=nativeBefore.promptSha256;
+    freezeTask(appPath,root,'script');
+    const nativeAfter=freezeTask(appPath,root,'native');
+    expect(nativeAfter.id).toBe(nativeBefore.id);
+    expect(nativeAfter.prompt).toBe(nativeBefore.prompt);
+    expect(nativeAfter.promptSha256).toBe(nativeSha);
+    const scriptOriginal=sourceFingerprint(appPath,root,'script');
+    const state=readState(root);
+    state.brief.topic='Another independently authored project brief';
+    writeState(root,state);
+    expect(sourceFingerprint(appPath,root,'script')).not.toBe(scriptOriginal);
+    expect(readState(root).tasks?.native?.id).toBe(nativeBefore.id);
+  });
+
   it('preserves the existing Native Author prompt and complete original manifest contract',()=>{
     const {root}=fixture({style:'B1'});
     const native=freezeTask(appPath,root,'native');
