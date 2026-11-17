@@ -23,7 +23,10 @@ describe('Electron main-only ElevenLabs credential management',()=>{
     expect(bytes.toString()).not.toContain(key);
     expect(resolveElevenLabsKey(root,cipher)).toBe(key);
     expect(JSON.stringify(elevenLabsStatus(root,cipher))).not.toContain(key);
-    expect(clearElevenLabsKey(root,cipher)).toMatchObject({configured:false,source:'none'});
+    expect(clearElevenLabsKey(root,cipher)).toMatchObject({
+      configured:Boolean(process.env.ELEVENLABS_API_KEY?.trim()),
+      source:process.env.ELEVENLABS_API_KEY?.trim()?'environment':'none'
+    });
     expect(fs.existsSync(path.join(root,'elevenlabs-key.enc'))).toBe(false);
   });
   it('never writes plaintext when OS encryption is unavailable',()=>{
