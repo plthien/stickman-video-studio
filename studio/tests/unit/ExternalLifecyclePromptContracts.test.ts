@@ -140,6 +140,33 @@ describe('P-01 through P-14 lifecycle prompt, lock, evidence and ancestry contra
     expect(readState(root).scriptCandidate?.sha256).not.toBe(approvedBefore);
   });
 
+  it('P-04/P-06 second Correct round derives findings from the last confirmed unresolved Recheck',async()=>{
+    const {root}=await correctedScript();
+    const firstRecheck=freezeLifecycleTask(appPath,root,'script','recheck');
+    const stillOpen=reviewPayload(firstRecheck,['opening'],[finding('F-SCOPE','opening','open')],'script');
+    const pending=stageLifecycleResult(appPath,root,'script','recheck',
+      result(root,firstRecheck,'recheck',stillOpen));
+    await Promise.resolve(confirmLifecycleResult(root,pending.token));
+    const secondCorrect=freezeLifecycleTask(appPath,root,'script','correct');
+    expect(secondCorrect.sourceReviewTaskId).toBe(firstRecheck.id);
+    expect(secondCorrect.findingIds).toEqual(['F-SCOPE']);
+    expect(secondCorrect.editableIds).toEqual(['opening']);
+    const current=readState(root).scriptCandidate!;
+    const updated={schema:'mode-b-script-v1',
+      sections:current.sections.map(row=>({...row,text:'The proven rule supports the final safe rescue.'})),
+      authoring:current.authoring??{}};
+    const response={schema:'mode-b-correction-v1',artifact_sha256:secondCorrect.artifactSha256,
+      finding_ids:secondCorrect.findingIds,editable_ids:secondCorrect.editableIds,
+      editable_paths:secondCorrect.editablePaths,artifact:updated};
+    const imported=stageLifecycleResult(appPath,root,'script','correct',
+      result(root,secondCorrect,'correct',response));
+    await Promise.resolve(confirmLifecycleResult(root,imported.token));
+    const next=freezeLifecycleTask(appPath,root,'script','recheck');
+    expect(next.findingIds).toEqual(['F-SCOPE']);
+    expect(next.prompt).toContain(firstRecheck.id);
+    expect(next.prompt).toContain(secondCorrect.id);
+  });
+
   it('P-05/P-06 native Recheck binds exact published correction, rejecting unrelated review history',async()=>{
     const root=await nativeBaseline();
     const review=freezeLifecycleTask(appPath,root,'native','review');
