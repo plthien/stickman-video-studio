@@ -549,5 +549,51 @@ describe('External creative lifecycle',()=>{
     expect(accepted.approvedScript?.sections[0].text).toContain('forcing');
     expect(accepted.approvedScript?.sections[1]).toEqual(candidate.sections[1]);
   });
+  it('REG-RCK-05: new Script Recheck instructions never enter Script Review/Correct, Media Review or Native Recheck',async()=>{
+    const {root}=mediaFixture({style:'B1'});
+    freezeTask(appPath,root,'script');
+    const scriptReview=freezeLifecycleTask(appPath,root,'script','review');
+    const scriptCorrect=freezeLifecycleTask(appPath,root,'script','correct',{editableIds:['opening']});
+    const scriptMedia=freezeLifecycleTask(appPath,root,'script','media-review',{media:'voice'});
+    const nativeImport=stageNative(root,nativePayload(root));
+    await confirmImport(appPath,root,nativeImport.response.token,{validator:validator().run});
+    const nativeReview=freezeLifecycleTask(appPath,root,'native','review');
+    const finding={id:'NATIVE-HISTORY',severity:'major',status:'open',target_ids:['shot-1'],
+      requirement:'Retain a readable Native shot objective.',
+      evidence:{kind:'manifest',detail:'Synthetic test evidence for first-shot intent.'},
+      recommendation:'Clarify only the authorized Native target.'};
+    const wrap=(task:typeof nativeReview,operation:'review'|'correct',payload:unknown)=>JSON.stringify({
+      schema:'mode-b-lifecycle-result-v1',project_id:readState(root).project.id,
+      task_id:task.id,revision:task.revision,input_sha256:task.inputSha256,
+      stage:'native',operation,payload
+    });
+    const stagedReview=stageLifecycleResult(appPath,root,'native','review',wrap(nativeReview,'review',{
+      schema:'mode-b-review-v1',artifact_sha256:nativeReview.artifactSha256,
+      status:'REVIEWED_WITH_FINDINGS',
+      coverage:{target_ids:['shot-1','shot-2'],modalities:['manifest'],ranges:[],media_sha256s:[]},
+      findings:[finding]
+    }));
+    await Promise.resolve(confirmLifecycleResult(root,stagedReview.token));
+    const nativeCorrect=freezeLifecycleTask(appPath,root,'native','correct',{editableIds:['shot-1']});
+    const previous=readState(root).external.native!.artifact as Record<string,unknown>;
+    const artifact={manifest:JSON.parse(fs.readFileSync(path.join(root,'project.json'),'utf8')),
+      shot_ledger:previous.shotLedger??[],sound_script:previous.soundScript??[],asset_needs:previous.assetNeeds??[]};
+    const stagedCorrect=stageLifecycleResult(appPath,root,'native','correct',wrap(nativeCorrect,'correct',{
+      schema:'mode-b-correction-v1',artifact_sha256:nativeCorrect.artifactSha256,
+      finding_ids:nativeCorrect.findingIds,editable_ids:nativeCorrect.editableIds,
+      editable_paths:nativeCorrect.editablePaths,artifact
+    }));
+    await Promise.resolve(confirmLifecycleResult(root,stagedCorrect.token));
+    const nativeRecheck=freezeLifecycleTask(appPath,root,'native','recheck');
+    for(const task of [scriptReview,scriptCorrect,scriptMedia,nativeCorrect,nativeRecheck]){
+      for(const heading of ['SCRIPT RECHECK — TEXT COVERAGE CONTRACT',
+        'SCRIPT RECHECK — REQUIRED HISTORICAL FINDINGS',
+        'SCRIPT RECHECK — CURRENT CANDIDATE EVIDENCE'])
+        expect(task.prompt).not.toContain(heading);
+    }
+    expect(nativeRecheck.prompt).toContain('NATIVE RECHECK');
+    expect(nativeRecheck.findingIds).toEqual(['NATIVE-HISTORY']);
+  });
+
   it('fails closed when a media review has no verified transferable media',()=>{const root=fixture();expect(()=>freezeLifecycleTask(appPath,root,'script','media-review',{media:'voice'})).toThrow(/NOT_VERIFIED/)})
 });
