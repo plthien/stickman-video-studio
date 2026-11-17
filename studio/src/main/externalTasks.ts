@@ -141,7 +141,12 @@ export function freezeTask(appPath: string, root: string, stage: Stage, rebuild 
   const state = readState(root); const context = projectContext(state, root, stage); const sources = sourceBundle(appPath, state.project.style,stage);
   const inputSha256 = sourceFingerprint(appPath, root, stage); const prior = state.tasks?.[stage];
   if (!rebuild && prior && prior.inputSha256 === inputSha256 && fs.existsSync(resolveProjectFile(root, prior.promptPath))) return { ...prior, prompt: readUtf8(resolveProjectFile(root, prior.promptPath)) };
-  if (prior) prior.status = 'STALE'; const revision = (prior?.revision ?? 0) + 1; const id = randomUUID();
+  if(prior){
+    state.externalTaskArchive??=[];
+    state.externalTaskArchive.push({stage,operation:'author',task:{...prior,status:prior.status==='IMPORTED'?'IMPORTED':'STALE'}});
+    prior.status='STALE';
+  }
+  const revision = (prior?.revision ?? 0) + 1; const id = randomUUID();
   const response = stage === 'script'
     ? { schema: 'mode-b-external-result-v1', project_id: state.project.id, task_id: id, revision, input_sha256: inputSha256, stage, payload: { schema: 'mode-b-script-v1', sections: [{id:'opening',text:'At sunrise, a red kite escaped into the wind.'},{id:'resolution',text:'By evening, the kite returned carrying a small ribbon.'}], authoring: {creative_direction:{premise:'A lost kite becomes a small adventure.'},characters:[{id:'child',description:'One child follows the kite through the same town.'}],continuity:{rules:['The kite stays red throughout the story.']},style_decisions:{visual_intent:'Make the flight and return causally readable.'},voice_intentions:{tone:'Curious and warm.'},sound_intentions:{intent:'Wind rises with the kite, then settles.'},source_references:[]} } }
     : { schema: 'mode-b-external-result-v1', project_id: state.project.id, task_id: id, revision, input_sha256: inputSha256, stage, payload: { manifest: {...(context as {native_manifest:Record<string,unknown>}).native_manifest,shots:[],captions:(context as {alignment:{approved_caption_cues:unknown}}).alignment.approved_caption_cues,voice:(context as {native_manifest:Record<string,unknown>}).native_manifest.voice}, shot_ledger: [{shot_id:'actual-shot-id',narrative_purpose:'actual purpose'}], sound_script: [{target_id:'actual-shot-id',intent:'actual story-led sound intent'}], asset_needs: [] } };
@@ -374,7 +379,7 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
     const candidateText=script.sections.map(item=>item.text).join('\n\n');
     state.scriptCandidate={sections:script.sections,text:candidateText,sha256:sha(candidateText),revision,importedAt:new Date().toISOString(),taskId:task.id,authoring:script.authoring};
     state.external.script={revision,artifact:pending.payload,importedAt:new Date().toISOString()};
-    task.status='IMPORTED';
+    task.status='IMPORTED';task.confirmedResponseSha256=pending.responseSha256;task.confirmedResponsePath=pending.responsePath;
     activateScriptCandidate(root,state,'AUTHOR_IMPORT');
     const revisionFile=path.join(root,'.studio','revisions','script-'+revision+'.json');
     atomicJson(revisionFile,pending.payload);
@@ -426,7 +431,7 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
     ownedBefore={nativeReadiness:fresh.nativeReadiness,preview:fresh.preview,approval:fresh.approval,render:fresh.render};
     oldTaskStatus=fresh.tasks!.native!.status;
     fresh.external.native={revision,artifact:{...again,missing:again.missing},importedAt:new Date().toISOString()};
-    fresh.nativeReadiness=readiness;fresh.preview=undefined;fresh.approval=undefined;fresh.render=undefined;fresh.tasks!.native!.status='IMPORTED';
+    fresh.nativeReadiness=readiness;fresh.preview=undefined;fresh.approval=undefined;fresh.render=undefined;fresh.tasks!.native!.status='IMPORTED';fresh.tasks!.native!.confirmedResponseSha256=pending.responseSha256;fresh.tasks!.native!.confirmedResponsePath=pending.responsePath;
     committedState=fresh;writeState(root,fresh);stateCommitted=true;
     atomicJson(path.join(root,'.studio','revisions','native-'+revision+'.json'),again.manifest);
     atomicJson(path.join(root,'.studio','revisions','native-authoring-'+revision+'.json'),{shot_ledger:again.shotLedger,sound_script:again.soundScript,asset_needs:again.assetNeeds,fulfillments:diskPending.fulfillments,missing:again.missing});
