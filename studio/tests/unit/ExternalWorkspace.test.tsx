@@ -1,10 +1,12 @@
-import {fireEvent,render,screen,within} from '@testing-library/react';
+import {cleanup,fireEvent,render,screen,within} from '@testing-library/react';
 import fs from 'node:fs';
 import path from 'node:path';
-import {describe,expect,it} from 'vitest';
+import {afterEach,describe,expect,it} from 'vitest';
 import {AppStateProvider} from '../../src/renderer/app/AppState';
 import {ExternalSessionProvider,ExternalWorkspace} from '../../src/renderer/features/external/ExternalWorkspace';
 describe('External workspace never offers a fake frozen prompt',()=>{
+  // Explicit isolation: both tests mount their own AppState/ExternalSession trees.
+  afterEach(cleanup);
 
   it('keeps Build, Copy, Export and Open ChatGPT in one task toolbar above a fixed-height scrolling prompt',()=>{
     render(<AppStateProvider><ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider></AppStateProvider>);
