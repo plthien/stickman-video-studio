@@ -179,7 +179,7 @@ describe('REG-TAB read-only external history and integrity',()=>{
     expect(readExternalHistory(root,'script','author')[0].confirmedJson).toBeNull();
     expect(readExternalHistory(root,'script','author')[0].errors).toContain('LEGACY_RESPONSE_NOT_VERIFIABLE');
     fs.unlinkSync(actual);
-    const wrong={...JSON.parse(original) as Record<string,unknown>,project_id:'not-the-current-project'};
+    const wrong={...(JSON.parse(original) as Record<string,unknown>),project_id:'not-the-current-project'};
     const bytes=JSON.stringify(wrong),digest=sha(bytes);
     const name='script-'+author.id+'-'+author.revision+'-'+digest+'.json';
     fs.writeFileSync(path.join(root,'.studio/external/responses',name),bytes);
