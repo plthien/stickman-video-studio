@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path, { join } from 'node:path';
 import { alignWithElevenLabs } from './alignment.js';
 import {elevenLabsStatus,saveElevenLabsKey,clearElevenLabsKey,resolveElevenLabsKey} from './elevenlabsCredentials.js';
-import {acceptedNarrationPlaybackUrl,verifyAcceptedNarrationRequest} from './voicePlayback.js';
+import {acceptedNarrationPlaybackUrl,serveAcceptedNarration} from './voicePlayback.js';
 import { reconcileScriptActivation, confirmImport, freezeTask, stageImport, getPendingMedia, fulfillMedia, importMediaFile } from './externalTasks.js';
 import {confirmLifecycleResult,freezeLifecycleTask,readFrozenExternalTask,stageLifecycleResult} from './externalLifecycle.js';
 import {readExternalHistory} from './externalHistory.js';
@@ -87,7 +87,7 @@ app.whenReady().then(() => {
     try{
       const relative=assertMediaRelative(decodeURIComponent(url.pathname.slice(1)));
       if(relative==='assets/audio/narration.wav'){
-        try{verifyAcceptedNarrationRequest(root,request.url);}
+        try{return serveAcceptedNarration(root,request.url,request.headers.get('range'),request.method);}
         catch{return new Response('Accepted narration authorization changed',{status:409});}
       }
       return net.fetch(fileFetchUrl(root,relative),{headers:request.headers});
