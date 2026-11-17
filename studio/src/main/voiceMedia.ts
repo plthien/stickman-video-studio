@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { alignmentText, captureAlignmentPin, publishAlignment, validateAlignment } from './alignment.js';
-import {generateApiNarration} from './narrationApi.js';
+import {generateApiNarration,narrationAction,type JobInput} from './narrationApi.js';
 import { acceptNarration, inspectWavBuffer, readState, strictJson } from './services.js';
 
 /** A single API-only narration path for one or many approved sections.
@@ -8,7 +8,8 @@ import { acceptNarration, inspectWavBuffer, readState, strictJson } from './serv
 export async function longformStatus(){
   return {status:'API_ONLY',instructions:'Narration uses the configured localhost Nano HTTP API.'};
 }
-export async function runLongform(root:string,input:{voice?:string;resume?:boolean;retryUncertain?:boolean}){
+export {narrationAction};
+export async function runLongform(root:string,input:JobInput){
   return generateApiNarration(root,input);
 }
 
