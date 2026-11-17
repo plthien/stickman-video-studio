@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, safeStorage, shell } from 'electron';
 import fs from 'node:fs';
 import path, { join } from 'node:path';
-import { alignWithElevenLabs } from './alignment.js';
+import { alignWithElevenLabs,repairAlignmentTiming,eligibleAlignmentResponse } from './alignment.js';
 import {elevenLabsStatus,saveElevenLabsKey,clearElevenLabsKey,resolveElevenLabsKey} from './elevenlabsCredentials.js';
 import {acceptedNarrationPlaybackUrl,serveAcceptedNarration} from './voicePlayback.js';
 import { reconcileScriptActivation, confirmImport, freezeTask, stageImport, getPendingMedia, fulfillMedia, importMediaFile } from './externalTasks.js';
@@ -10,7 +10,7 @@ import {readExternalHistory} from './externalHistory.js';
 import { getCaptionReview, draftCaptionReview, approveCaptionReview } from './captionReview.js';
 import { discoverNano, generateNano, nanoBase } from './nanoClient.js';
 import { cancelJob, nativeJob, reconcileJob } from './nativeJobs.js';
-import { importAlignedWords, importApprovedWav, longformStatus, runLongform } from './voiceMedia.js';
+import { importAlignedWords, importApprovedWav, longformStatus, runLongform, narrationAction } from './voiceMedia.js';
 import { projectSnapshot } from './projectSnapshot.js';
 import {createProjectStaged} from './projectCreation.js';
 import { assertLocalRoot, assertMediaRelative, fileFetchUrl, mediaUrl, projectId, readState, strictJson, writeState, type NativeCommand, type Stage, type StudioState } from './services.js';
@@ -62,8 +62,11 @@ function registerIpc() {
     app.getAppPath(),rootFor(id),authorized,
     authorized?resolveElevenLabsKey(app.getPath('userData'),safeStorage):undefined));
   ipcMain.handle('voice:playbackUrl', (_event,id:string) => acceptedNarrationPlaybackUrl(rootFor(id)));
+  ipcMain.handle('voice:narrationAction', (_event,id:string)=>narrationAction(rootFor(id)));
+  ipcMain.handle('voice:repairTiming', (_event,id:string)=>repairAlignmentTiming(app.getAppPath(),rootFor(id)));
+  ipcMain.handle('voice:timingEvidence', (_event,id:string)=>Boolean(eligibleAlignmentResponse(rootFor(id))));
   ipcMain.handle('voice:longformStatus', () => longformStatus());
-  ipcMain.handle('voice:longformRun', (_event, id: string, input: {voice?:string;resume?:boolean;retryUncertain?:boolean}) => runLongform(rootFor(id), input));
+  ipcMain.handle('voice:longformRun', (_event, id: string, input: {voice?:string;resume?:boolean;retryUncertain?:boolean;regenerate?:boolean}) => runLongform(rootFor(id), input));
   ipcMain.handle('voice:importWav', async (_event, id: string) => { const result=await dialog.showOpenDialog({properties:['openFile'],filters:[{name:'PCM WAV',extensions:['wav']}]}); return result.canceled?null:importApprovedWav(rootFor(id),result.filePaths[0]); });
   ipcMain.handle('voice:importWords', async (_event, id: string) => { const result=await dialog.showOpenDialog({properties:['openFile'],filters:[{name:'Aligned words JSON',extensions:['json']}]}); return result.canceled?null:importAlignedWords(app.getAppPath(),rootFor(id),result.filePaths[0]); });
   ipcMain.handle('media:import', async (_event, id: string, mapping: {kind:'image'|'sfx';rights:string}) => {
