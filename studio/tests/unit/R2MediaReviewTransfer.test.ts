@@ -153,7 +153,7 @@ describe('R2 disabled External Media Review and preserved technical media QA',()
     const first=stageNativeReview(root,task),old=fs.readFileSync(path.join(root,'.studio/external/lifecycle/pending.json'));
     const same=stageNativeReview(root,task);
     expect(same.token).toBe(first.token);
-    expect(()=>stageNativeReview(root,task,'\\n')).toThrow(/PENDING_LIFECYCLE_CONFLICT/);
+    expect(()=>stageNativeReview(root,task,String.fromCharCode(10))).toThrow(/PENDING_LIFECYCLE_CONFLICT/);
     expect(fs.readFileSync(path.join(root,'.studio/external/lifecycle/pending.json'))).toEqual(old);
   });
   it('REG-LEGACY-04 recovery is retryable if interrupted before archive, after archive or before clearing pending',async()=>{
