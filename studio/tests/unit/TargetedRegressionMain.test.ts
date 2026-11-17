@@ -1,6 +1,5 @@
 // @vitest-environment node
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import {afterEach,describe,expect,it,vi} from 'vitest';
 import * as services from '../../src/main/services';
@@ -8,21 +7,102 @@ import {fulfillMedia,getPendingMedia,importMediaFile} from '../../src/main/exter
 import {cancelJob,nativeJob} from '../../src/main/nativeJobs';
 import {currentNativeEvidence} from '../../src/main/nativeEvidence';
 import {runLongform} from '../../src/main/voiceMedia';
-import {PRODUCER_PIN} from '../../src/main/nanoClient';
+import {createNanoTestProducer} from './NanoHttpMock';
 import {verifier,writePreviewEvidence} from './NativeEvidenceFixtures';
 import {appPath,cleanup,fixture,importedSource,nativePayload,stageNative} from './SixIssueFixtures';
 
 afterEach(()=>{cleanup();vi.restoreAllMocks()});
 const deferred=<T,>()=>{let resolve!:(value:T)=>void,reject!:(reason:unknown)=>void;const promise=new Promise<T>((yes,no)=>{resolve=yes;reject=no});return{promise,resolve,reject}};
 const waitFor=async(check:()=>boolean)=>{for(let i=0;i<100;i++){if(check())return;await new Promise(resolve=>setTimeout(resolve,5))}throw new Error('Timed out waiting for test boundary.')};
-function prepareLongform(){const sample=fixture(),state=services.readState(sample.root);state.approvedScript!.sections=[{id:'a',text:'One two'},{id:'b',text:'three'}];state.approvedScript!.text='One two\n\nthree';state.approvedScript!.sha256=services.sha(state.approvedScript!.text);state.approvedScript!.revision=7;state.nano={endpoint:'http://127.0.0.1:3901',profileId:'owner'};state.media=[{path:'assets/audio/narration.wav',sha256:state.voice!.sha256,kind:'ambience',rights:'existing',importedAt:'before'}];services.writeState(sample.root,state);const producer=fs.mkdtempSync(path.join(os.tmpdir(),'target-producer-'));fs.mkdirSync(path.join(producer,'lite'));fs.writeFileSync(path.join(producer,'lite/chatterbox_assembly.py'),'# producer boundary');return{...sample,producer}}
+function prepareLongform(endpoint:string){
+  const sample=fixture(),state=services.readState(sample.root);
+  state.approvedScript!.sections=[{id:'a',text:'One two'},{id:'b',text:'three'}];
+  state.approvedScript!.text='One two\n\nthree';
+  state.approvedScript!.sha256=services.sha(state.approvedScript!.text);
+  state.approvedScript!.revision=7;
+  state.nano={endpoint,profileId:'owner'};
+  state.media=[{path:'assets/audio/narration.wav',sha256:state.voice!.sha256,
+    kind:'ambience',rights:'existing',importedAt:'before'}];
+  services.writeState(sample.root,state);
+  return sample;
+}
 function pendingMapping(){const sample=fixture(),{response}=stageNative(sample.root,nativePayload(sample.root,{image:'both'})),first=importMediaFile(sample.root,importedSource(sample.root),'image','owner rights');return{...sample,pending:response,first}}
 async function previewReady(){const sample=fixture(),e=currentNativeEvidence(sample.root,services.readState(sample.root),{seconds:20}),adapter=verifier(e),written=writePreviewEvidence(sample.root,e),state=services.readState(sample.root);state.preview={path:'output/preview.mp4',sha256:services.sha(fs.readFileSync(written.video)),reportPath:'output/preview-report.json',reportSha256:services.sha(fs.readFileSync(written.report)),sourceFingerprint:e.fingerprint,verifiedAt:'now'};state.approval={note:'reviewed',previewSha256:state.preview.sha256,approvedAt:'now'};state.nativeReadiness={sampleReady:true,fullReady:true,previewSeconds:20,checkedSeconds:30,sourceFingerprint:services.sha(fs.readFileSync(path.join(sample.root,'project.json'))),reviewedDraft:false,verifiedAt:'now'};services.writeState(sample.root,state);fs.writeFileSync(path.join(sample.root,'output/approval.json'),JSON.stringify({preview_sha256:state.preview.sha256,preview_fingerprint:'f'.repeat(64),note:'reviewed',approved_at:'now'}));return{...sample,e,adapter}}
 
-describe('REG-01 long-form concurrent state updates',()=>{
-  it('REG-01A preserves an independent state update across deferred producer verification',async()=>{const sample=prepareLongform(),gate=deferred<{code:number;stdout:string;stderr:string}>(),original=services.runProcess;vi.spyOn(services,'runProcess').mockImplementation((exe,args,options)=>exe==='git'?gate.promise:original(exe,args,options));const producerRun=deferred<{code:number;stdout:string;stderr:string}>(),run=runLongform(sample.root,{voice:'owner'},{producerRoot:sample.producer,runner:async()=>producerRun.promise});await new Promise(resolve=>setTimeout(resolve,10));const independent=services.readState(sample.root);independent.project.title='Independent title';independent.imports=['assets/images/independent.png'];services.writeState(sample.root,independent);gate.resolve({code:0,stdout:PRODUCER_PIN+'\n',stderr:''});await waitFor(()=>services.readState(sample.root).longform?.status==='RUNNING');expect(services.readState(sample.root).project.title).toBe('Independent title');expect(services.readState(sample.root).imports).toEqual(['assets/images/independent.png']);producerRun.resolve({code:1,stdout:'',stderr:'stop after boundary'});await expect(run).rejects.toThrow()});
-  it('REG-01B rejects source changed during producer verification before RUNNING',async()=>{const sample=prepareLongform(),gate=deferred<{code:number;stdout:string;stderr:string}>();vi.spyOn(services,'runProcess').mockImplementation(async()=>gate.promise);const run=runLongform(sample.root,{voice:'owner'},{producerRoot:sample.producer,runner:async()=>({code:1,stdout:'',stderr:'must not run'})});await new Promise(resolve=>setTimeout(resolve,10));const changed=services.readState(sample.root);changed.approvedScript!.revision++;changed.approvedScript!.text+=' changed';changed.approvedScript!.sha256=services.sha(changed.approvedScript!.text);services.writeState(sample.root,changed);gate.resolve({code:0,stdout:PRODUCER_PIN+'\n',stderr:''});await expect(run).rejects.toThrow(/changed|stale|source/i);expect(services.readState(sample.root).longform).toBeUndefined()});
-  it('REG-01C revision verification failure preserves last-good project evidence',async()=>{const sample=prepareLongform(),before=services.readState(sample.root);vi.spyOn(services,'runProcess').mockResolvedValue({code:1,stdout:'',stderr:'revision unavailable'});await expect(runLongform(sample.root,{voice:'owner'},{producerRoot:sample.producer})).rejects.toThrow(/verify/i);const after=services.readState(sample.root);expect(after.voice).toEqual(before.voice);expect(after.approvedScript).toEqual(before.approvedScript);expect(after.media).toEqual(before.media);expect(after.longform).toBeUndefined()});
+describe('REG-01 API-only concurrent narration state updates',()=>{
+  it('REG-01A preserves independent state updates across deferred HTTP profile verification',async()=>{
+    const entered=deferred<void>(),verifyGate=deferred<void>();
+    const speechEntered=deferred<void>(),speechGate=deferred<void>();
+    const api=createNanoTestProducer({
+      voiceId:'owner',failSpeechAt:1,
+      onFirstIntegrity:()=>{entered.resolve(undefined);return verifyGate.promise;},
+      onFirstSpeech:()=>{speechEntered.resolve(undefined);return speechGate.promise;}
+    });
+    const endpoint=await api.start();
+    try{
+      const sample=prepareLongform(endpoint);
+      const before=services.readState(sample.root).voice;
+      const run=runLongform(sample.root,{voice:'owner'});
+      const outcome=run.then(()=>null,(error:unknown)=>error);
+      await entered.promise;
+      const independent=services.readState(sample.root);
+      independent.project.title='Independent title';
+      independent.imports=['assets/images/independent.png'];
+      services.writeState(sample.root,independent);
+      verifyGate.resolve(undefined);
+      await speechEntered.promise;
+      const running=services.readState(sample.root);
+      expect(running.longform?.status).toBe('RUNNING');
+      expect(running.project.title).toBe('Independent title');
+      expect(running.imports).toEqual(['assets/images/independent.png']);
+      speechGate.resolve(undefined);
+      expect(String(await outcome)).toMatch(/NANO_UNCERTAIN_503/);
+      const after=services.readState(sample.root);
+      expect(after.project.title).toBe('Independent title');
+      expect(after.imports).toEqual(['assets/images/independent.png']);
+      expect(after.voice).toEqual(before);
+      expect(after.longform?.status).toBe('UNCERTAIN');
+    }finally{
+      verifyGate.resolve(undefined);speechGate.resolve(undefined);
+      await api.close();
+    }
+  });
+  it('REG-01B rejects source changed during HTTP producer verification before RUNNING',async()=>{
+    const entered=deferred<void>(),verifyGate=deferred<void>();
+    const api=createNanoTestProducer({voiceId:'owner',
+      onFirstIntegrity:()=>{entered.resolve(undefined);return verifyGate.promise;}});
+    const endpoint=await api.start();
+    try{
+      const sample=prepareLongform(endpoint);
+      const run=runLongform(sample.root,{voice:'owner'});
+      const outcome=run.then(()=>null,(error:unknown)=>error);
+      await entered.promise;
+      const changed=services.readState(sample.root);
+      changed.approvedScript!.revision++;
+      changed.approvedScript!.text+=' changed';
+      changed.approvedScript!.sha256=services.sha(changed.approvedScript!.text);
+      services.writeState(sample.root,changed);
+      verifyGate.resolve(undefined);
+      expect(String(await outcome)).toMatch(/changed|stale|source/i);
+      expect(services.readState(sample.root).longform).toBeUndefined();
+      expect(api.get().speechCalls).toBe(0);
+    }finally{verifyGate.resolve(undefined);await api.close();}
+  });
+  it('REG-01C HTTP profile verification failure preserves last-good project evidence',async()=>{
+    const api=createNanoTestProducer({voiceId:'owner',
+      integrityFailure:{status:503,code:'REFERENCE_VERIFICATION_UNAVAILABLE'}});
+    const endpoint=await api.start();
+    try{
+      const sample=prepareLongform(endpoint),before=services.readState(sample.root);
+      await expect(runLongform(sample.root,{voice:'owner'})).rejects.toThrow(/verif|integrity/i);
+      const after=services.readState(sample.root);
+      expect(after.voice).toEqual(before.voice);
+      expect(after.approvedScript).toEqual(before.approvedScript);
+      expect(after.media).toEqual(before.media);
+      expect(after.longform).toBeUndefined();
+      expect(api.get().speechCalls).toBe(0);
+    }finally{await api.close();}
+  });
 });
 
 describe('REG-02 fulfillment recovery preserves independent imports',()=>{
