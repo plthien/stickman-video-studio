@@ -124,6 +124,8 @@ action or new JSON import UI is introduced by this repair.
 
 ## Workflow, correction scope and media truthfulness
 
+Correct scope now auto-populates from the latest confirmed Review/Recheck for the exact current artifact: unresolved finding IDs and the union of their existing target section/shot IDs. Studio shows the suggested scope on Correct, and backend also derives it if no scope was explicitly entered. Resolved findings and stale-artifact reviews cannot authorize edits. The owner can narrow the proposed scope before freezing the task. Frozen tasks and unrelated sections remain locked.
+
 Script: Author → Confirm import → automatically activate the exact imported Script for Voice.
 Optional independent Review → scoped Correct → Recheck remains available.
 Corrected candidates are not activated until an exact-current-candidate independent
