@@ -36,6 +36,7 @@ function readOne(root:string,state:StudioState,stage:Stage,operation:ExternalOpe
     (errors.push('PROMPT_METADATA_MISSING'),null);
   let confirmedJson:string|null=null;
   let findings:ExternalHistoryRecord['findings']=[];
+  let reviewStatus:string|undefined;
   if(status==='IMPORTED'){
     if(operation==='author'){
       const responseSha=task.confirmedResponseSha256;
