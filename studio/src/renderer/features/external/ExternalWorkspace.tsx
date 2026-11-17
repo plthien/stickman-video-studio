@@ -21,7 +21,7 @@ export function ExternalWorkspace(){
     setEditable((suggested?.editableIds??[]).join(', '));
     setFindingScope((suggested?.findingIds??[]).join(', '));
     setEditablePaths('');
-  },[projectId,stage,operation,suggested?.reviewTaskId]);
+  },[projectId,stage,operation,suggested?.reviewTaskId,frozenTaskId]);
   const scopeKey=()=>JSON.stringify(lifecycleScope());
   const scopeDirty=Boolean(frozenTaskId&&operation!=='Author'&&scopeKey()!==frozenScopeKey);
   // Reading a saved reservation is side-effect free. Neither typing nor rerenders
