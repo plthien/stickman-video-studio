@@ -4,12 +4,15 @@ import { Badge, Button, Card, CardHeader, Field, Input, Select, Textarea } from 
 
 export function VoiceWorkspace() {
   const { native, captureProjectSession,isCurrentProjectSession,setNativeIfSessionCurrent, showNotice, nanoEndpoint, setNanoEndpoint } = useAppState();
-  const [profiles, setProfiles] = useState<Array<Record<string, unknown>>>([]), [voice, setVoice] = useState(native?.nano?.profileId ?? native?.longform?.profileId ?? '');
+  const pinnedVoice=native?.longform?.status&&native.longform.status!=='PASS'
+    ?native.longform.profileId??native?.nano?.profileId
+    :native?.nano?.profileId??native?.longform?.profileId;
+  const [profiles, setProfiles] = useState<Array<Record<string, unknown>>>([]), [voice, setVoice] = useState(pinnedVoice??'');
   const [status, setStatus] = useState<'idle'|'ready'|'busy'|'error'|'cancelled'>('idle'), [message, setMessage] = useState(''), [authorized, setAuthorized] = useState(false);
   const [jobAction,setJobAction]=useState<null|{action:'generate'|'regenerate'|'resume'|'retry'|'running'|'blocked';reason:string;completed:number;total:number;currentPart?:number;status:string;detail?:string}>(null);
   const [timingEvidence,setTimingEvidence]=useState(false);
   const id = native?.project.id, script = native?.approvedScript?.text ?? '';
-  useEffect(()=>{setVoice(native?.nano?.profileId??native?.longform?.profileId??'');setProfiles([]);setAuthorized(false);},[id,native?.nano?.profileId,native?.longform?.profileId]);
+  useEffect(()=>{setVoice(pinnedVoice??'');setProfiles([]);setAuthorized(false);},[id,pinnedVoice]);
   const [playbackUrl,setPlaybackUrl]=useState(''),[playbackError,setPlaybackError]=useState(''),[playbackRetry,setPlaybackRetry]=useState(0);
   const audioSha=native?.voice?.sha256,voiceStale=native?.voice?.stale;
   useEffect(()=>setPlaybackRetry(0),[id,audioSha]);
