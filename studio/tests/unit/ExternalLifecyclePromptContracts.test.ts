@@ -166,6 +166,7 @@ describe('P-01 through P-14 lifecycle prompt, lock, evidence and ancestry contra
     state.render={path:file,sha256:sha(fs.readFileSync(path.join(root,file))),
       reportPath:report,reportSha256:sha(fs.readFileSync(path.join(root,report))),
       verifiedAt:new Date().toISOString()};
+    state.nativeReadiness={...state.nativeReadiness!,fullReady:false};
     writeState(root,state);
     expect(()=>freezeLifecycleTask(appPath,root,'native','media-review',
       {media:'film'})).toThrow(/FULL_READY/);
@@ -175,7 +176,7 @@ describe('P-01 through P-14 lifecycle prompt, lock, evidence and ancestry contra
     const film=freezeLifecycleTask(appPath,root,'native','media-review',{media:'film'});
     expect(film.targetIds).toEqual(['shot-1','shot-2']);
     expect(film.prompt).toContain('FILM MEDIA REVIEW');
-    expect(film.prompt).toContain('SYNTHETIC_NOT_PLAYABLE').toBe(false);
+    expect(film.prompt).not.toContain('SYNTHETIC_NOT_PLAYABLE');
   });
 
   it('P-12/P-13 lifecycle response examples contain frozen identity but never preset review outcomes',async()=>{
