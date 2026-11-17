@@ -6,7 +6,7 @@ export function VoiceWorkspace() {
   const { native, captureProjectSession,isCurrentProjectSession,setNativeIfSessionCurrent, showNotice, nanoEndpoint, setNanoEndpoint } = useAppState();
   const [profiles, setProfiles] = useState<Array<Record<string, unknown>>>([]), [voice, setVoice] = useState(native?.nano?.profileId ?? '');
   const [status, setStatus] = useState<'idle'|'ready'|'busy'|'error'|'cancelled'>('idle'), [message, setMessage] = useState(''), [authorized, setAuthorized] = useState(false);
-  const [jobAction,setJobAction]=useState<null|{action:'generate'|'regenerate'|'resume'|'retry'|'running';reason:string;completed:number;total:number;currentPart?:number;status:string;detail?:string}>(null);
+  const [jobAction,setJobAction]=useState<null|{action:'generate'|'regenerate'|'resume'|'retry'|'running'|'blocked';reason:string;completed:number;total:number;currentPart?:number;status:string;detail?:string}>(null);
   const [timingEvidence,setTimingEvidence]=useState(false);
   const id = native?.project.id, script = native?.approvedScript?.text ?? '';
   useEffect(()=>{setVoice(native?.nano?.profileId??'');setProfiles([]);setAuthorized(false);},[id,native?.nano?.profileId]);
@@ -66,7 +66,7 @@ export function VoiceWorkspace() {
   const act = async (work: () => Promise<unknown>, notice: string,afterSuccess?:()=>void) => { const scope=captureProjectSession();if(!id||!scope)return;setStatus('busy');setMessage(''); try { const result=await work();if(!isCurrentProjectSession(scope))return;if(result===null){setStatus('cancelled');setMessage('CANCELLED — no project data changed.');return;} if (window.studio){const next=await window.studio.projectState(scope.projectId);if(!setNativeIfSessionCurrent(scope,next))return;} afterSuccess?.();setStatus('ready'); showNotice(notice); } catch (reason) { if(isCurrentProjectSession(scope))fail(reason); } finally {if(isCurrentProjectSession(scope))void refreshVoiceOperations(scope).catch(()=>{});} };
   const runNarration=async()=>{
     const scope=captureProjectSession(),action=jobAction?.action;
-    if(!scope||!action||action==='running'||!window.studio)return;
+    if(!scope||!action||action==='running'||action==='blocked'||!window.studio)return;
     if(action==='retry'&&!window.confirm('The previous Nano request may already have produced audio. Explicitly authorize replay of only the uncertain part?'))return;
     const input={voice,...(action==='regenerate'?{regenerate:true}:{}),
       ...(action==='resume'?{resume:true}:{}),
@@ -95,7 +95,7 @@ export function VoiceWorkspace() {
     <Field label="Confirmed voice profile"><Select value={voice} onChange={event=>setVoice(event.target.value)}><option value="">Select discovered profile</option>{profiles.map(item=><option key={String(item.id)} value={String(item.id)}>{String(item.name??item.id)} · v{String(item.version)}</option>)}</Select></Field>
     <Field label="Approved narration (project source, read only)"><Textarea readOnly value={script}/></Field>
     <div className="actions"><Button disabled={!window.studio||status==='busy'} onClick={async()=>{const scope=captureProjectSession();if(!scope)return;setStatus('busy');try{const result=await window.studio!.nanoDiscover(nanoEndpoint);if(!isCurrentProjectSession(scope))return;setProfiles(result.profiles);setStatus(result.ready?'ready':'error');setMessage(result.ready?`${result.profiles.length} confirmed profile(s); producer ready.`:'Producer readiness failed.')}catch(reason){if(isCurrentProjectSession(scope))fail(reason)}}}>Discover producer</Button>
-      <Button variant="primary" disabled={!id||!script||!voice||status==='busy'||!jobAction||jobAction.action==='running'} onClick={()=>void runNarration()}>{jobAction?.action==='generate'?'Generate narration':jobAction?.action==='regenerate'?'Regenerate narration':jobAction?.action==='resume'?'Resume narration':jobAction?.action==='retry'?'Explicit Retry uncertain part':jobAction?.action==='running'?'Generation running':'Checking job state...'}</Button>
+      <Button variant="primary" disabled={!id||!script||!voice||status==='busy'||!jobAction||(jobAction.action==='running'||jobAction.action==='blocked')} onClick={()=>void runNarration()}>{jobAction?.action==='generate'?'Generate narration':jobAction?.action==='regenerate'?'Regenerate narration':jobAction?.action==='resume'?'Resume narration':jobAction?.action==='retry'?'Explicit Retry uncertain part':jobAction?.action==='running'?'Generation running':jobAction?.action==='blocked'?'Recovery blocked — refresh status':'Checking job state...'}</Button>
       <Button disabled={!id||status==='busy'} onClick={()=>act(()=>window.studio!.importWav(id!),'Approved WAV imported.')}>Import WAV</Button></div>
     <div className="info">Recovery: {jobAction?.reason??'Checking saved job state'} · Parts {jobAction?.completed??0}/{jobAction?.total??0} · Current part {jobAction?.currentPart??'-'} · {jobAction?.status??'UNKNOWN'}{jobAction?.detail?' · '+jobAction.detail:''}</div>
     <Button disabled={!id||status==='busy'} onClick={()=>void refreshVoiceOperations().catch(fail)}>Refresh Voice status</Button>
