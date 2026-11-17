@@ -77,6 +77,23 @@ describe('P-01 through P-14 lifecycle prompt, lock, evidence and ancestry contra
     expect(()=>stageLifecycleResult(appPath,root,'script','correct',wrap(changed))).not.toThrow();
   });
 
+  it('P-02/P-03 broad or nonexistent JSON pointers cannot unlock whole Script/Native trees',async()=>{
+    const {root}=fixture();freezeTask(appPath,root,'script');
+    for(const pointer of ['/sections','/authoring','/sections/0','/sections/99/text','/authoring/missing']){
+      expect(()=>freezeLifecycleTask(appPath,root,'script','correct',
+        {editablePaths:[pointer]})).toThrow(/INVALID_EDITABLE_PATH/);
+    }
+    const valid=freezeLifecycleTask(appPath,root,'script','correct',
+      {editablePaths:['/sections/0/text']});
+    expect(valid.editablePaths).toEqual(['/sections/0/text']);
+    const native=await nativeBaseline();
+    for(const pointer of ['/manifest/shots','/shot_ledger','/sound_script','/asset_needs',
+      '/manifest/voice','/manifest/shots/99/layers/0']){
+      expect(()=>freezeLifecycleTask(appPath,native,'native','correct',
+        {editablePaths:[pointer]})).toThrow(/INVALID_EDITABLE_PATH/);
+    }
+  });
+
   it('P-04 Script Recheck requires exact confirmed correction, includes findings and can activate only after clean result',async()=>{
     const {root}=await correctedScript();
     const recheck=freezeLifecycleTask(appPath,root,'script','recheck');
