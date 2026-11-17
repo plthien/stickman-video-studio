@@ -4,50 +4,138 @@ import { useAppState } from '../../app/AppState';
 import { Badge, Button, Card, CardHeader, Field, Input, Textarea } from '../../components/ui';
 const tabs = ['Script', 'Native'] as const; type PromptTab = (typeof tabs)[number]; type SyntaxResult = 'idle' | 'valid' | 'invalid';
 const operations=['Author','Review','Correct','Recheck','Media review'] as const;type Operation=(typeof operations)[number];
-interface ExternalSession { tab: PromptTab; setTab: Dispatch<SetStateAction<PromptTab>>; json: string; setJson: Dispatch<SetStateAction<string>>; result: SyntaxResult; setResult: Dispatch<SetStateAction<SyntaxResult>> }
-const Context = createContext<ExternalSession | null>(null);
-export function ExternalSessionProvider({ children }: { children: ReactNode }) { const [tab,setTab]=useState<PromptTab>('Script'); const [json,setJson]=useState(''); const [result,setResult]=useState<SyntaxResult>('idle'); return <Context.Provider value={{tab,setTab,json,setJson,result,setResult}}>{children}</Context.Provider>; }
+type MediaKind='preview'|'film'|'voice'|'captions';
+type History=import('../../../../main/externalHistory').ExternalHistoryRecord;
+interface TabValues {
+  json:string;result:SyntaxResult;prompt:string;pending:StudioStagedImport|null;
+  nativeMediaStatus:StudioStagedImport|null;error:string;previewSeconds:number;
+  draftConsent:boolean;reviewTargets:string;editable:string;editablePaths:string;
+  findingScope:string;reviewFolder:string;transferAcknowledged:boolean;
+  frozenScopeKey:string;frozenTaskId:string;
+  history:History[];historySelectedId:string;historyLoading:boolean;
+}
+const emptyTab=():TabValues=>({json:'',result:'idle',prompt:'',pending:null,
+  nativeMediaStatus:null,error:'',previewSeconds:20,draftConsent:false,
+  reviewTargets:'',editable:'',editablePaths:'',findingScope:'',reviewFolder:'',
+  transferAcknowledged:false,frozenScopeKey:'',frozenTaskId:'',
+  history:[],historySelectedId:'',historyLoading:false});
+interface ExternalSession {
+  tab:PromptTab;setTab:Dispatch<SetStateAction<PromptTab>>;
+  tabs:Record<string,TabValues>;
+  patch:(key:string,value:Partial<TabValues>)=>void;
+}
+const Context=createContext<ExternalSession|null>(null);
+export function ExternalSessionProvider({children}:{children:ReactNode}){
+  const [tab,setTab]=useState<PromptTab>('Script');
+  const [tabValues,setTabValues]=useState<Record<string,TabValues>>({});
+  const patch=(key:string,value:Partial<TabValues>)=>setTabValues(prev=>({
+    ...prev,[key]:{...(prev[key]??emptyTab()),...value}
+  }));
+  return <Context.Provider value={{tab,setTab,tabs:tabValues,patch}}>{children}</Context.Provider>;
+}
 const useSession=()=>{const value=useContext(Context);if(!value)throw new Error('ExternalSessionProvider missing');return value;};
 export function ExternalWorkspace(){
-  const {tab,setTab,json,setJson,result,setResult}=useSession(); const {native,captureProjectSession,isCurrentProjectSession,setNativeIfSessionCurrent,showNotice}=useAppState(); const [prompt,setPrompt]=useState(''); const [pending,setPending]=useState<StudioStagedImport|null>(null);const [nativeMediaStatus,setNativeMediaStatus]=useState<StudioStagedImport|null>(null); const [error,setError]=useState('');const [previewSeconds,setPreviewSeconds]=useState(20);const [draftConsent,setDraftConsent]=useState(false);const [operation,setOperation]=useState<Operation>('Author');const [reviewTargets,setReviewTargets]=useState('');const [editable,setEditable]=useState('');const [editablePaths,setEditablePaths]=useState('');const [findingScope,setFindingScope]=useState('');const [reviewMediaKind,setReviewMediaKind]=useState<'preview'|'film'|'voice'|'captions'>('preview');const [reviewFolder,setReviewFolder]=useState('');const [transferAcknowledged,setTransferAcknowledged]=useState(false);const [frozenScopeKey,setFrozenScopeKey]=useState('');const [frozenTaskId,setFrozenTaskId]=useState(''); const stage=tab.toLowerCase();const lifecycleOperation=operation.toLowerCase().replace(' ','-') as 'review'|'correct'|'recheck'|'media-review';const requests=useRef({freeze:0,validate:0,pending:0,confirm:0,export:0,jsonFile:0});const jsonFilePicker=useRef<HTMLInputElement|null>(null);const splitList=(value:string)=>value.split(',').map(x=>x.trim()).filter(Boolean);const lifecycleScope=()=>({targetIds:splitList(reviewTargets),editableIds:splitList(editable),editablePaths:splitList(editablePaths),findingIds:findingScope.trim()?splitList(findingScope):undefined,media:operation==='Media review'?reviewMediaKind:undefined,transferAcknowledged:operation==='Media review'?transferAcknowledged:undefined});const reviews=Object.values(native?.lifecycle?.artifacts??{}).filter(item=>item.stage===stage&&['review','recheck','media-review'].includes(item.operation)).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));const lastReview=reviews[0];const reviewFindings=((lastReview?.value??{}) as {findings?:Array<{id:string;severity:string;status:string;target_ids:string[];requirement:string}>}).findings??[];
-  const projectId=native?.project.id;useEffect(()=>{setEditable('');setEditablePaths('');setFindingScope('');setJson('');setResult('idle');setPending(null);setNativeMediaStatus(null);setPrompt('');setFrozenTaskId('');setFrozenScopeKey('');setError('');setReviewFolder('');setTransferAcknowledged(false);setDraftConsent(false);},[projectId,setJson,setResult]);
-  useEffect(()=>{setJson('');setResult('idle');setPending(null);setNativeMediaStatus(null);setPrompt('');setFrozenTaskId('');setFrozenScopeKey('');setError('');setReviewFolder('');setReviewMediaKind(stage==='script'?'voice':'preview');setTransferAcknowledged(false);setDraftConsent(false);},[stage,operation,setJson,setResult]);
-  useEffect(()=>{requests.current.validate+=1;requests.current.pending+=1;requests.current.confirm+=1;requests.current.export+=1;requests.current.jsonFile+=1;},[projectId,stage,operation]);
-  // Restore the exact actionable scope from the latest confirmed review on project
-  // reopen or when the user opens Correct. Never overwrite an existing frozen task.
+  const {tab,setTab,tabs,patch}=useSession();
+  const {native,captureProjectSession,isCurrentProjectSession,setNativeIfSessionCurrent,showNotice}=useAppState();
+  const [operation,setOperation]=useState<Operation>('Author');
+  const [reviewMediaKind,setReviewMediaKind]=useState<MediaKind>('voice');
+  const stage=tab.toLowerCase();
+  const lifecycleOperation=operation.toLowerCase().replace(' ','-') as 'review'|'correct'|'recheck'|'media-review';
+  const mediaKind:MediaKind|undefined=operation==='Media review'?
+    (stage==='script'?(reviewMediaKind==='captions'?'captions':'voice'):
+      (reviewMediaKind==='film'?'film':'preview')):undefined;
+  const projectId=native?.project.id;
+  const sessionKey=[projectId??'none',stage,operation,mediaKind??'-'].join('|');
+  const activeKey=useRef(sessionKey);activeKey.current=sessionKey;
+  const local=tabs[sessionKey]??emptyTab();
+  const {json,result,prompt,pending,nativeMediaStatus,error,previewSeconds,draftConsent,
+    reviewTargets,editable,editablePaths,findingScope,reviewFolder,transferAcknowledged,
+    frozenScopeKey,frozenTaskId,history,historySelectedId,historyLoading}=local;
+  const field=<K extends keyof TabValues>(name:K)=>(value:TabValues[K])=>
+    patch(sessionKey,{[name]:value} as Pick<TabValues,K>);
+  const setJson=field('json'),setResult=field('result'),setPrompt=field('prompt');
+  const setPending=field('pending'),setNativeMediaStatus=field('nativeMediaStatus');
+  const setError=field('error'),setPreviewSeconds=field('previewSeconds');
+  const setDraftConsent=field('draftConsent'),setReviewTargets=field('reviewTargets');
+  const setEditable=field('editable'),setEditablePaths=field('editablePaths');
+  const setFindingScope=field('findingScope'),setReviewFolder=field('reviewFolder');
+  const setTransferAcknowledged=field('transferAcknowledged'),setFrozenScopeKey=field('frozenScopeKey');
+  const setFrozenTaskId=field('frozenTaskId');
+  const selectedHistory=history.find(item=>item.id===historySelectedId)??history[0];
+  const historyStatus=selectedHistory?.status??(frozenTaskId?'FROZEN':'EMPTY');
+  const visiblePrompt=frozenTaskId?prompt:selectedHistory?.prompt??prompt;
+  const canImport=Boolean(frozenTaskId&&!history.some(item=>item.id===frozenTaskId&&item.status!=='FROZEN'));
+  const requests=useRef({freeze:0,validate:0,pending:0,confirm:0,export:0,jsonFile:0,history:0});
+  const jsonFilePicker=useRef<HTMLInputElement|null>(null);
+  const splitList=(value:string)=>value.split(',').map(x=>x.trim()).filter(Boolean);
+  const lifecycleScope=()=>({targetIds:splitList(reviewTargets),editableIds:splitList(editable),
+    editablePaths:splitList(editablePaths),findingIds:findingScope.trim()?splitList(findingScope):undefined,
+    media:mediaKind,transferAcknowledged:operation==='Media review'?transferAcknowledged:undefined});
+  const reviewFindings=selectedHistory?.findings??[];
+  const lastReview=selectedHistory?.operation==='review'||selectedHistory?.operation==='recheck'||
+    selectedHistory?.operation==='media-review'?selectedHistory:null;
+  // Requests belong to a captured tab and project epoch; never publish late
+  // results into the newly selected tab. Draft state is retained in its own key.
+  useEffect(()=>{
+    for(const name of ['freeze','validate','pending','confirm','export','jsonFile','history'] as const)
+      requests.current[name]+=1;
+  },[projectId,stage,operation,mediaKind]);
   const suggested=native?.suggestedCorrectScope?.[stage as 'script'|'native'];
   useEffect(()=>{
-    if(operation!=='Correct'||frozenTaskId)return;
-    setEditable((suggested?.editableIds??[]).join(', '));
-    setFindingScope((suggested?.findingIds??[]).join(', '));
-    setEditablePaths('');
-  },[projectId,stage,operation,suggested?.reviewTaskId,frozenTaskId]);
+    if(operation!=='Correct'||tabs[sessionKey]||!suggested?.reviewTaskId)return;
+    patch(sessionKey,{editable:suggested.editableIds.join(', '),
+      findingScope:suggested.findingIds.join(', '),editablePaths:''});
+  },[sessionKey,suggested?.reviewTaskId]);
   const scopeKey=()=>JSON.stringify(lifecycleScope());
   const scopeDirty=Boolean(frozenTaskId&&operation!=='Author'&&scopeKey()!==frozenScopeKey);
-  // Reading a saved reservation is side-effect free. Neither typing nor rerenders
-  // can replace a task that was already exported to External ChatGPT.
-  useEffect(()=>{const session=captureProjectSession(),expectedStage=stage,expectedOperation=operation;
-    const sequence=++requests.current.freeze;let active=true;
-    setPrompt('');setFrozenTaskId('');setFrozenScopeKey('');
-    if(native&&session&&window.studio?.readFrozen){
-      window.studio.readFrozen(session.projectId,expectedStage,operation==='Author'?'author':lifecycleOperation)
-        .then(task=>{if(!active||sequence!==requests.current.freeze||!isCurrentProjectSession(session))return;
-          if(!task){setPrompt('');return;}
-          setPrompt(task.prompt);setFrozenTaskId(task.id);
-          if(expectedOperation!=='Author'){
+  // Restore the current actionable task and historical prompt/result separately.
+  // Historical data cannot make an imported or stale task actionable again.
+  useEffect(()=>{
+    const session=captureProjectSession(),expectedKey=sessionKey;
+    const sequence=++requests.current.history;let active=true;
+    if(!session||!window.studio)return;
+    const op=operation==='Author'?'author':lifecycleOperation;
+    const isActive=()=>active&&activeKey.current===expectedKey&&
+      sequence===requests.current.history&&isCurrentProjectSession(session);
+    patch(expectedKey,{historyLoading:true});
+    if(window.studio.readHistory)
+      window.studio.readHistory(session.projectId,stage,op,mediaKind)
+        .then(rows=>{if(!isActive())return;
+          patch(expectedKey,{history:rows,historyLoading:false,
+            historySelectedId:rows.some(item=>item.id===tabs[expectedKey]?.historySelectedId)?
+              tabs[expectedKey].historySelectedId:''});
+        }).catch(reason=>{if(isActive())patch(expectedKey,{historyLoading:false,
+          error:'History read: '+String(reason)});});
+    else patch(expectedKey,{historyLoading:false});
+    if(window.studio.readFrozen)
+      window.studio.readFrozen(session.projectId,stage,op)
+        .then(task=>{if(!isActive()||!task)return;
+          const next:Partial<TabValues>={prompt:task.prompt,
+            frozenTaskId:task.id};
+          if(op!=='author'){
             const fields={targetIds:task.targetIds??[],editableIds:task.editableIds??[],
               editablePaths:task.editablePaths??[],findingIds:task.findingIds?.length?task.findingIds:undefined,
-              media:expectedOperation==='Media review'?(task.mediaKind??reviewMediaKind):undefined,
-              transferAcknowledged:expectedOperation==='Media review'?Boolean(task.mediaTransferAttested):undefined};
-            setReviewTargets(fields.targetIds.join(', '));setEditable(fields.editableIds.join(', '));
-            setEditablePaths(fields.editablePaths.join(', '));setFindingScope((fields.findingIds??[]).join(', '));
-            if(task.mediaKind)setReviewMediaKind(task.mediaKind);setTransferAcknowledged(Boolean(task.mediaTransferAttested));
-            setFrozenScopeKey(JSON.stringify(fields));
+              media:op==='media-review'?task.mediaKind:undefined,
+              transferAcknowledged:op==='media-review'?Boolean(task.mediaTransferAttested):undefined};
+            Object.assign(next,{reviewTargets:fields.targetIds.join(', '),
+              editable:fields.editableIds.join(', '),editablePaths:fields.editablePaths.join(', '),
+              findingScope:(fields.findingIds??[]).join(', '),frozenScopeKey:JSON.stringify(fields),
+              transferAcknowledged:Boolean(task.mediaTransferAttested)});
           }
-        }).catch(reason=>{if(active&&sequence===requests.current.freeze&&isCurrentProjectSession(session))setError(String(reason));});
-    }
-    return()=>{active=false};
-  },[projectId,stage,operation]);
+          patch(expectedKey,next);
+        }).catch(reason=>{if(isActive())patch(expectedKey,{error:String(reason)});});
+    return()=>{active=false;};
+  },[projectId,stage,operation,mediaKind]);
+  const reloadHistory=(project:string,expectedKey=sessionKey)=>{
+    if(!window.studio?.readHistory)return;
+    const op=operation==='Author'?'author':lifecycleOperation;
+    void window.studio.readHistory(project,stage,op,mediaKind).then(rows=>{
+      if(activeKey.current===expectedKey&&projectId===project)
+        patch(expectedKey,{history:rows,historyLoading:false});
+    }).catch(reason=>{
+      if(activeKey.current===expectedKey)patch(expectedKey,{error:'History read: '+String(reason)});
+    });
+  };
   const buildTask=async(forceRebuild=false)=>{
     if(!native||!window.studio)return;
     const session=captureProjectSession(),expectedStage=stage,expectedOperation=operation,sequence=++requests.current.freeze;
