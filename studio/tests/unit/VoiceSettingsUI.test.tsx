@@ -145,9 +145,14 @@ describe('Voice actions use main-process eligibility, not permanently enabled bu
     });
     render(<AppStateProvider><Seed state={state}><VoiceWorkspace/></Seed></AppStateProvider>);
     const player=await screen.findByLabelText('Accepted narration audio');
+    await waitFor(()=>expect(url).toHaveBeenCalledTimes(1)); // Initial verified playback URL
     fireEvent.error(player);
+    await waitFor(()=>expect(url).toHaveBeenCalledTimes(2)); // Read-only integrity recheck
     fireEvent.click(await screen.findByRole('button',{name:'Retry playback (read-only)'}));
-    await waitFor(()=>expect(url).toHaveBeenCalledTimes(2));
+    await waitFor(()=>expect(url).toHaveBeenCalledTimes(3)); // Explicit retry fetches URL
+    expect(url).toHaveBeenNthCalledWith(1,'voice-player');
+    expect(url).toHaveBeenNthCalledWith(2,'voice-player');
+    expect(url).toHaveBeenNthCalledWith(3,'voice-player');
     expect(run).not.toHaveBeenCalled();
   });
 });
