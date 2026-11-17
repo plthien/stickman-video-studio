@@ -81,3 +81,107 @@ describe('REG-03 final project-session isolation',()=>{
   it('REG03-F11 A1 response cannot enter reopened A2 session',async()=>{const gate=deferred<{state:NativeStudioState;stdout:string}>();bridge({nativeRun:()=>gate.promise});render(<AppStateProvider><Harness><ApprovalPanel onDetails={()=>{}}/></Harness></AppStateProvider>);fireEvent.change(await screen.findByLabelText('Approval note'),{target:{value:'A1'}});fireEvent.click(screen.getByRole('checkbox'));fireEvent.click(screen.getByRole('button',{name:'Approve reviewed preview'}));fireEvent.click(screen.getByRole('button',{name:'Switch B'}));fireEvent.click(screen.getByRole('button',{name:'Reopen A'}));gate.resolve({state:{...A,approval:{note:'A1',previewSha256:preview.sha256}},stdout:''});await flush();expect(screen.getByLabelText('active-project')).toHaveTextContent('A');expect(screen.queryByText('VERIFIED')).not.toBeInTheDocument();expect(screen.queryByText(/approval recorded/)).not.toBeInTheDocument()});
   it('REG03-F12 current-session approval updates state and success notice',async()=>{const approved={...A,approval:{note:'same session',previewSha256:preview.sha256}};bridge({nativeRun:async()=>({state:approved,stdout:''})});render(<AppStateProvider><Harness><ApprovalPanel onDetails={()=>{}}/></Harness></AppStateProvider>);fireEvent.change(await screen.findByLabelText('Approval note'),{target:{value:'same session'}});fireEvent.click(screen.getByRole('checkbox'));fireEvent.click(screen.getByRole('button',{name:'Approve reviewed preview'}));expect(await screen.findByText('VERIFIED')).toBeInTheDocument();expect(screen.getByText('Native preview approval recorded against current evidence.')).toBeInTheDocument();expect(screen.getByLabelText('active-project')).toHaveTextContent('A')});
 });
+
+
+describe('REG-TAB navigation persistence, read-only history and async isolation',()=>{
+  const record=(id:string,operation:string,status:'FROZEN'|'IMPORTED'|'STALE'='IMPORTED',mediaKind?:string)=>({
+    id,revision:1,stage:'script',operation,status,mediaKind,prompt:'Saved prompt '+id,
+    confirmedJson:status==='IMPORTED'?'{"confirmed":"'+id+'"}':null,
+    findings:operation==='review'||operation==='recheck'?[{
+      id:'F-'+id,status:operation==='recheck'?'resolved':'open',
+      severity:'major',target_ids:['opening'],requirement:'Exact causal evidence'
+    }]:[],errors:[],integrity:'OK'
+  });
+  it('REG-TAB-01/05 preserves Review draft through every operation and isolates both stages/projects',async()=>{
+    bridge({readFrozen:async()=>null,readHistory:async()=>[]});
+    render(<AppStateProvider><Harness><ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider></Harness></AppStateProvider>);
+    fireEvent.click(await screen.findByRole('button',{name:'Review'}));
+    fireEvent.change(screen.getByLabelText('Import JSON'),{target:{value:'{"review":"A"}'}});
+    for(const operation of ['Correct','Recheck','Media review','Author']){
+      fireEvent.click(screen.getByRole('button',{name:operation}));
+      expect(screen.getByLabelText('Import JSON')).toHaveValue('');
+    }
+    fireEvent.click(screen.getByRole('button',{name:'Review'}));
+    expect(screen.getByLabelText('Import JSON')).toHaveValue('{"review":"A"}');
+    fireEvent.click(screen.getByRole('button',{name:'Native'}));
+    expect(screen.getByLabelText('Import JSON')).toHaveValue('');
+    fireEvent.click(screen.getByRole('button',{name:'Script'}));
+    expect(screen.getByLabelText('Import JSON')).toHaveValue('{"review":"A"}');
+    fireEvent.click(screen.getByRole('button',{name:'Switch B'}));
+    expect(screen.getByLabelText('Import JSON')).toHaveValue('');
+    fireEvent.click(screen.getByRole('button',{name:'Reopen A'}));
+    expect(screen.getByLabelText('Import JSON')).toHaveValue('{"review":"A"}');
+  });
+  it('REG-TAB-02/03/04/07 displays confirmed and stale history without issuing any freeze, including after remount',async()=>{
+    const readHistory=vi.fn(async(id:string,stage:string,op:string)=>id==='A'&&stage==='script'?
+      [record('A-'+op,op,op==='correct'?'STALE':'IMPORTED')]:[]);
+    const freezeTask=vi.fn(),freezeLifecycle=vi.fn();
+    bridge({readFrozen:async()=>null,readHistory,freezeTask,freezeLifecycle});
+    const view=render(<AppStateProvider><Harness><ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider></Harness></AppStateProvider>);
+    for(const operation of ['Author','Review','Correct','Recheck']){
+      if(operation!=='Author')fireEvent.click(screen.getByRole('button',{name:operation}));
+      const op=operation.toLowerCase();
+      await waitFor(()=>expect(screen.getByTestId('external-task-prompt')).toHaveTextContent('Saved prompt A-'+op));
+      expect(screen.getByTestId('external-history-status')).toHaveTextContent(op==='correct'?'STALE':'IMPORTED');
+      expect(screen.getByRole('button',{name:'Validate import'})).toBeDisabled();
+      if(op!=='correct')expect(screen.getByLabelText('Confirmed JSON history')).toHaveTextContent(op);
+      if(op==='recheck')expect(screen.getByText(/F-A-recheck/)).toBeInTheDocument();
+    }
+    expect(freezeTask).not.toHaveBeenCalled();
+    expect(freezeLifecycle).not.toHaveBeenCalled();
+    view.unmount();
+    render(<AppStateProvider><Harness><ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider></Harness></AppStateProvider>);
+    fireEvent.click(await screen.findByRole('button',{name:'Recheck'}));
+    await waitFor(()=>expect(screen.getByTestId('external-task-prompt')).toHaveTextContent('Saved prompt A-recheck'));
+    expect(freezeTask).not.toHaveBeenCalled();
+    expect(freezeLifecycle).not.toHaveBeenCalled();
+  });
+  it('REG-TAB-06 does not publish an obsolete history response after switching tabs or project',async()=>{
+    const gate=deferred<ReturnType<typeof record>[]>();
+    const readHistory=vi.fn((id:string,_stage:string,op:string)=>id==='A'&&op==='review'?
+      gate.promise:Promise.resolve([]));
+    bridge({readFrozen:async()=>null,readHistory});
+    render(<AppStateProvider><Harness><ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider></Harness></AppStateProvider>);
+    fireEvent.click(await screen.findByRole('button',{name:'Review'}));
+    await waitFor(()=>expect(readHistory).toHaveBeenCalledWith('A','script','review',undefined));
+    fireEvent.click(screen.getByRole('button',{name:'Correct'}));
+    fireEvent.click(screen.getByRole('button',{name:'Switch B'}));
+    gate.resolve([record('A-review','review')]);
+    await flush();
+    expect(screen.getByLabelText('active-project')).toHaveTextContent('B');
+    expect(screen.queryByText('Saved prompt A-review')).not.toBeInTheDocument();
+  });
+  it('REG-TAB-08 never reconstructs corrupt/missing history from unrelated state',async()=>{
+    bridge({readFrozen:async()=>null,
+      readHistory:async()=>[{...record('damaged','review'),prompt:null,confirmedJson:null,
+        errors:['PROMPT_HASH_MISMATCH','RESPONSE_MISSING'],integrity:'ERROR'}]});
+    render(<AppStateProvider><Harness><ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider></Harness></AppStateProvider>);
+    fireEvent.click(await screen.findByRole('button',{name:'Review'}));
+    await waitFor(()=>expect(screen.getByText(/PROMPT_HASH_MISMATCH/)).toBeInTheDocument());
+    expect(screen.getByTestId('external-task-prompt')).toHaveTextContent('');
+    expect(screen.queryByLabelText('Confirmed JSON history')).not.toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'Validate import'})).toBeDisabled();
+  });
+  it('REG-TAB-09 isolates Voice/Captions and Preview/Film drafts with transfer acknowledgements',async()=>{
+    bridge({readFrozen:async()=>null,readHistory:async()=>[]});
+    render(<AppStateProvider><Harness><ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider></Harness></AppStateProvider>);
+    fireEvent.click(await screen.findByRole('button',{name:'Media review'}));
+    fireEvent.change(screen.getByLabelText('Import JSON'),{target:{value:'{"voice":"draft"}'}});
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.change(screen.getByLabelText('Review media scope'),{target:{value:'captions'}});
+    expect(screen.getByLabelText('Import JSON')).toHaveValue('');
+    expect(screen.getByRole('checkbox')).not.toBeChecked();
+    fireEvent.change(screen.getByLabelText('Import JSON'),{target:{value:'{"captions":"draft"}'}});
+    fireEvent.change(screen.getByLabelText('Review media scope'),{target:{value:'voice'}});
+    expect(screen.getByLabelText('Import JSON')).toHaveValue('{"voice":"draft"}');
+    expect(screen.getByRole('checkbox')).toBeChecked();
+    fireEvent.click(screen.getByRole('button',{name:'Native'}));
+    expect(screen.getByLabelText('Review media scope')).toHaveValue('preview');
+    fireEvent.change(screen.getByLabelText('Import JSON'),{target:{value:'{"preview":"draft"}'}});
+    fireEvent.change(screen.getByLabelText('Review media scope'),{target:{value:'film'}});
+    expect(screen.getByLabelText('Import JSON')).toHaveValue('');
+    fireEvent.click(screen.getByRole('button',{name:'Script'}));
+    expect(screen.getByLabelText('Review media scope')).toHaveValue('voice');
+    expect(screen.getByLabelText('Import JSON')).toHaveValue('{"voice":"draft"}');
+  });
+});
