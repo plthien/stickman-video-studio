@@ -242,8 +242,12 @@ describe('R2 focused source-exact Script Author handoff',()=>{
     expect(sha(fs.readFileSync(path.join(root,preserved.voice!.path)))).toBe(acceptedWavSha);
     const nativeAfter=freezeTask(appPath,root,'native');
     expect(nativeAfter.id).toBe(nativeBefore.id);
-    expect(nativeAfter.prompt).toBe(nativeBefore.prompt);
+    // Native source files can carry CRLF on Windows. Initial freeze returns the
+    // generated string; subsequent freeze reads the unchanged file via readUtf8,
+    // which normalizes CRLF to LF. Preserve semantics and exact on-disk bytes.
+    expect(nativeAfter.prompt.replace(/\r\n/g,'\n')).toBe(nativeBefore.prompt.replace(/\r\n/g,'\n'));
     expect(nativeAfter.promptSha256).toBe(nativeSha);
+    expect(sha(fs.readFileSync(path.join(root,nativeAfter.promptPath)))).toBe(nativeSha);
     const scriptOriginal=sourceFingerprint(appPath,root,'script');
     const state=readState(root);
     state.brief.topic='Another independently authored project brief';
