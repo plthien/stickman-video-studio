@@ -449,7 +449,7 @@ export function scriptCorrectionRechecked(state:StudioState):boolean {
 export function activateScriptCandidate(root:string,state:StudioState,source:'AUTHOR_IMPORT'|'RECHECK'):boolean {
   const candidate=state.scriptCandidate;
   if(!candidate||sha(candidate.text)!==candidate.sha256||
-    candidate.sections.map(row=>row.text).join('\\n\\n')!==candidate.text)
+    candidate.sections.map(row=>row.text).join('\n\n')!==candidate.text)
     throw new Error('No current verified Script candidate is available.');
   if(source==='AUTHOR_IMPORT'&&state.tasks?.script?.id!==candidate.taskId)
     throw new Error('STALE: Script Author task no longer owns this candidate.');
