@@ -669,7 +669,7 @@ function validateReview(payload:Record<string,unknown>,task:NonNullable<StudioSt
     if(operation==='media-review'&&(task.mediaDuration===undefined||value.end>task.mediaDuration+.01))
       throw new Error('Review coverage time range missing verified duration or outside actual frozen media.');
   }
-  if(operation==='media-review'&&!task.mediaTransferAttested&&coverage.modalities.some(modality=>['picture','motion','sound'].includes(String(modality))))
+  if(operation==='media-review'&&!task.mediaTransferAttested&&coverage.modalities.some(modality=>['picture','motion','sound','captions'].includes(String(modality))))
     throw new Error('NOT_VERIFIED: locally packaged media does not establish transferred or inspected audiovisual modalities.');
 
   const findings=payload.findings as unknown[],ids=new Set<string>();
