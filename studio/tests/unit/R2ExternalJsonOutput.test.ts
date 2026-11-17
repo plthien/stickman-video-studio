@@ -29,7 +29,7 @@ describe('R2 frozen task JSON attachment delivery',()=>{
     expect(()=>externalOutputFilename('native','author',1,'not-a-uuid')).toThrow(/UUID-derived/);
   });
 
-  it('produces ten frozen tasks with required downloadable JSON filenames, and maintains stable task identity',()=>{
+  it('produces eight active frozen tasks with required downloadable JSON filenames and stable task identity',()=>{
     const {root}=fixture({style:'B1'});
     const state=readState(root);
     state.external.native={revision:1,artifact:{shotLedger:[],soundScript:[],assetNeeds:[]},importedAt:new Date().toISOString()};
@@ -47,11 +47,11 @@ describe('R2 frozen task JSON attachment delivery',()=>{
 
     const all:Array<{stage:Stage;operation:ExternalOperation;media?:'voice'|'preview'}>=[];
     for(const stage of ['script','native'] as Stage[]){
-      for(const operation of ['author','review','correct','recheck','media-review'] as ExternalOperation[]){
+      for(const operation of ['author','review','correct','recheck'] as ExternalOperation[]){
         all.push({stage,operation,...(operation==='media-review'?{media:stage==='script'?'voice' as const:'preview' as const}:{})});
       }
     }
-    expect(all).toHaveLength(10);
+    expect(all).toHaveLength(8);
     const seen=new Set<string>();
     const frozenFilenameEvidence:Array<{stage:Stage;operation:ExternalOperation;shortId:string;filename:string}>=[];
     for(const row of all){
@@ -75,7 +75,6 @@ describe('R2 frozen task JSON attachment delivery',()=>{
       expect(task.prompt).toContain('"task_id": "'+task.id+'"');
       if(row.operation==='correct')expect(task.prompt).toContain(row.stage==='script'?'SCRIPT CORRECT':'NATIVE CORRECT');
       if(row.operation==='recheck')expect(task.prompt).toContain(row.stage==='script'?'SCRIPT RECHECK':'NATIVE RECHECK');
-      if(row.operation==='media-review')expect(task.prompt).toContain(row.stage==='script'?'VOICE MEDIA REVIEW':'PREVIEW MEDIA REVIEW');
       if(row.operation==='review'&&row.stage==='native')expect(task.prompt).toContain('NATIVE REVIEW');
       if(row.operation!=='author'&&!(row.operation==='review'&&row.stage==='script')){
         const contract=task.prompt.split('## G — RESPONSE CONTRACT — NO PRESET OUTCOME')[1]
@@ -140,8 +139,8 @@ describe('R2 frozen task JSON attachment delivery',()=>{
         confirmLifecycleResult(root,staged.token);
       }
     }
-    expect(seen.size).toBe(10);
-    console.info('R2_TEN_FROZEN_JSON_OUTPUTS',JSON.stringify(frozenFilenameEvidence));
+    expect(seen.size).toBe(8);
+    console.info('R2_EIGHT_FROZEN_JSON_OUTPUTS',JSON.stringify(frozenFilenameEvidence));
 
     const before=freezeLifecycleTask(appPath,root,'script','review');
     const rebuilt=freezeLifecycleTask(appPath,root,'script','review',{},true);
