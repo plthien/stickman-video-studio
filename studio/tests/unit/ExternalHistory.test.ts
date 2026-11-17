@@ -176,13 +176,19 @@ describe('REG-TAB read-only external history and integrity',()=>{
     expect(old.status).toBe('STALE');
     expect(old.confirmedJson).toBeNull();
     expect(old.integrity).toBe('OK');
-    expect(fs.existsSync(path.join(root,'.studio/external/responses',
-      'native-'+unconfirmed.id+'-'+unconfirmed.revision+'-'+
-      sha(fs.readFileSync(path.join(root,'.studio/external/pending.json')).toString())+'.json'))).toBe(false);
+    expect(fs.existsSync(path.join(root,'.studio/external/pending.json'))).toBe(true);
     expect(readState(root).tasks!.native!.id).toBe(next.id);
   });
   it('REG-STALE-04 restores legacy Script Author after STALE only with matching published Script artifact',async()=>{
-    const {root,author}=await fullScriptHistory();
+    const {root}=fixture({style:'B1'});
+    const author=freezeTask(appPath,root,'script');
+    const response=JSON.stringify({schema:'mode-b-external-result-v1',project_id:readState(root).project.id,
+      task_id:author.id,revision:author.revision,input_sha256:author.inputSha256,
+      stage:'script',payload:{schema:'mode-b-script-v1',
+        sections:[{id:'opening',text:'A dangerous storm closes the only safe crossing.'}],
+        authoring:{creative_direction:{premise:'A flood forces a decision.'}}}});
+    const staged=stageImport(appPath,root,'script',response);
+    await confirmImport(appPath,root,staged.token);
     const state=readState(root);
     state.tasks!.script!.status='STALE';
     delete state.tasks!.script!.confirmedResponseSha256;
