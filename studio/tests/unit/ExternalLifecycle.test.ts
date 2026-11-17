@@ -611,5 +611,16 @@ describe('External creative lifecycle',()=>{
     expect(next.id).not.toBe(review.id);
     expect(next.revision).toBe(review.revision+1);
   });
+  it('REG-F03-01 completed Author permits Build of a new task without treating it as an implicit Rebuild',()=>{
+    const {root}=mediaFixture({style:'B1'});
+    const old=freezeTask(appPath,root,'script');
+    // Simulate a previously confirmed Author with an unchanged source fingerprint.
+    const state=readState(root);state.tasks!.script!.status='IMPORTED';writeState(root,state);
+    const next=freezeTask(appPath,root,'script',false);
+    expect(next.id).not.toBe(old.id);
+    expect(next.revision).toBe(old.revision+1);
+    expect(readState(root).externalTaskArchive?.find(item=>(item.task as {id:string}).id===old.id)?.task.status).toBe('IMPORTED');
+    expect(readState(root).tasks!.script!.status).toBe('FROZEN');
+  });
   it('REG-F04-02 rejects new Script Media Review before evaluating media evidence',()=>{const root=fixture();expect(()=>freezeLifecycleTask(appPath,root,'script','media-review',{media:'voice'})).toThrow(/MEDIA_REVIEW_DISABLED/)})
 });
