@@ -178,6 +178,12 @@ and a confirmed original Review that existed before the correction freeze.
 Foreign-stage records, old artifact revisions, later unrelated reviews and
 Media Review findings never create correction lineage. The entire unresolved
 finding inventory is required; no arbitrary most-recent-three-history rule.
+Each newly frozen Correct task pins the source confirmed Review/Recheck task ID
+as internal lifecycle metadata, without changing any external JSON envelope or
+schema version. A failed Recheck of the current candidate can become the
+source of the next scoped Correct; the next Recheck then follows that exact
+new correction. Older tasks without this internal pin may only be recovered
+when the persisted eligible lineage is unambiguous.
 If the correction/review lineage is missing, Recheck is blocked rather than
 inventing prior evidence.
 
