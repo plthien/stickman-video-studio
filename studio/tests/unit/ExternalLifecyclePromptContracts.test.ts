@@ -2,13 +2,28 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {afterEach,describe,expect,it} from 'vitest';
-import {freezeTask,confirmImport} from '../../src/main/externalTasks';
+import {freezeTask,confirmImport,externalOutputFilename} from '../../src/main/externalTasks';
 import {freezeLifecycleTask,stageLifecycleResult,confirmLifecycleResult,exportReviewPack} from '../../src/main/externalLifecycle';
 import {readState,sha,writeState} from '../../src/main/services';
 import {appPath,cleanup,fixture,nativePayload,stageNative,validator} from './SixIssueFixtures';
 
 afterEach(cleanup);
 type Lifecycle=ReturnType<typeof freezeLifecycleTask>;
+function snapshotPrompt(task:Lifecycle){
+  const directory=process.env.R2_PROMPT_SNAPSHOT_DIR;
+  if(!directory)return;
+  fs.mkdirSync(directory,{recursive:true});
+  const filename=externalOutputFilename(task.stage,task.operation,task.revision,task.id,task.mediaKind)
+    .replace(/\.json$/,'.prompt.md');
+  const output=path.join(directory,filename);
+  fs.writeFileSync(output,task.prompt,'utf8');
+  expect(sha(fs.readFileSync(output))).toBe(sha(task.prompt));
+  console.info('R2_MEDIA_PROMPT_EVIDENCE',JSON.stringify({
+    stage:task.stage,operation:task.operation,kind:task.mediaKind,
+    file:output,sha256:sha(task.prompt),bytes:Buffer.byteLength(task.prompt,'utf8'),
+    lines:task.prompt.split('\n').length
+  }));
+}
 function result(root:string,task:Lifecycle,operation:'review'|'correct'|'recheck'|'media-review',payload:unknown){
   const state=readState(root);
   return JSON.stringify({schema:'mode-b-lifecycle-result-v1',project_id:state.project.id,
@@ -177,6 +192,7 @@ describe('P-01 through P-14 lifecycle prompt, lock, evidence and ancestry contra
     exportReviewPack(root,'captions');
     const captions=freezeLifecycleTask(appPath,root,'script','media-review',{media:'captions'});
     expect(captions.prompt).toContain('CAPTIONS MEDIA REVIEW');
+    snapshotPrompt(captions);
     const captionClaim={...voiceClaim,artifact_sha256:captions.artifactSha256,
       coverage:{target_ids:captions.targetIds,modalities:['captions'],ranges:[],media_sha256s:[]}};
     expect(()=>stageLifecycleResult(appPath,root,'script','media-review',
@@ -216,6 +232,7 @@ describe('P-01 through P-14 lifecycle prompt, lock, evidence and ancestry contra
     const film=freezeLifecycleTask(appPath,root,'native','media-review',{media:'film'});
     expect(film.targetIds).toEqual(['shot-1','shot-2']);
     expect(film.prompt).toContain('FILM MEDIA REVIEW');
+    snapshotPrompt(film);
     expect(film.prompt).not.toContain('SYNTHETIC_NOT_PLAYABLE');
     const unsupported={schema:'mode-b-review-v1',artifact_sha256:film.artifactSha256,
       status:'REVIEWED_WITH_FINDINGS',
