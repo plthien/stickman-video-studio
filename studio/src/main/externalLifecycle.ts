@@ -82,7 +82,9 @@ function correctionLineage(state:StudioState,stage:Stage,current:Artifact):Linea
     throw new Error('RECHECK_LINEAGE_REQUIRED: correction finding identity is invalid.');
   return {correctTaskId:correct.id,reviewTaskId:source.taskId,findingIds:ids,
     prior:[{taskId:source.taskId,operation:'review',value:source.value},
-      {taskId:correct.id,operation:'correct',value:record.value}]};
+      {taskId:correct.id,operation:'correct',
+        value:{schema:payload.schema,artifact_sha256:payload.artifact_sha256,
+          finding_ids:payload.finding_ids}}]};
 }
 /** Restrict optional JSON-pointer edits to existing, specific data. */
 function checkEditablePaths(stage:Stage,artifact:unknown,paths:string[]){
@@ -558,43 +560,15 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   if(prior)prior.status='STALE';
   const id=randomUUID(),revision=(prior?.revision??0)+1;
   const contract=operation==='correct'?
-    {schema:'mode-b-correction-v1',artifact_sha256:artifact.sha256,finding_ids:findingIds,editable_ids:editableIds,editable_paths:editablePaths,
-      artifact:stage==='script'?{schema:'mode-b-script-v1',sections:(artifact.value as {sections:unknown[]}).sections,authoring:(artifact.value as {authoring:unknown}).authoring}:
-      artifact.value}:
-    {schema:'mode-b-review-v1',artifact_sha256:artifact.sha256,
-      ...(stage==='script'&&operation==='review'?{}:{
-        status:'INSUFFICIENT_EVIDENCE',
-        coverage:{target_ids:targetIds,modalities:[],ranges:[],media_sha256s:mediaTransferAttested?mediaSha256s:[]},findings:[]
-      })};
+    {schema:'mode-b-correction-v1',artifact_sha256:artifact.sha256,finding_ids:findingIds,
+      editable_ids:editableIds,editable_paths:editablePaths}:
+    {schema:'mode-b-review-v1',artifact_sha256:artifact.sha256};
   const envelope={schema:'mode-b-lifecycle-result-v1',project_id:state.project.id,task_id:id,revision,input_sha256:inputSha256,stage,operation,payload:contract};
-  const nativeOrScriptRules=authority.sources.map(source=>
-    'BEGIN SOURCE '+source.path+' | full SHA256 '+source.sha256+' | extracted SHA256 '+source.extractionSha256+
-    ' | revision '+source.extractionRevision+'\n'+source.text+'\nEND SOURCE '+source.path).join('\n\n');
   const fileDelivery=externalJsonFileDelivery(stage,operation,revision,id,scope.media);
   const prompt=stage==='script'&&operation==='review'?
-    scriptReviewPrompt(state,artifact,originalTask,authority,relevantPrior,targetIds,envelope,fileDelivery):[
-    '# MODE B EXTERNAL '+operation.toUpperCase(),
-    'Manual ChatGPT handoff: return a single strict JSON object, no Markdown. Independent review is not owner approval.',
-    'Original frozen author task is authoritative. Do not report observing files, frames, audio, motion or timestamps unless they were actually transferred into this ChatGPT conversation.',
-    'A local path/hash alone proves no inspection. Correct only explicitly authorized IDs or field paths. Return the COMPLETE artifact.',
-    'Media transfer attestation is an owner declaration, not automated proof ChatGPT watched or listened. Cite exact media SHA and real time/shot IDs for audiovisual findings; if not genuinely provided, mark INSUFFICIENT_EVIDENCE.',
-    'ORIGINAL FROZEN AUTHOR TASK | SHA256 '+sha(originalTask),originalTask,
-    'STAGE-SCOPED INSTALLED NORMATIVE AUTHORITY',nativeOrScriptRules,
-    'CREATIVE DECISIONS / BRIEF',JSON.stringify({brief:state.brief,approvedScript:state.approvedScript??null,currentCandidate:state.scriptCandidate??null},null,2),
-    'IMMUTABLE TARGET ARTIFACT',JSON.stringify({id:artifact.id,sha256:artifact.sha256,value:artifact.value},null,2),
-    'REVIEW COVERAGE INVENTORY',JSON.stringify(targetIds),
-    'PRIOR FINDINGS AND UNCERTAINTY',JSON.stringify(relevantPrior,null,2),
-    'EDITABLE SCOPE AND GLOBAL LOCKS',JSON.stringify({editableIds,editablePaths,locked:'all other section/shot IDs, fields and auxiliary ledgers',findingIds:findingIds},null,2),
-    'ACTUAL EVIDENCE TRANSFER STATUS',JSON.stringify(evidencePack,null,2),
-    ...(stage==='script'&&operation==='recheck'?[
-      'SCRIPT RECHECK — TEXT EVIDENCE AND ACTIVATION GATE',
-      'Evaluate the CURRENT corrected Script against every requested previous finding ID '+JSON.stringify(findingIds)+'. Include every requested finding ID in findings with its supported resolved, open or uncertain status. Cross-check non-adjacent narration and creative direction; do not silently revise any section.',
-      'The supplied Script text is sufficient to assess textual causality, coherence, style fit and continuity. Missing WAV/MP4 does not automatically mean INSUFFICIENT_EVIDENCE. Choose REVIEWED_NO_FINDINGS only if all requested findings are demonstrably resolved and full requested textual coverage is complete; this clean current-candidate Recheck is the existing Script activation gate. Otherwise report supported unresolved findings/status honestly. Never assert verified voice duration, audio mixing or encoded-frame observations without real media evidence.',
-      'The JSON response below is a shape example, not a default status. Return the original mode-b-review-v1 schema and exact frozen identity; do not request owner approval.'
-    ]:[]),
-    'JSON RESPONSE CONTRACT | replace the example status/findings with supported results only',JSON.stringify(envelope,null,2),
-    fileDelivery
-  ].join('\n\n')+'\n';
+    scriptReviewPrompt(state,artifact,originalTask,authority,relevantPrior,targetIds,envelope,fileDelivery):
+    dedicatedLifecyclePrompt(state,stage,operation,artifact,originalTask,authority,relevantPrior,
+      targetIds,findingIds,editableIds,editablePaths,evidencePack,scope.media,lineage,envelope,fileDelivery);
   const relative='.studio/external/lifecycle/tasks/'+stage+'-'+operation+'-'+revision+'-'+id+'.md',target=resolveProjectFile(root,relative);
   fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,prompt,{encoding:'utf8',flag:'wx'});
   state.lifecycle??={tasks:{},artifacts:{}};
