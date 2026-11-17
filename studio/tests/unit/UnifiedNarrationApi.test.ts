@@ -4,10 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {afterEach,describe,expect,it} from 'vitest';
-import {narrationParts,joinNarrationWavs} from '../../src/main/narrationApi';
+import {narrationParts,joinNarrationWavs,narrationAction} from '../../src/main/narrationApi';
 import {runLongform} from '../../src/main/voiceMedia';
 import {createNanoTestProducer} from './NanoHttpMock';
-import {inspectWavBuffer,projectId,readState,type StudioState} from '../../src/main/services';
+import {inspectWavBuffer,projectId,readState,writeState,type StudioState} from '../../src/main/services';
 
 const golden=JSON.parse(fs.readFileSync(path.join(process.cwd(),
   'tests/fixtures/nano_api_v1/golden_receipt.json'),'utf8')) as Record<string,unknown>;
@@ -94,4 +94,57 @@ describe('one verified Nano HTTP narration pipeline',()=>{
       expect(readState(root).longform?.status).toBe('PASS');
     }finally{await api.close();}
   });
+  it('GEN-02/07: PASS regenerates with a distinct attempt and retains current accepted WAV if new output is byte-identical',async()=>{
+    const api=producer();const endpoint=await api.start();
+    try{
+      const root=project(endpoint,[{id:'a',text:'Regenerate test.'}]);
+      const first=await runLongform(root,{voice:'voice'});
+      const preserved=fs.readFileSync(path.join(root,'assets/audio/narration.wav'));
+      const before=readState(root);before.alignment={
+        path:'.studio/alignment/approved.json',captionsPath:'.studio/alignment/captions.json',
+        audioSha256:first.sha256,generatedAt:'now'
+      };writeState(root,before);
+      expect(narrationAction(root).action).toBe('regenerate');
+      const second=await runLongform(root,{voice:'voice',regenerate:true});
+      expect(second.jobId).not.toBe(first.jobId);
+      expect(api.get().speechCalls).toBe(2);
+      expect(readState(root).longform?.jobId).toBe(second.jobId);
+      expect(readState(root).alignment).toEqual(before.alignment);
+      expect(fs.readFileSync(path.join(root,'assets/audio/narration.wav'))).toEqual(preserved);
+    }finally{await api.close();}
+  });
+  it('GEN-03/05/07/08: concurrent requests blocked and failed regeneration preserves accepted bytes',async()=>{
+    const api=producer(2),endpoint=await api.start();
+    try{
+      const root=project(endpoint,[{id:'a',text:'One section.'}]);
+      const accepted=await runLongform(root,{voice:'voice'});
+      const bytes=fs.readFileSync(path.join(root,'assets/audio/narration.wav'));
+      const pending=runLongform(root,{voice:'voice',regenerate:true});
+      await expect(runLongform(root,{voice:'voice',regenerate:true})).rejects.toThrow(/NARRATION_RUNNING/);
+      await expect(pending).rejects.toThrow(/NANO_UNCERTAIN/);
+      expect(api.get().speechCalls).toBe(2);
+      expect(readState(root).voice?.sha256).toBe(accepted.sha256);
+      expect(fs.readFileSync(path.join(root,'assets/audio/narration.wav'))).toEqual(bytes);
+      expect(narrationAction(root).action).toBe('retry');
+      await expect(runLongform(root,{voice:'voice',resume:true})).rejects.toThrow(/NANO_UNCERTAIN/);
+      expect(api.get().speechCalls).toBe(2);
+      await runLongform(root,{voice:'voice',resume:true,retryUncertain:true});
+      expect(api.get().speechCalls).toBe(3);
+    }finally{await api.close();}
+  });
+  it('GEN-04/09: incompatible source cannot resume persisted attempt',async()=>{
+    const api=producer(2),endpoint=await api.start();
+    try{
+      const root=project(endpoint,[{id:'a',text:'First.'},{id:'b',text:'Second.'}]);
+      await expect(runLongform(root,{voice:'voice'})).rejects.toThrow(/NANO_UNCERTAIN/);
+      const state=readState(root);state.approvedScript!.sections[1].text='Changed.';
+      state.approvedScript!.text='First.\n\nChanged.';
+      state.approvedScript!.sha256=hash(state.approvedScript!.text);
+      writeState(root,state);
+      await expect(runLongform(root,{voice:'voice',resume:true,retryUncertain:true}))
+        .rejects.toThrow(/RECOVERY_INCOMPATIBLE/);
+      expect(api.get().speechCalls).toBe(2);
+    }finally{await api.close();}
+  });
+
 });
