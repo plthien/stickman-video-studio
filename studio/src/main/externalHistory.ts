@@ -27,6 +27,40 @@ function safeRead(root:string,relative:string,expectedSha:string,errors:string[]
     return bytes.toString('utf8');
   }catch{errors.push(label+'_UNREADABLE');return null;}
 }
+/** Recover a legacy Author response only from byte-verified, identity-exact project files.
+ * Never infer a winner from order, timestamps or a near-matching filename.
+ */
+function legacyAuthorResponse(root:string,state:StudioState,stage:Stage,task:TaskRecord,errors:string[]):string|null{
+  const folder='.studio/external/responses';
+  let names:string[];
+  try{
+    const dir=resolveProjectFile(root,folder);
+    if(!fs.existsSync(dir)){errors.push('LEGACY_RESPONSE_NOT_VERIFIABLE');return null;}
+    names=fs.readdirSync(dir);
+  }catch{errors.push('LEGACY_RESPONSE_UNREADABLE');return null;}
+  const prefix=stage+'-'+String(task.id)+'-'+String(task.revision)+'-';
+  const verified:string[]=[];
+  for(const name of names){
+    if(!name.startsWith(prefix)||!name.endsWith('.json'))continue;
+    const digest=name.slice(prefix.length,-'.json'.length);
+    if(!/^[a-f0-9]{64}$/.test(digest))continue;
+    try{
+      const filename=resolveProjectFile(root,folder+'/'+name);
+      const bytes=fs.readFileSync(filename);
+      if(sha(bytes)!==digest)continue;
+      const parsed=strictJson(bytes.toString('utf8')) as Record<string,unknown>;
+      if(!parsed||typeof parsed!=='object'||Array.isArray(parsed)||
+        parsed.schema!=='mode-b-external-result-v1'||parsed.project_id!==state.project.id||
+        parsed.task_id!==task.id||parsed.revision!==task.revision||
+        parsed.input_sha256!==task.inputSha256||parsed.stage!==stage||
+        !parsed.payload||typeof parsed.payload!=='object'||Array.isArray(parsed.payload))continue;
+      verified.push(bytes.toString('utf8'));
+    }catch{ /* An invalid/corrupt file cannot become historical evidence. */ }
+  }
+  if(verified.length===1)return verified[0];
+  errors.push(verified.length>1?'LEGACY_RESPONSE_AMBIGUOUS':'LEGACY_RESPONSE_NOT_VERIFIABLE');
+  return null;
+}
 function readOne(root:string,state:StudioState,stage:Stage,operation:ExternalOperation,task:TaskRecord):ExternalHistoryRecord{
   const errors:string[]=[];
   const id=String(task.id),revision=Number(task.revision);
@@ -52,7 +86,7 @@ function readOne(root:string,state:StudioState,stage:Stage,operation:ExternalOpe
             else confirmedJson=text;
           }catch{errors.push('RESPONSE_INVALID_JSON');}
         }
-      }else errors.push('LEGACY_RESPONSE_NOT_VERIFIABLE');
+      }else confirmedJson=legacyAuthorResponse(root,state,stage,task,errors);
     }else{
       const relative='.studio/external/lifecycle/results/'+id+'.json';
       const saved=state.lifecycle?.artifacts[id];
