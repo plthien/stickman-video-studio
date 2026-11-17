@@ -109,7 +109,7 @@ export async function generateNano(root:string,request:{endpoint:string;voice:st
     wav:result.wav,expectedScriptSha256:state.approvedScript.sha256,
     voice:{receipt:result.receipt,profileId:request.voice,profileVersion:result.profileVersion,
       referenceBinding:result.binding,origin:'NANO_GENERATED'},
-    nano:{endpoint:nanoBase(request.endpoint).toString().replace(/\\/$/,''),profileId:request.voice}
+    nano:{endpoint:nanoBase(request.endpoint).origin,profileId:request.voice}
   });
   return {...result.info,path:voice.path,receipt:result.receipt};
 }
