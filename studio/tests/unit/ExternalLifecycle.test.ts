@@ -237,15 +237,12 @@ describe('External creative lifecycle',()=>{
   it('CONTRACT REG-06: other stage/operation prompts retain their separate response contracts',()=>{
     const root=fixture();
     const correct=freezeLifecycleTask(appPath,root,'script','correct',{editableIds:['opening']});
-    const recheck=freezeLifecycleTask(appPath,root,'script','recheck');
-    for(const task of [correct,recheck]){
-      expect(task.prompt).toContain('ORIGINAL FROZEN AUTHOR TASK | SHA256');
-      expect(task.prompt).toContain('JSON RESPONSE CONTRACT | replace the example status/findings');
-      expect(task.prompt).not.toContain('Frozen identity (immutable fields, NOT a complete review result):');
-      expect(task.prompt).not.toContain('Finding field contract (no sample finding');
-    }
-    expect(correct.prompt).toContain('"schema": "mode-b-correction-v1"');
-    expect(recheck.prompt).toContain('SCRIPT RECHECK — TEXT EVIDENCE AND ACTIVATION GATE');
+    expect(correct.prompt).toContain('ORIGINAL FROZEN AUTHOR TASK — IMMUTABLE REFERENCE APPENDIX');
+    expect(correct.prompt).toContain('RESPONSE CONTRACT — NO PRESET OUTCOME');
+    expect(correct.prompt).toContain('SCRIPT CORRECT');
+    expect(correct.prompt).toContain('mode-b-correction-v1');
+    expect(correct.prompt).not.toContain('JSON RESPONSE CONTRACT | replace the example status/findings');
+    expect(()=>freezeLifecycleTask(appPath,root,'script','recheck')).toThrow(/RECHECK_LINEAGE_REQUIRED/);
     const scripted=freezeLifecycleTask(appPath,root,'script','review');
     expect(scripted.prompt).toContain('Frozen identity (immutable fields, NOT a complete review result):');
     // Native and media remain separately checked by the existing ten-task regression suite.
@@ -405,7 +402,7 @@ describe('External creative lifecycle',()=>{
     const recheck=freezeLifecycleTask(appPath,root,'script','recheck',{findingIds:['F-001']});
     expect(recheck.prompt).toContain('SCRIPT RECHECK — TEXT EVIDENCE AND ACTIVATION GATE');
     expect(recheck.prompt).toContain('Missing WAV/MP4 does not automatically mean INSUFFICIENT_EVIDENCE');
-    expect(recheck.prompt).toContain('every requested previous finding ID ["F-001"]');
+    expect(recheck.prompt).toContain('Required exact finding IDs: ["F-001"]');
     const reviewed=stageLifecycleResult(appPath,root,'script','recheck',wrap(recheck,'recheck',{
       schema:'mode-b-review-v1',artifact_sha256:recheck.artifactSha256,
       status:'REVIEWED_NO_FINDINGS',coverage:{target_ids:['opening','payoff'],modalities:[],ranges:[]},
