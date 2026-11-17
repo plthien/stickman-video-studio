@@ -12,6 +12,7 @@ export function VoiceWorkspace() {
   useEffect(()=>{setVoice(native?.nano?.profileId??'');setProfiles([]);setAuthorized(false);},[id,native?.nano?.profileId]);
   const [playbackUrl,setPlaybackUrl]=useState(''),[playbackError,setPlaybackError]=useState(''),[playbackRetry,setPlaybackRetry]=useState(0);
   const audioSha=native?.voice?.sha256,voiceStale=native?.voice?.stale;
+  useEffect(()=>setPlaybackRetry(0),[id,audioSha]);
   const refreshVoiceOperations=async(scope=captureProjectSession())=>{
     if(!scope||!window.studio?.narrationAction)return;
     const [next,evidence]=await Promise.all([
