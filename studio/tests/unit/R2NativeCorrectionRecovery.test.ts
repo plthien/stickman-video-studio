@@ -106,7 +106,7 @@ async function auxiliaryProposal(editablePaths:string[],modify:(artifact:{manife
 }
 describe('R2 auxiliary-only publication and complete artifact identity',()=>{
   it('publishes sound_script without changing manifest bytes or invoking native CLI',async()=>{
-    const p=await auxiliaryProposal(['/sound_script'],a=>{a.sound_script=[{target_id:'shot-1',intent:'Quiet scene ambience'}];});
+    const p=await auxiliaryProposal(['/sound_script/0'],a=>{a.sound_script=[{target_id:'shot-1',intent:'Quiet scene ambience'}];});
     const beforeState=readState(p.root),beforeReadiness=JSON.stringify(beforeState.nativeReadiness);
     const beforePreview=JSON.stringify(beforeState.preview),beforeApproval=JSON.stringify(beforeState.approval);
     await confirmLifecycleResult(appPath,p.root,p.token,{validator:async()=>{throw new Error('CLI must not run for auxiliary-only metadata');}});
@@ -120,7 +120,7 @@ describe('R2 auxiliary-only publication and complete artifact identity',()=>{
     expect(after.lifecycle?.tasks['native:correct'].status).toBe('IMPORTED');
   });
   it('persists shot and asset ledgers without losing other authoring data',async()=>{
-    const p=await auxiliaryProposal(['/shot_ledger','/asset_needs'],a=>{
+    const p=await auxiliaryProposal(['/shot_ledger/0','/asset_needs/0'],a=>{
       a.shot_ledger=[{shot_id:'shot-1',narrative_purpose:'Clear causal action'}];
       a.asset_needs=[{shot_id:'shot-1',intent:'New image needed, not yet supplied'}];
     });
@@ -131,14 +131,14 @@ describe('R2 auxiliary-only publication and complete artifact identity',()=>{
     expect(fs.readFileSync(path.join(p.root,'project.json'))).toEqual(p.before);
   });
   it('handles complete no-op without a revision bump or invented validation',async()=>{
-    const p=await auxiliaryProposal(['/sound_script'],()=>{});
+    const p=await auxiliaryProposal(['/sound_script/0'],()=>{});
     const revision=readState(p.root).external.native!.revision;
     await confirmLifecycleResult(appPath,p.root,p.token,{validator:async()=>{throw new Error('no-op may not call CLI');}});
     expect(readState(p.root).external.native!.revision).toBe(revision);
     expect(fs.readFileSync(path.join(p.root,'project.json'))).toEqual(p.before);
   });
   it('retains a recoverable proposal if auxiliary publication is interrupted',async()=>{
-    const p=await auxiliaryProposal(['/sound_script'],a=>{a.sound_script=[{intent:'Causal foley'}];});
+    const p=await auxiliaryProposal(['/sound_script/0'],a=>{a.sound_script=[{intent:'Causal foley'}];});
     await expect(Promise.resolve(confirmLifecycleResult(appPath,p.root,p.token,{
       hooks:{afterNativeCommit:()=>{throw new Error('Injected auxiliary finalization failure');}}})))
       .rejects.toThrow(/Injected auxiliary finalization/);
@@ -150,7 +150,7 @@ describe('R2 auxiliary-only publication and complete artifact identity',()=>{
     expect(readState(p.root).lifecycle?.tasks['native:correct'].status).toBe('IMPORTED');
   });
   it('resumes after interrupted auxiliary staging without touching last-good state',async()=>{
-    const p=await auxiliaryProposal(['/sound_script'],a=>{a.sound_script=[{intent:'Suspense build'}];});
+    const p=await auxiliaryProposal(['/sound_script/0'],a=>{a.sound_script=[{intent:'Suspense build'}];});
     const beforeRevision=readState(p.root).external.native!.revision;
     await expect(Promise.resolve(confirmLifecycleResult(appPath,p.root,p.token,{
       hooks:{afterStaging:()=>{throw new Error('Injected aux staging interruption');}}})))
@@ -166,14 +166,14 @@ describe('R2 auxiliary-only publication and complete artifact identity',()=>{
     const {response}=stageNative(root,nativePayload(root));
     await confirmImport(appPath,root,response.token,{validator:validator().run});
     const state=readState(root),task=freezeLifecycleTask(appPath,root,'native','correct',
-      {editablePaths:['/sound_script']});
+      {editablePaths:['/sound_script/0']});
     const existing=state.external.native!.artifact as {shotLedger?:unknown[];soundScript?:unknown[];assetNeeds?:unknown[]};
     const manifest=JSON.parse(fs.readFileSync(path.join(root,'project.json'),'utf8')) as Record<string,unknown>;
     manifest.fps=15;
     const result={schema:'mode-b-lifecycle-result-v1',project_id:state.project.id,task_id:task.id,
       revision:task.revision,input_sha256:task.inputSha256,stage:'native',operation:'correct',
       payload:{schema:'mode-b-correction-v1',artifact_sha256:task.artifactSha256,
-        finding_ids:[],editable_ids:[],editable_paths:['/sound_script'],
+        finding_ids:[],editable_ids:[],editable_paths:['/sound_script/0'],
         artifact:{manifest,shot_ledger:existing.shotLedger??[],
           sound_script:existing.soundScript??[],asset_needs:existing.assetNeeds??[]}}};
     expect(()=>stageLifecycleResult(appPath,root,'native','correct',JSON.stringify(result)))
