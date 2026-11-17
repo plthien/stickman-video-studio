@@ -19,7 +19,7 @@ const project=(id:string,voice=false):NativeStudioState=>({
   brief:{topic:'real narration',language:'English',ratio:'9:16'},external:{},
   nano:{endpoint:'http://127.0.0.1:3901'},
   ...(voice?{voice:{path:'assets/audio/narration.wav',sha256:'a'.repeat(64),
-    generatedAt:'now',duration:12,stale:false,origin:'NANO_LONGFORM' as const}}:{}),
+    duration:12,stale:false,origin:'NANO_LONGFORM' as const}}:{}),
   projection:{shots:[],duration:0,tracks:{},demo:false}
 });
 function Seed({state,children}:{state:NativeStudioState;children:ReactNode}){
@@ -39,6 +39,7 @@ describe('ElevenLabs settings and generated voice preview',()=>{
     await waitFor(()=>expect(screen.getByRole('button',{name:'Save API key'})).toBeDisabled());
     expect(input.type).toBe('password');
     fireEvent.change(input,{target:{value:'test-secret-never-display'}});
+    await waitFor(()=>expect(screen.getByRole('button',{name:'Save API key'})).toBeEnabled());
     fireEvent.click(screen.getByRole('button',{name:'Save API key'}));
     await waitFor(()=>expect(save).toHaveBeenCalledWith('test-secret-never-display'));
     await waitFor(()=>expect(input.value).toBe(''));
