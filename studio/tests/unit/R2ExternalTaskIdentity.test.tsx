@@ -60,6 +60,14 @@ describe('R2 explicit external reservation identity',()=>{
     expect(screen.getByRole('textbox',{name:'Import JSON'})).toHaveValue('');
     // Explicit Build creates a new frozen response identity and clears the
     // JSON that belonged to the earlier, unfrozen context.
+    fireEvent.change(screen.getByLabelText('Choose JSON file'),{
+      target:{files:[new File([response],'response.json',{type:'application/json'})]}
+    });
+    await waitFor(()=>expect(screen.getByRole('textbox',{name:'Import JSON'})).toHaveValue(response));
+    expect(screen.getByRole('button',{name:'Validate import'})).toBeEnabled();
+    expect(harness.stageImport).not.toHaveBeenCalled();
+    expect(harness.stageLifecycle).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button',{name:/Confirm reviewed import/})).not.toBeInTheDocument();
   });
   it('rejects malformed .json without replacing existing pasted JSON or staging an import',async()=>{
     showCorrect();
