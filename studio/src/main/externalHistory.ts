@@ -30,7 +30,24 @@ function safeRead(root:string,relative:string,expectedSha:string,errors:string[]
 /** Recover a legacy Author response only from byte-verified, identity-exact project files.
  * Never infer a winner from order, timestamps or a near-matching filename.
  */
-function legacyAuthorResponse(root:string,state:StudioState,stage:Stage,task:TaskRecord,errors:string[]):string|null{
+/** A response file can exist before confirmation. STALE legacy recovery needs
+ * independent persisted evidence connecting this task to a published artifact.
+ */
+function legacyAuthorPublished(state:StudioState,stage:Stage,task:TaskRecord,payload?:unknown):boolean{
+  const archived=state.externalTaskArchive?.some(item=>item.stage===stage&&item.operation==='author'&&
+    item.task.id===task.id&&item.task.revision===task.revision&&
+    item.task.inputSha256===task.inputSha256&&item.task.status==='IMPORTED');
+  if(archived)return true;
+  if(stage==='script'){
+    const candidate=state.scriptCandidate;
+    return Boolean(candidate?.taskId===task.id&&state.external.script&&
+      (payload===undefined||canonical(state.external.script.artifact)===canonical(payload)));
+  }
+  // Old Native publication revisions do not carry Author task IDs; matching
+  // timestamps or similar manifests alone cannot prove this task was Confirmed.
+  return false;
+}
+function legacyAuthorResponse(root:string,state:StudioState,stage:Stage,task:TaskRecord,errors:string[],requiresProof=false):string|null{
   const folder='.studio/external/responses';
   let names:string[]=[];
   try{
@@ -54,6 +71,7 @@ function legacyAuthorResponse(root:string,state:StudioState,stage:Stage,task:Tas
         parsed.task_id!==task.id||parsed.revision!==task.revision||
         parsed.input_sha256!==task.inputSha256||parsed.stage!==stage||
         !parsed.payload||typeof parsed.payload!=='object'||Array.isArray(parsed.payload))continue;
+      if(requiresProof&&!legacyAuthorPublished(state,stage,task,parsed.payload))continue;
       verified.push(bytes.toString('utf8'));
     }catch{ /* An invalid/corrupt file cannot become historical evidence. */ }
   }
@@ -71,7 +89,16 @@ function readOne(root:string,state:StudioState,stage:Stage,operation:ExternalOpe
   let confirmedJson:string|null=null;
   let findings:ExternalHistoryRecord['findings']=[];
   let reviewStatus:string|undefined;
-  if(status==='IMPORTED'){
+  const authorReceipt=typeof task.confirmedResponsePath==='string'&&
+    typeof task.confirmedResponseSha256==='string';
+  const lifecycleRecord=state.lifecycle?.artifacts[id];
+  const lifecyclePublished=Boolean(lifecycleRecord&&lifecycleRecord.taskId===id&&
+    lifecycleRecord.stage===stage&&lifecycleRecord.operation===operation);
+  // STALE only controls actionability. It must not erase a verifiably
+  // confirmed publication, nor turn an unconfirmed staged response into one.
+  if(status==='IMPORTED'||status==='STALE'&&
+      (operation==='author'?authorReceipt||legacyAuthorPublished(state,stage,task):
+        lifecyclePublished)){
     if(operation==='author'){
       const responseSha=task.confirmedResponseSha256;
       const responsePath=task.confirmedResponsePath;
@@ -86,7 +113,7 @@ function readOne(root:string,state:StudioState,stage:Stage,operation:ExternalOpe
             else confirmedJson=text;
           }catch{errors.push('RESPONSE_INVALID_JSON');}
         }
-      }else confirmedJson=legacyAuthorResponse(root,state,stage,task,errors);
+      }else confirmedJson=legacyAuthorResponse(root,state,stage,task,errors,status==='STALE');
     }else{
       const relative='.studio/external/lifecycle/results/'+id+'.json';
       const saved=state.lifecycle?.artifacts[id];
