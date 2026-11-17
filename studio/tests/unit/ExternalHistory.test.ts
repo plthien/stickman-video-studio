@@ -179,6 +179,22 @@ describe('REG-TAB read-only external history and integrity',()=>{
     expect(fs.existsSync(path.join(root,'.studio/external/pending.json'))).toBe(true);
     expect(readState(root).tasks!.native!.id).toBe(next.id);
   });
+  it('REG-STALE-03 a later unconfirmed Native response cannot inherit an earlier Native publication',async()=>{
+    const {root}=fixture({style:'B1'});
+    const first=stageNative(root,nativePayload(root));
+    await confirmImport(appPath,root,first.response.token,{validator:validator().run});
+    const publishedAt=readState(root).external.native!.importedAt;
+    const subsequent=freezeTask(appPath,root,'native',true);
+    const proposal=stageNative(root,nativePayload(root));
+    expect(proposal.response.status).toBe('STAGED');
+    const retired=freezeTask(appPath,root,'native',true);
+    const history=readExternalHistory(root,'native','author');
+    const old=history.find(row=>row.id===subsequent.id)!;
+    expect(old.status).toBe('STALE');
+    expect(old.confirmedJson).toBeNull();
+    expect(readState(root).external.native!.importedAt).toBe(publishedAt);
+    expect(readState(root).tasks!.native!.id).toBe(retired.id);
+  });
   it('REG-STALE-04 restores legacy Script Author after STALE only with matching published Script artifact',async()=>{
     const {root}=fixture({style:'B1'});
     const author=freezeTask(appPath,root,'script');
