@@ -230,6 +230,9 @@ describe('External creative lifecycle',()=>{
     confirmLifecycleResult(root,result.token);
     expect(readState(root).approvedScript).toBeUndefined();
     const recheck=freezeLifecycleTask(appPath,root,'script','recheck',{findingIds:['F-001']});
+    expect(recheck.prompt).toContain('SCRIPT RECHECK — TEXT EVIDENCE AND ACTIVATION GATE');
+    expect(recheck.prompt).toContain('Missing WAV/MP4 does not automatically mean INSUFFICIENT_EVIDENCE');
+    expect(recheck.prompt).toContain('every requested previous finding ID ["F-001"]');
     const reviewed=stageLifecycleResult(appPath,root,'script','recheck',wrap(recheck,'recheck',{
       schema:'mode-b-review-v1',artifact_sha256:recheck.artifactSha256,
       status:'REVIEWED_NO_FINDINGS',coverage:{target_ids:['opening','payoff'],modalities:[],ranges:[]},
