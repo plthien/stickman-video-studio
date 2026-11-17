@@ -592,5 +592,24 @@ describe('External creative lifecycle',()=>{
     expect(nativeRecheck.findingIds).toEqual(['NATIVE-HISTORY']);
   });
 
+  it('REG-F03-01/02 only explicit Rebuild can supersede a frozen Author or Review identity',()=>{
+    const {root}=mediaFixture({style:'B1'});
+    const author=freezeTask(appPath,root,'script');
+    const updated=readState(root);
+    updated.brief.topic+=' changed by owner';
+    writeState(root,updated);
+    expect(()=>freezeTask(appPath,root,'script')).toThrow(/FROZEN_TASK_REBUILD_REQUIRED/);
+    expect(readState(root).tasks!.script!.id).toBe(author.id);
+    const authorRebuilt=freezeTask(appPath,root,'script',true);
+    expect(authorRebuilt.id).not.toBe(author.id);
+    const review=freezeLifecycleTask(appPath,root,'script','review');
+    expect(freezeLifecycleTask(appPath,root,'script','review').id).toBe(review.id);
+    expect(()=>freezeLifecycleTask(appPath,root,'script','review',{editableIds:['opening']}))
+      .toThrow(/FROZEN_TASK_REBUILD_REQUIRED/);
+    expect(readState(root).lifecycle!.tasks['script:review'].id).toBe(review.id);
+    const next=freezeLifecycleTask(appPath,root,'script','review',{editableIds:['opening']},true);
+    expect(next.id).not.toBe(review.id);
+    expect(next.revision).toBe(review.revision+1);
+  });
   it('REG-F04-02 rejects new Script Media Review before evaluating media evidence',()=>{const root=fixture();expect(()=>freezeLifecycleTask(appPath,root,'script','media-review',{media:'voice'})).toThrow(/MEDIA_REVIEW_DISABLED/)})
 });
