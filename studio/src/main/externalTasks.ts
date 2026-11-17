@@ -345,6 +345,7 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
     state.scriptCandidate={sections:script.sections,text:candidateText,sha256:sha(candidateText),revision,importedAt:new Date().toISOString(),taskId:task.id,authoring:script.authoring};
     state.external.script={revision,artifact:pending.payload,importedAt:new Date().toISOString()};
     task.status='IMPORTED';
+    activateScriptCandidate(root,state,'AUTHOR_IMPORT');
     const revisionFile=path.join(root,'.studio','revisions','script-'+revision+'.json');
     atomicJson(revisionFile,pending.payload);
     writeState(root,state);
@@ -430,29 +431,66 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
   }
 }
 
-/** Explicit, repeat-safe owner acceptance boundary. Candidate import alone never becomes narration authority. */
-export function approveScriptCandidate(root:string,note:string){
-  const state=readState(root),candidate=state.scriptCandidate;
-  if(!candidate||sha(candidate.text)!==candidate.sha256)throw new Error('No current verified Script candidate is available.');
-  if(typeof note!=='string'||!note.trim())throw new Error('Owner approval note is required.');
-  if(state.lifecycle?.tasks['script:correct']?.id===candidate.taskId){
-    const candidateHash=sha(JSON.stringify(candidate));
-    const rechecks=Object.values(state.lifecycle.artifacts).filter(item=>
-      item.stage==='script'&&item.operation==='recheck'&&
-      (item.value as {artifact_sha256?:string}).artifact_sha256===candidateHash)
-      .sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
-    const latest=rechecks[0]?.value as {status?:string;findings?:Array<{status?:string}>}|undefined;
-    if(!latest||latest.status!=='REVIEWED_NO_FINDINGS'||latest.findings?.some(item=>item.status!=='resolved'))
-      throw new Error('RECHECK_REQUIRED: current corrected Script candidate needs a complete independent recheck before owner approval.');
-  }
-
-  if(state.approvedScript?.sha256===candidate.sha256&&JSON.stringify(state.approvedScript.authoring??null)===JSON.stringify(candidate.authoring??null))return state;
-  const changed=state.approvedScript?.sha256!==candidate.sha256,creativeChanged=JSON.stringify(state.approvedScript?.authoring??null)!==JSON.stringify(candidate.authoring??null);
-  state.approvedScript={sections:candidate.sections,text:candidate.text,sha256:candidate.sha256,revision:candidate.revision,approvedAt:new Date().toISOString(),approvedBy:'OWNER',approvalNote:note.trim(),authoring:candidate.authoring};
+/** Publish only verified Script candidates. This replaces the removed owner-click approval.
+ * Author imports activate immediately; scoped corrections activate after a matching
+ * independently imported clean Recheck. No production source is inferred from a draft.
+ */
+export function scriptCorrectionRechecked(state:StudioState):boolean {
+  const candidate=state.scriptCandidate,correct=state.lifecycle?.tasks['script:correct'];
+  if(!candidate||correct?.id!==candidate.taskId)return false;
+  const hash=sha(JSON.stringify(candidate));
+  return Object.values(state.lifecycle?.artifacts??{}).some(item=>{
+    if(item.stage!=='script'||item.operation!=='recheck')return false;
+    const value=item.value as {artifact_sha256?:string;status?:string;findings?:Array<{status?:string}>};
+    return value.artifact_sha256===hash&&value.status==='REVIEWED_NO_FINDINGS'&&
+      (!value.findings||value.findings.every(f=>f.status==='resolved'));
+  });
+}
+export function activateScriptCandidate(root:string,state:StudioState,source:'AUTHOR_IMPORT'|'RECHECK'):boolean {
+  const candidate=state.scriptCandidate;
+  if(!candidate||sha(candidate.text)!==candidate.sha256||
+    candidate.sections.map(row=>row.text).join('\\n\\n')!==candidate.text)
+    throw new Error('No current verified Script candidate is available.');
+  if(source==='AUTHOR_IMPORT'&&state.tasks?.script?.id!==candidate.taskId)
+    throw new Error('STALE: Script Author task no longer owns this candidate.');
+  if(source==='RECHECK'&&!scriptCorrectionRechecked(state))
+    throw new Error('RECHECK_REQUIRED: corrected Script must pass a current independent Recheck.');
+  if(state.approvedScript?.sha256===candidate.sha256&&
+    JSON.stringify(state.approvedScript.authoring??null)===JSON.stringify(candidate.authoring??null))return false;
+  const changed=state.approvedScript?.sha256!==candidate.sha256;
+  const creativeChanged=JSON.stringify(state.approvedScript?.authoring??null)!==JSON.stringify(candidate.authoring??null);
+  const approved:NonNullable<StudioState['approvedScript']>={
+    sections:candidate.sections,text:candidate.text,sha256:candidate.sha256,revision:candidate.revision,
+    approvedAt:new Date().toISOString(),approvedBy:'AUTO',
+    approvalNote:source==='AUTHOR_IMPORT'?'Auto-activated after confirmed Script Author import.':'Auto-activated after passed Script Recheck.',
+    authoring:candidate.authoring
+  };
+  // Write the exact revision before publishing it into active project state.
+  atomicJson(path.join(root,'.studio','revisions','script-approved-'+candidate.revision+'.json'),approved);
+  state.approvedScript=approved;
   if(changed){if(state.voice)state.voice.stale=true;state.alignment=undefined;}
-  if(changed||creativeChanged){if(state.tasks?.native)state.tasks.native.status='STALE';state.nativeReadiness=undefined;state.preview=undefined;state.approval=undefined;state.render=undefined;}
-  atomicJson(path.join(root,'.studio','revisions','script-approved-'+candidate.revision+'.json'),state.approvedScript);
-  writeState(root,state);return state;
+  if(changed||creativeChanged){
+    if(state.tasks?.native)state.tasks.native.status='STALE';
+    state.nativeReadiness=undefined;state.preview=undefined;state.approval=undefined;state.render=undefined;
+  }
+  return true;
+}
+/** Upgrade previously imported, unapproved candidates after removal of manual approval.
+ * A corrected candidate remains pending until a hash-bound clean Recheck exists.
+ * Idempotent: already activated content does not rewrite timestamps or accepted media.
+ */
+export function reconcileScriptActivation(root:string):StudioState {
+  const state=readState(root),candidate=state.scriptCandidate;
+  if(!candidate)return state;
+  if(state.approvedScript?.sha256===candidate.sha256&&
+    JSON.stringify(state.approvedScript.authoring??null)===JSON.stringify(candidate.authoring??null))return state;
+  if(state.lifecycle?.tasks['script:correct']?.id===candidate.taskId){
+    if(!scriptCorrectionRechecked(state))return state;
+    if(activateScriptCandidate(root,state,'RECHECK'))writeState(root,state);
+  }else if(state.tasks?.script?.id===candidate.taskId&&state.tasks.script.status==='IMPORTED'){
+    if(activateScriptCandidate(root,state,'AUTHOR_IMPORT'))writeState(root,state);
+  }
+  return state;
 }
 
 const activeConfirmations=new Set<string>();
