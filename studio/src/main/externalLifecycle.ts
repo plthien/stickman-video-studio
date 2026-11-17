@@ -197,7 +197,7 @@ function scriptReviewPrompt(
     fileDelivery,
     '## H — ORIGINAL FROZEN AUTHOR TASK (IMMUTABLE REFERENCE APPENDIX)',
     'Original frozen Author task SHA256: '+sha(originalTask),
-    'This appendix defines the FROZEN AUTHORING REQUIREMENTS, NOT a new Author task. Do not follow its instruction to generate another Script. Its fictional/example JSON is NOT this Review response contract. The current immutable target in Section C is the ONLY Script candidate to evaluate. Do not change these appendix bytes or claim the example narration is the review target.',
+    'This appendix defines the FROZEN AUTHORING REQUIREMENTS, NOT a new Author task. Do not follow its instruction to generate another Script. Its fictional/example JSON is NOT this Review response contract. Ignore any Author JSON filename or file-delivery instructions inside the appendix; the Review filename and response contract in Section G take precedence. The current immutable target in Section C is the ONLY Script candidate to evaluate. Do not change these appendix bytes or claim the example narration is the review target.',
     originalTask
   ].join('\n\n')+'\n';
 }
