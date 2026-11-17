@@ -182,6 +182,57 @@ describe('REG-TAB navigation persistence, read-only history and async isolation'
     expect(screen.queryByLabelText('Confirmed JSON history')).not.toBeInTheDocument();
     expect(screen.getByRole('button',{name:'Validate import'})).toBeDisabled();
   });
+  it('REG-F02-01/02 never falls back from a corrupt selected historical prompt to the current frozen task',async()=>{
+    const current={...record('current-review','review','FROZEN'),prompt:'CURRENT VERIFIED FROZEN PROMPT'};
+    const old={...record('old-missing','review'),prompt:null,
+      errors:['PROMPT_HASH_MISMATCH'],integrity:'PARTIAL'};
+    const other={...record('old-valid','review'),prompt:'OLD VALID PROMPT'};
+    bridge({readFrozen:async(_id:string,_stage:string,op:string)=>
+      op==='review'?{id:current.id,prompt:current.prompt,targetIds:[],editableIds:[],editablePaths:[],findingIds:[]}:null,
+      readHistory:async(_id:string,_stage:string,op:string)=>op==='review'?[current,old,other]:[]});
+    render(<AppStateProvider><Harness><ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider></Harness></AppStateProvider>);
+    fireEvent.click(await screen.findByRole('button',{name:'Review'}));
+    await waitFor(()=>expect(screen.getByTestId('external-task-prompt')).toHaveTextContent('CURRENT VERIFIED FROZEN PROMPT'));
+    await waitFor(()=>expect(screen.getByRole('combobox',{name:'Saved task history'})).toBeInTheDocument());
+    const chooser=screen.getByRole('combobox',{name:'Saved task history'});
+    fireEvent.change(chooser,{target:{value:'old-missing'}});
+    expect(screen.getByTestId('external-task-prompt')).toHaveTextContent('');
+    expect(screen.queryByText('CURRENT VERIFIED FROZEN PROMPT')).not.toBeInTheDocument();
+    expect(screen.getByText(/PROMPT_HASH_MISMATCH/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Confirmed JSON history')).toHaveTextContent('old-missing');
+    expect(screen.getByText(/F-old-missing/)).toBeInTheDocument();
+    fireEvent.change(chooser,{target:{value:'old-valid'}});
+    expect(screen.getByTestId('external-task-prompt')).toHaveTextContent('OLD VALID PROMPT');
+    expect(screen.getByLabelText('Confirmed JSON history')).toHaveTextContent('old-valid');
+    expect(screen.queryByText(/F-old-missing/)).not.toBeInTheDocument();
+    fireEvent.change(chooser,{target:{value:'current-review'}});
+    expect(screen.getByTestId('external-task-prompt')).toHaveTextContent('CURRENT VERIFIED FROZEN PROMPT');
+    expect(screen.queryByLabelText('Confirmed JSON history')).not.toBeInTheDocument();
+  });
+  it('REG-F03-01/02 browsing IMPORTED history never forces Rebuild; only explicit Rebuild changes backend flag',async()=>{
+    const current={...record('current-review','review','FROZEN'),prompt:'CURRENT REVIEW PROMPT'};
+    const prior=record('old-imported','review','IMPORTED');
+    const freezeLifecycle=vi.fn(async(_id:string,_stage:string,_op:string,_scope:unknown,rebuild:boolean)=>
+      rebuild?{id:'replaced-by-owner',prompt:'REBUILT REVIEW PROMPT'}:
+        {id:current.id,prompt:current.prompt});
+    bridge({readFrozen:async(_id:string,_stage:string,op:string)=>
+      op==='review'?{id:current.id,prompt:current.prompt,targetIds:[],editableIds:[],editablePaths:[],findingIds:[]}:null,
+      readHistory:async(_id:string,_stage:string,op:string)=>op==='review'?[current,prior]:[],
+      freezeLifecycle});
+    render(<AppStateProvider><Harness><ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider></Harness></AppStateProvider>);
+    fireEvent.click(await screen.findByRole('button',{name:'Review'}));
+    await waitFor(()=>expect(screen.getByRole('combobox',{name:'Saved task history'})).toBeInTheDocument());
+    fireEvent.change(screen.getByRole('combobox',{name:'Saved task history'}),{target:{value:'old-imported'}});
+    expect(screen.getByTestId('external-history-status')).toHaveTextContent('IMPORTED');
+    fireEvent.click(screen.getByRole('button',{name:'Build Task'}));
+    await waitFor(()=>expect(freezeLifecycle).toHaveBeenCalledTimes(1));
+    expect(freezeLifecycle.mock.calls[0][4]).toBe(false);
+    expect(screen.getByTestId('external-task-prompt')).toHaveTextContent('CURRENT REVIEW PROMPT');
+    fireEvent.click(screen.getByRole('button',{name:'Rebuild Task'}));
+    await waitFor(()=>expect(freezeLifecycle).toHaveBeenCalledTimes(2));
+    expect(freezeLifecycle.mock.calls[1][4]).toBe(true);
+    await waitFor(()=>expect(screen.getByTestId('external-task-prompt')).toHaveTextContent('REBUILT REVIEW PROMPT'));
+  });
   it('REG-F04-01/REG-TAB-09 exposes only Author/Review/Correct/Recheck with isolated Script/Native drafts',async()=>{
     bridge({readFrozen:async()=>null,readHistory:async()=>[]});
     render(<AppStateProvider><Harness><ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider></Harness></AppStateProvider>);
