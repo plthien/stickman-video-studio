@@ -219,8 +219,10 @@ export async function generateApiNarration(root:string,input:JobInput){
     const finalWav=joinNarrationWavs(wavs),info=inspectWavBuffer(finalWav);
     const beforePublish=readState(root);
     if(beforePublish.project.id!==initial.project.id||beforePublish.approvedScript?.sha256!==script.sha256||
-      beforePublish.approvedScript?.revision!==script.revision)
-      throw new Error('NARRATION_STALE: Script changed before WAV publication.');
+      beforePublish.approvedScript?.revision!==script.revision||
+      (beforePublish.nano?.endpoint??'http://127.0.0.1:3901')!==
+        (initial.nano?.endpoint??'http://127.0.0.1:3901'))
+      throw new Error('NARRATION_STALE: Script or Nano endpoint changed before WAV publication.');
     const summary={schema:'nano-api-narration-summary-v1',state:'PASS',sourceSha256,
       parts:segments.length,verifiedParts:wavs.length,finalSha256:info.sha256,
       duration:info.duration,voice,version,binding};
