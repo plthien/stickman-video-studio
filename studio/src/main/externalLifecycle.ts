@@ -567,6 +567,8 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
     operation==='correct'?(scope.findingIds?.length?scope.findingIds:suggested?.findingIds??[]):[];
   if(new Set(findingIds).size!==findingIds.length||findingIds.some(id=>typeof id!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(id)))
     throw new Error('Invalid finding scope.');
+  if(operation==='correct'&&findingIds.some(id=>!suggested?.findingIds.includes(id)))
+    throw new Error('CORRECT_FINDING_SCOPE_INVALID: finding ID is not unresolved in the confirmed current-artifact Review.');
   if(operation==='recheck'&&scope.findingIds?.length&&
     (scope.findingIds.length!==findingIds.length||scope.findingIds.some(id=>!findingIds.includes(id))))
     throw new Error('RECHECK_LINEAGE_REQUIRED: requested findings must match the exact current correction.');
