@@ -128,7 +128,7 @@ export async function generateApiNarration(root:string,input:JobInput){
     // Idempotent repeat must not republish identical WAV and invalidate current
     // alignment/caption approval merely because Generate was clicked twice.
     if(old.longform?.jobId===jobId&&old.longform.status==='PASS'&&
-      old.voice&&!old.voice.stale&&fs.existsSync(resolveProjectFile(root,relativeBase+'/output/final.wav'))){
+      old.voice?.origin==='NANO_LONGFORM'&&!old.voice.stale&&fs.existsSync(resolveProjectFile(root,relativeBase+'/output/final.wav'))){
       const final=fs.readFileSync(resolveProjectFile(root,relativeBase+'/output/final.wav'));
       const info=inspectWavBuffer(final);
       if(info.sha256!==old.voice.sha256||
@@ -160,8 +160,23 @@ export async function generateApiNarration(root:string,input:JobInput){
         if(fs.existsSync(uncertainPath))fs.unlinkSync(uncertainPath);
         continue;
       }
-      if(fs.existsSync(wavPath)||fs.existsSync(proofPath))
-        throw new Error('NARRATION_INCOMPLETE_PART: partial proof/file requires manual recovery: '+stem);
+      if(fs.existsSync(wavPath)||fs.existsSync(proofPath)){
+        if(!input.retryUncertain)
+          throw new Error('NARRATION_INCOMPLETE_PART: explicit retry required for '+stem);
+        // Preserve every unpaired byte in a checksum-addressed orphan file
+        // before an owner-authorized replay. Never silently discard a response.
+        for(const file of [wavPath,proofPath]){
+          if(!fs.existsSync(file))continue;
+          const bytes=fs.readFileSync(file),orphan=file+'.orphan-'+sha(bytes);
+          if(fs.existsSync(orphan)){
+            if(sha(fs.readFileSync(orphan))!==sha(bytes))
+              throw new Error('NARRATION_ORPHAN_CONFLICT: '+stem);
+          }else atomicBytes(orphan,bytes);
+          if(sha(fs.readFileSync(orphan))!==sha(bytes))
+            throw new Error('NARRATION_ORPHAN_VERIFICATION_FAILED: '+stem);
+          fs.unlinkSync(file);
+        }
+      }
       if(fs.existsSync(uncertainPath)&&!input.retryUncertain)
         throw new Error('NANO_UNCERTAIN: explicitly retry the pending part '+stem+'.');
       if(part.index>0&&wavs.length>0&&!input.resume&&!input.retryUncertain&&
