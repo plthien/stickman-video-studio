@@ -6,6 +6,35 @@ import { approvedCaptionCues, nativeVoiceTiming } from './captionReview.js';
 import { rejectNativeUnsafePaths, validateAuthoring } from './sourceCitations.js';
 import { compileAuthority } from './externalAuthority.js';
 
+export function externalOutputFilename(
+  stage:Stage,operation:'author'|'review'|'correct'|'recheck'|'media-review',
+  revision:number,taskId:string,mediaKind?:'preview'|'film'|'voice'|'captions'
+):string{
+  const shortId=taskId.replace(/-/g,'').slice(0,8).toLowerCase();
+  if(!Number.isInteger(revision)||revision<1||!/^[a-f0-9]{8}$/.test(shortId))
+    throw new Error('A frozen positive task revision and UUID-derived short ID are required for JSON file delivery.');
+  if(operation==='media-review'&&!mediaKind)throw new Error('Media Review JSON filename requires the frozen media kind.');
+  const kind=operation==='media-review'?'_'+mediaKind:'';
+  return 'mode_b_'+stage+'_'+operation.replace(/-/g,'_')+kind+'_r'+revision+'_'+shortId+'.json';
+}
+export function externalJsonFileDelivery(
+  stage:Stage,operation:'author'|'review'|'correct'|'recheck'|'media-review',
+  revision:number,taskId:string,mediaKind?:'preview'|'film'|'voice'|'captions'
+):string{
+  const filename=externalOutputFilename(stage,operation,revision,taskId,mediaKind);
+  return [
+    '## JSON FILE DELIVERY — REQUIRED',
+    'Create exactly one real, downloadable UTF-8 .json file using the required filename: '+filename+'.',
+    'The file must contain the COMPLETE final frozen response envelope as one valid JSON object.',
+    'Preserve the frozen project_id, task_id, revision, input_sha256 and stage, plus operation where applicable. Do not alter or add envelope fields.',
+    'Inside the file, do not include Markdown fences, explanations, review summaries, comments or surrounding text.',
+    'Do not substitute an inline JSON code block for the requested file when file-generation capability is available.',
+    'Make the JSON file available as an actual attachment/download artifact.',
+    'If this environment cannot create or attach a real file, state that limitation explicitly; never claim creation or fabricate a download link or file path.',
+    'This output instruction does not authorize local Studio/Core CLI commands, inspection of unavailable local files/media, paid provider calls or claims of performed audiovisual checks.'
+  ].join('\n')+'\n';
+}
+
 const exactKeys = (object: Record<string, unknown>, allowed: string[]) => { const extra = Object.keys(object).filter(key => !allowed.includes(key)); if (extra.length) throw new Error(`Unknown field: ${extra[0]}`); };
 const readUtf8 = (file: string) => fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
 const readJsonValue = (file: string) => (strictJson(`{"value":${readUtf8(file)}}`) as { value: unknown }).value;
@@ -117,7 +146,8 @@ export function freezeTask(appPath: string, root: string, stage: Stage, rebuild 
     ? { schema: 'mode-b-external-result-v1', project_id: state.project.id, task_id: id, revision, input_sha256: inputSha256, stage, payload: { schema: 'mode-b-script-v1', sections: [{id:'opening',text:'At sunrise, a red kite escaped into the wind.'},{id:'resolution',text:'By evening, the kite returned carrying a small ribbon.'}], authoring: {creative_direction:{premise:'A lost kite becomes a small adventure.'},characters:[{id:'child',description:'One child follows the kite through the same town.'}],continuity:{rules:['The kite stays red throughout the story.']},style_decisions:{visual_intent:'Make the flight and return causally readable.'},voice_intentions:{tone:'Curious and warm.'},sound_intentions:{intent:'Wind rises with the kite, then settles.'},source_references:[]} } }
     : { schema: 'mode-b-external-result-v1', project_id: state.project.id, task_id: id, revision, input_sha256: inputSha256, stage, payload: { manifest: {...(context as {native_manifest:Record<string,unknown>}).native_manifest,shots:[],captions:(context as {alignment:{approved_caption_cues:unknown}}).alignment.approved_caption_cues,voice:(context as {native_manifest:Record<string,unknown>}).native_manifest.voice}, shot_ledger: [{shot_id:'actual-shot-id',narrative_purpose:'actual purpose'}], sound_script: [{target_id:'actual-shot-id',intent:'actual story-led sound intent'}], asset_needs: [] } };
   const prompt = stage==='native'?`# ORIGINAL MODE B MANUAL CHATGPT HANDOFF — VISUAL / SHOT / SOUND / NATIVE MANIFEST\n\nThis is a manual transport boundary in the original Mode B workflow. Do not invent a parallel engine. Do not call tools, return Markdown, executable code or local absolute paths. Public HTTP(S) research citation URLs are permitted ONLY inside script payload.authoring.source_references as inert metadata; never use remote URLs as native assets or executable paths. Return exactly one JSON object matching the frozen envelope below.\n\n## ACTUAL PROJECT CONTEXT\n${JSON.stringify(context, null, 2)}\n\n## REQUIRED RESPONSE ENVELOPE\n${JSON.stringify(response, null, 2)}\n\nThe RESPONSE ENVELOPE is a structural starting point, NOT a valid finished film. Fill every required shot, ledger and actual field with project-specific verified data; no placeholder values, invented media, or fabricated timing. The outer identity fields must be returned byte-for-value. For native authoring, payload.manifest is the original B1–B4 project.json v1 and must contain no Studio/task metadata. Ground every shot in the approved script and actual word/caption timing. List missing media honestly; never fabricate an existing asset path.\n\n## AUTHORITATIVE INSTALLED MODE B SOURCES (SOURCE-EXACT VERIFIED STAGE EXTRACTIONS)\n${sources.map(item => `\n--- BEGIN ${item.relative} [full SHA256 ${item.sha256}; extraction SHA256 ${item.extractionSha256}; revision ${item.extractionRevision}; sections ${item.headings.join(' | ') || 'complete original'}] ---\n${item.text}\n--- END ${item.relative} ---`).join('\n')}\n`:'';
-  const finalPrompt=stage==='script'?scriptAuthorPrompt(context,response,sources):prompt.replace('Do not call tools, return Markdown, executable code or local absolute paths.','Do not claim or use local CLI, local media, paid providers, or file inspection without actual access. Return no Markdown, executable code, secrets, or local absolute paths. Public research is permitted when demanded and evidence is cited.');
+  const corePrompt=stage==='script'?scriptAuthorPrompt(context,response,sources):prompt.replace('Do not call tools, return Markdown, executable code or local absolute paths.','Do not claim or use local CLI, local media, paid providers, or file inspection without actual access. Return no Markdown, executable code, secrets, or local absolute paths. Public research is permitted when demanded and evidence is cited.');
+  const finalPrompt=corePrompt+'\n'+externalJsonFileDelivery(stage,'author',revision,id);
   const relative = `.studio/external/tasks/${stage}-${revision}-${id}.md`; const target = resolveProjectFile(root, relative); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, finalPrompt, { encoding: 'utf8', flag: 'wx' });
   state.tasks ??= {}; state.tasks[stage] = { id, revision, inputSha256, sourceFingerprint: inputSha256, ...(stage==='native'?{assetBaseline:assetSnapshot(root),mediaBaseline:mediaSnapshot(state)}:{}), promptSha256: sha(finalPrompt), promptPath: relative, status: 'FROZEN', createdAt: new Date().toISOString() }; writeState(root, state); return { ...state.tasks[stage], prompt:finalPrompt };
 }
