@@ -93,6 +93,14 @@ describe('ElevenLabs provider timing: evidence-grounded zero-duration repair',()
     writeState(root,next);
     expect(eligibleAlignmentResponse(root)).toBe(null);
   });
+  it('AL-07: keeps malformed successful HTTP JSON as bounded diagnostic evidence',()=>{
+    const {root}=fixture(),pin=captureAlignmentPin(root);
+    const relative=persistAlignmentResponse(root,pin,'{"characters": [');
+    const stored=JSON.parse(fs.readFileSync(path.join(root,relative),'utf8')) as Record<string,unknown>;
+    expect(stored.responseText).toBe('{"characters": [');
+    expect(stored.responseSha256).toBe(sha('{"characters": ['));
+    expect(()=>eligibleAlignmentResponse(root)).toThrow(/MALFORMED_JSON/);
+  });
   it('AL-11: a project/script change during caption conversion blocks stale alignment publication',async()=>{
     const {root,voicePath}=fixture(),pin=captureAlignmentPin(root);
     const prior=readState(root).alignment,wav=fs.readFileSync(path.join(root,voicePath));
