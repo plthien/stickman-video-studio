@@ -113,6 +113,24 @@ describe('Voice actions use main-process eligibility, not permanently enabled bu
     await waitFor(()=>expect(run).toHaveBeenCalledWith('voice-uncertain',
       {voice:'voice',resume:true,retryUncertain:true}));
   });
+  it('GEN-08/09: after restart Resume retains its frozen profile rather than an older accepted voice',async()=>{
+    const state=withProfile('voice-restart');
+    state.nano!.profileId='old-accepted';
+    state.longform={status:'UNCERTAIN',jobId:'pending',profileId:'frozen-current',
+      completedParts:1,totalParts:2};
+    const run=vi.fn(async()=>({jobId:'pending'}));
+    bridge({
+      voicePlaybackUrl:async()=> 'studio-media://voice-restart/assets/audio/narration.wav?sha='+'a'.repeat(64),
+      narrationAction:async()=>({action:'retry',reason:'UNCERTAIN',completed:1,total:2,status:'UNCERTAIN'}),
+      timingEvidence:async()=>false,longformRun:run,projectState:async()=>state
+    });
+    const confirm=vi.spyOn(window,'confirm').mockReturnValue(true);
+    render(<AppStateProvider><Seed state={state}><VoiceWorkspace/></Seed></AppStateProvider>);
+    fireEvent.click(await screen.findByRole('button',{name:'Explicit Retry uncertain part'}));
+    await waitFor(()=>expect(run).toHaveBeenCalledWith('voice-restart',
+      {voice:'frozen-current',resume:true,retryUncertain:true}));
+    expect(confirm).toHaveBeenCalledTimes(1);
+  });
   it('PB-05: bounded read-only playback retry never invokes Nano synthesis',async()=>{
     const state=withProfile('voice-player'),run=vi.fn(),url=vi.fn(async()=>
       'studio-media://voice-player/assets/audio/narration.wav?sha='+'a'.repeat(64));
