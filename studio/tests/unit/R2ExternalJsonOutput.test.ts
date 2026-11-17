@@ -81,7 +81,7 @@ describe('R2 frozen task JSON attachment delivery',()=>{
         const contract=task.prompt.split('## G — RESPONSE CONTRACT — NO PRESET OUTCOME')[1]
           ?.split('## H — ORIGINAL FROZEN AUTHOR TASK')[0]??'';
         expect(contract).toContain('"task_id": "'+task.id+'"');
-        expect(contract).not.toMatch(/"status"\\s*:\\s*"(?:REVIEWED_NO_FINDINGS|REVIEWED_WITH_FINDINGS|INSUFFICIENT_EVIDENCE|NOT_VERIFIED)"/);
+        expect(contract).not.toMatch(/"status"\s*:\s*"(?:REVIEWED_NO_FINDINGS|REVIEWED_WITH_FINDINGS|INSUFFICIENT_EVIDENCE|NOT_VERIFIED)"/);
       }
       seen.add(row.stage+':'+row.operation);
       frozenFilenameEvidence.push({stage:row.stage,operation:row.operation,shortId,filename});
@@ -89,7 +89,7 @@ describe('R2 frozen task JSON attachment delivery',()=>{
         stage:row.stage,operation:row.operation,media:row.media??null,
         task_id:task.id,revision:task.revision,source_path:task.promptPath,
         sha256:sha(task.prompt),bytes:Buffer.byteLength(task.prompt,'utf8'),
-        lines:task.prompt.split('\\n').length,filename
+        lines:task.prompt.split('\n').length,filename
       }));
       const same=row.operation==='author'?
         freezeTask(appPath,root,row.stage):
