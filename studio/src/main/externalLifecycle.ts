@@ -327,6 +327,9 @@ function scriptReviewPrompt(
 
 export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,operation:Exclude<ExternalOperation,'author'>,scope:Scope={},rebuild=false){
   if(!['review','correct','recheck','media-review'].includes(operation))throw new Error('Unsupported lifecycle operation.');
+  if(operation==='media-review'&&!(stage==='script'&&(scope.media==='voice'||scope.media==='captions')||
+    stage==='native'&&(scope.media==='preview'||scope.media==='film')))
+    throw new Error('INVALID_MEDIA_KIND: Script only supports voice/captions; Native only supports preview/film.');
   const state=readState(root),artifact=artifactFor(root,state,stage,operation),authority=compileAuthority(appPath,state.project.style,stage,operation);
   const ownerTask=state.tasks?.[stage];
   if(!ownerTask||!fs.existsSync(resolveProjectFile(root,ownerTask.promptPath)))
@@ -371,25 +374,41 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   if(!Array.isArray(requested)||new Set(requested).size!==requested.length||
     requested.some(id=>typeof id!=='string'||!allTargetIds.includes(id)))
     throw new Error('Review target scope contains fabricated or duplicate entity IDs.');
-  const targetIds=requested.length?requested:allTargetIds;
+  const nativeRange=operation==='media-review'&&stage==='native'&&scope.media==='preview'?mediaDuration:undefined;
+  const eligibleIds=typeof nativeRange==='number'?
+    (artifact.value as {manifest:{shots:Array<{id:string;start:number;end:number}>}}).manifest.shots
+      .filter(shot=>typeof shot.start==='number'&&Number.isFinite(shot.start)&&
+        typeof shot.end==='number'&&Number.isFinite(shot.end)&&shot.start<nativeRange&&shot.end>0)
+      .map(shot=>shot.id):allTargetIds;
+  if(operation==='media-review'&&scope.media==='preview'&&!eligibleIds.length)
+    throw new Error('MEDIA_COVERAGE_INVALID: preview contains no verified intersecting shots.');
+  if(operation==='media-review'&&scope.media==='preview'&&requested.some(id=>!eligibleIds.includes(id)))
+    throw new Error('MEDIA_COVERAGE_INVALID: out-of-sample shot cannot enter Preview review.');
+  const targetIds=requested.length?requested:eligibleIds;
+  if(operation==='correct')checkEditablePaths(stage,artifact.value,editablePaths);
   if(editableIds.some(id=>!allTargetIds.includes(id)))throw new Error('Editable target does not exist in frozen artifact.');
-  const relevantPrior=Object.values(state.lifecycle?.artifacts??{}).filter(item=>item.stage===stage&&['review','recheck','media-review'].includes(item.operation))
-    .sort((x,y)=>y.createdAt.localeCompare(x.createdAt)).slice(0,3).map(item=>({taskId:item.taskId,operation:item.operation,value:item.value}));
-  const latestFindingStatus=new Map<string,string>();
-  for(const item of [...relevantPrior].reverse()){
-    const p=item.value as {findings?:Array<{id:string;status?:string}>};
-    for(const finding of p.findings??[])latestFindingStatus.set(finding.id,finding.status??'uncertain');
-  }
-  const reviewFindings=[...latestFindingStatus].filter(([,status])=>status!=='resolved').map(([id])=>id);
-  const findingIds=operation==='correct'?(scope.findingIds?.length?scope.findingIds:suggested?.findingIds??[]):
-    scope.findingIds??(operation==='recheck'?[...new Set(reviewFindings)]:[]);
+  const lineage=operation==='recheck'?correctionLineage(state,stage,artifact):null;
+  const sources=Object.values(state.lifecycle?.artifacts??{});
+  const reviewSource=operation==='correct'&&suggested?.reviewTaskId?
+    sources.find(item=>item.taskId===suggested.reviewTaskId&&item.stage===stage&&
+      item.operation==='review'&&(item.value as {artifact_sha256?:string}).artifact_sha256===artifact.sha256):undefined;
+  const relevantPrior=lineage?.prior??(reviewSource?
+    [{taskId:reviewSource.taskId,operation:reviewSource.operation,value:reviewSource.value}]:
+    operation==='review'?sources.filter(item=>item.stage===stage&&item.operation==='review'&&
+      (item.value as {artifact_sha256?:string}).artifact_sha256===artifact.sha256)
+      .sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).slice(0,1)
+      .map(item=>({taskId:item.taskId,operation:item.operation,value:item.value})):[]);
+  const findingIds=operation==='recheck'?lineage!.findingIds:
+    operation==='correct'?(scope.findingIds?.length?scope.findingIds:suggested?.findingIds??[]):[];
   if(new Set(findingIds).size!==findingIds.length||findingIds.some(id=>typeof id!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(id)))
     throw new Error('Invalid finding scope.');
-  if(operation==='recheck'&&reviewFindings.some(id=>!findingIds.includes(id)))
-    throw new Error('Recheck must account for every unresolved prior finding.');
+  if(operation==='recheck'&&scope.findingIds?.length&&
+    (scope.findingIds.length!==findingIds.length||scope.findingIds.some(id=>!findingIds.includes(id))))
+    throw new Error('RECHECK_LINEAGE_REQUIRED: requested findings must match the exact current correction.');
   const key=stage+':'+operation,prior=state.lifecycle?.tasks[key];
   const snapshot={projectId:state.project.id,stage,operation,artifactSha256:artifact.sha256,authorityHashes:authority.sources.map(item=>[item.path,item.sha256,item.extractionSha256]),
-    originalTaskSha256:sha(originalTask),evidencePack,mediaTransferAttested,mediaSha256s,mediaDuration,editableIds,editablePaths,findingIds,targetIds,relevantPrior};
+    originalTaskSha256:sha(originalTask),evidencePack,mediaTransferAttested,mediaSha256s,mediaDuration,editableIds,editablePaths,findingIds,targetIds,relevantPrior,
+    correctionLineage:lineage?{correctTaskId:lineage.correctTaskId,reviewTaskId:lineage.reviewTaskId}:null};
   const sourceContextSha256=lifecycleSourceContext(state,stage,operation),authorityFingerprint=authorityIdentity(authority);
   const inputSha256=sha(JSON.stringify({...snapshot,sourceContextSha256,authorityFingerprint}));
   if(!rebuild&&prior?.status==='FROZEN'&&prior.inputSha256===inputSha256&&fs.existsSync(resolveProjectFile(root,prior.promptPath)))
