@@ -69,20 +69,22 @@ function correctionLineage(state:StudioState,stage:Stage,current:Artifact):Linea
   }else if(canonical(payload.artifact)!==canonical(current.value)){
     throw new Error('RECHECK_LINEAGE_REQUIRED: current Native artifact differs from the published correction.');
   }
-  const reviews=Object.values(state.lifecycle?.artifacts??{}).filter(row=>row.stage===stage&&
-    row.operation==='review'&&row.createdAt<=correct.createdAt&&
+  const sources=Object.values(state.lifecycle?.artifacts??{}).filter(row=>row.stage===stage&&
+    (row.operation==='review'||row.operation==='recheck')&&row.createdAt<=correct.createdAt&&
     (row.value as {artifact_sha256?:string})?.artifact_sha256===correct.artifactSha256)
-    .sort((a,b)=>b.createdAt.localeCompare(a.createdAt)||b.taskId.localeCompare(a.taskId));
-  const source=reviews.find(row=>{
-    const items=(row.value as {findings?:Array<{id:string;status:string}>}).findings??[];
-    return payload.finding_ids!.every(id=>items.some(f=>f.id===id&&(f.status==='open'||f.status==='uncertain')));
-  });
-  if(!source)throw new Error('RECHECK_LINEAGE_REQUIRED: no confirmed Review supports the exact correction finding IDs.');
+    .filter(row=>{
+      const items=(row.value as {findings?:Array<{id:string;status:string}>}).findings??[];
+      return payload.finding_ids!.every(id=>items.some(f=>f.id===id&&(f.status==='open'||f.status==='uncertain')));
+    });
+  const source=correct.sourceReviewTaskId?
+    sources.find(row=>row.taskId===correct.sourceReviewTaskId):
+    sources.length===1?sources[0]:undefined;
+  if(!source)throw new Error('RECHECK_LINEAGE_REQUIRED: correction has no unambiguous linked confirmed Review/Recheck supporting its findings.');
   const ids=[...new Set(payload.finding_ids)];
   if(ids.length!==payload.finding_ids.length||ids.some(id=>typeof id!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(id)))
     throw new Error('RECHECK_LINEAGE_REQUIRED: correction finding identity is invalid.');
   return {correctTaskId:correct.id,reviewTaskId:source.taskId,findingIds:ids,
-    prior:[{taskId:source.taskId,operation:'review',value:source.value},
+    prior:[{taskId:source.taskId,operation:source.operation,value:source.value},
       {taskId:correct.id,operation:'correct',
         value:{schema:payload.schema,artifact_sha256:payload.artifact_sha256,
           finding_ids:payload.finding_ids}}]};
@@ -556,7 +558,8 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   const sources=Object.values(state.lifecycle?.artifacts??{});
   const reviewSource=operation==='correct'&&suggested?.reviewTaskId?
     sources.find(item=>item.taskId===suggested.reviewTaskId&&item.stage===stage&&
-      item.operation==='review'&&(item.value as {artifact_sha256?:string}).artifact_sha256===artifact.sha256):undefined;
+      (item.operation==='review'||item.operation==='recheck')&&
+      (item.value as {artifact_sha256?:string}).artifact_sha256===artifact.sha256):undefined;
   const relevantPrior=lineage?.prior??(reviewSource?
     [{taskId:reviewSource.taskId,operation:reviewSource.operation,value:reviewSource.value}]:
     operation==='review'?sources.filter(item=>item.stage===stage&&item.operation==='review'&&
@@ -595,7 +598,7 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   const relative='.studio/external/lifecycle/tasks/'+stage+'-'+operation+'-'+revision+'-'+id+'.md',target=resolveProjectFile(root,relative);
   fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,prompt,{encoding:'utf8',flag:'wx'});
   state.lifecycle??={tasks:{},artifacts:{}};
-  state.lifecycle.tasks[key]={id,stage,operation,revision,inputSha256,artifactSha256:artifact.sha256,promptPath:relative,promptSha256:sha(prompt),status:'FROZEN',createdAt:new Date().toISOString(),editableIds,editablePaths,targetIds,findingIds,originalTaskSha256:sha(originalTask),sourceContextSha256,authorityFingerprint,mediaTransferAttested,mediaKind:scope.media,mediaSha256s,mediaDuration,mediaBaseline:structuredClone(state.media??[])};
+  state.lifecycle.tasks[key]={id,stage,operation,revision,inputSha256,artifactSha256:artifact.sha256,promptPath:relative,promptSha256:sha(prompt),status:'FROZEN',createdAt:new Date().toISOString(),editableIds,editablePaths,targetIds,findingIds,sourceReviewTaskId:operation==='correct'?reviewSource?.taskId:undefined,originalTaskSha256:sha(originalTask),sourceContextSha256,authorityFingerprint,mediaTransferAttested,mediaKind:scope.media,mediaSha256s,mediaDuration,mediaBaseline:structuredClone(state.media??[])};
   writeState(root,state);
   return{...state.lifecycle.tasks[key],prompt};
 }
