@@ -8,6 +8,17 @@ describe('External workspace never offers a fake frozen prompt',()=>{
   // Explicit isolation: both tests mount their own AppState/ExternalSession trees.
   afterEach(cleanup);
 
+  it('REG-TAB-11 renders Script/Native navigation from the array, not the keyed session-state object',()=>{
+    render(<AppStateProvider><ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider></AppStateProvider>);
+    const script=screen.getByRole('button',{name:'Script'});
+    const native=screen.getByRole('button',{name:'Native'});
+    expect(script).toBeInTheDocument();
+    expect(native).toBeInTheDocument();
+    fireEvent.click(native);
+    expect(screen.getByTestId('external-task-prompt')).toHaveAttribute('data-active-prompt','Native');
+    fireEvent.click(script);
+    expect(screen.getByTestId('external-task-prompt')).toHaveAttribute('data-active-prompt','Script');
+  });
   it('keeps Build, Copy, Export and Open ChatGPT in one task toolbar above a fixed-height scrolling prompt',()=>{
     render(<AppStateProvider><ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider></AppStateProvider>);
     const toolbar=screen.getByRole('toolbar',{name:'External task controls'});
