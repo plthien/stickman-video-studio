@@ -4,6 +4,7 @@ import path, { join } from 'node:path';
 import { alignWithElevenLabs } from './alignment.js';
 import { reconcileScriptActivation, confirmImport, freezeTask, stageImport, getPendingMedia, fulfillMedia, importMediaFile } from './externalTasks.js';
 import {confirmLifecycleResult,exportReviewPack,freezeLifecycleTask,readFrozenExternalTask,stageLifecycleResult} from './externalLifecycle.js';
+import {readExternalHistory} from './externalHistory.js';
 import { getCaptionReview, draftCaptionReview, approveCaptionReview } from './captionReview.js';
 import { discoverNano, generateNano, nanoBase } from './nanoClient.js';
 import { cancelJob, nativeJob, reconcileJob } from './nativeJobs.js';
@@ -41,6 +42,7 @@ function registerIpc() {
   ipcMain.handle('external:stageImport', (_event, id: string, stage: Stage, text: string) => stageImport(app.getAppPath(), rootFor(id), stage, text));
   ipcMain.handle('external:confirmImport', async (_event, id: string, token: string, options?: {previewSeconds?:number;allowSampleDraft?:boolean}) => { const root = rootFor(id); await confirmImport(app.getAppPath(), root, token, options); return projectSnapshot(root,app.getAppPath()); });
   ipcMain.handle('external:readFrozen',(_event,id:string,stage:Stage,operation:'author'|'review'|'correct'|'recheck'|'media-review')=>readFrozenExternalTask(app.getAppPath(),rootFor(id),stage,operation));
+  ipcMain.handle('external:readHistory',(_event,id:string,stage:Stage,operation:'author'|'review'|'correct'|'recheck'|'media-review',mediaKind?:'voice'|'captions'|'preview'|'film')=>readExternalHistory(rootFor(id),stage,operation,mediaKind));
   ipcMain.handle('external:freezeLifecycle',(_event,id:string,stage:Stage,operation:'review'|'correct'|'recheck'|'media-review',scope:Record<string,unknown>,rebuild=false)=>freezeLifecycleTask(app.getAppPath(),rootFor(id),stage,operation,scope,rebuild));
   ipcMain.handle('external:stageLifecycle',(_event,id:string,stage:Stage,operation:'review'|'correct'|'recheck'|'media-review',text:string)=>stageLifecycleResult(app.getAppPath(),rootFor(id),stage,operation,text));
   ipcMain.handle('external:confirmLifecycle',async(_event,id:string,token:string,options?:{previewSeconds?:number;allowSampleDraft?:boolean})=>{const root=rootFor(id);await confirmLifecycleResult(app.getAppPath(),root,token,options);return projectSnapshot(root,app.getAppPath())});
