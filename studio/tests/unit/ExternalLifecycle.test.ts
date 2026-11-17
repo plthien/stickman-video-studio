@@ -489,13 +489,59 @@ describe('External creative lifecycle',()=>{
     confirmLifecycleResult(root,result.token);
     expect(readState(root).approvedScript).toBeUndefined();
     const recheck=freezeLifecycleTask(appPath,root,'script','recheck',{findingIds:['F-001']});
+    const responseContract=recheck.prompt.split('## G — RESPONSE CONTRACT — NO PRESET OUTCOME')[1]
+      ?.split('## JSON FILE DELIVERY — REQUIRED')[0]??'';
+    const staticRecheck=responseContract.split('SCRIPT RECHECK — TEXT COVERAGE CONTRACT')[1]??'';
+    const correctedCandidate=readState(root).scriptCandidate!;
+    // REG-RCK-01: generated coverage contract is text-only, not transfer status.
+    for(const line of ['payload.coverage.target_ids:',
+      'Include every frozen target ID actually reviewed.',
+      'A reviewed status requires complete frozen target coverage.',
+      'payload.coverage.modalities: ["script"]',
+      'payload.coverage.ranges: []','payload.coverage.media_sha256s: []',
+      'The empty modalities array in ACTUAL EVIDENCE TRANSFER STATUS',
+      'is not the Script review coverage.',
+      'Missing WAV/MP4 does not automatically make'])
+      expect(staticRecheck).toContain(line);
+    expect(recheck.prompt).toContain('Frozen eligible target IDs: '+JSON.stringify(recheck.targetIds));
+    // REG-RCK-02: resolved findings must still be reported.
+    for(const line of ['SCRIPT RECHECK — REQUIRED HISTORICAL FINDINGS',
+      'MUST appear exactly once in payload.findings.',
+      'It does NOT require payload.findings to be empty.',
+      'payload.findings: [] is invalid.',
+      'Every required historical finding is resolved.',
+      'Never preset resolved status or REVIEWED_NO_FINDINGS.'])
+      expect(responseContract).toContain(line);
+    // REG-RCK-03: assess the current corrected candidate, not prior findings.
+    for(const line of ['SCRIPT RECHECK — CURRENT CANDIDATE EVIDENCE',
+      'Evaluate the exact CURRENT corrected Script candidate',
+      'Read the original requirement, evidence and recommendation.',
+      'Inspect the relevant current sections and authoring.',
+      'from the CURRENT corrected candidate.',
+      'Do not copy the previous Review conclusion or evidence',
+      'Report newly supported problems using valid distinct finding IDs.',
+      'Do not modify the Script during Recheck.'])
+      expect(responseContract).toContain(line);
+    expect(recheck.prompt).toContain(JSON.stringify({
+      id:'script-'+correctedCandidate.revision,
+      sha256:awaitHash(JSON.stringify(correctedCandidate)),value:correctedCandidate
+    },null,2));
+    // REG-RCK-04/06: no preset verdict, preserve frozen identity + JSON file delivery.
+    expect(responseContract).not.toMatch(/"status"\s*:\s*"(?:REVIEWED_NO_FINDINGS|INSUFFICIENT_EVIDENCE|REVIEWED_WITH_FINDINGS|NOT_VERIFIED)"/);
+    expect(responseContract).not.toMatch(/"findings"\s*:\s*\[\]/);
+    expect(recheck.prompt).toContain('Required exact finding IDs: '+JSON.stringify(recheck.findingIds));
+    for(const value of [recheck.id,recheck.inputSha256,recheck.artifactSha256])
+      expect(responseContract).toContain(value);
+    expect(recheck.prompt).toContain('mode_b_script_recheck_r'+recheck.revision+'_');
+    expect(recheck.prompt.indexOf('SCRIPT RECHECK — CURRENT CANDIDATE EVIDENCE'))
+      .toBeLessThan(recheck.prompt.indexOf('## JSON FILE DELIVERY — REQUIRED'));
     expect(recheck.prompt).toContain('SCRIPT RECHECK — TEXT EVIDENCE AND ACTIVATION GATE');
     expect(recheck.prompt).not.toContain('SCRIPT CORRECT — EXACT ARTIFACT CONTRACT');
     expect(recheck.prompt).toContain('Missing WAV/MP4 does not automatically mean INSUFFICIENT_EVIDENCE');
     expect(recheck.prompt).toContain('Required exact finding IDs: ["F-001"]');
     const reviewed=stageLifecycleResult(appPath,root,'script','recheck',wrap(recheck,'recheck',{
       schema:'mode-b-review-v1',artifact_sha256:recheck.artifactSha256,
-      status:'REVIEWED_NO_FINDINGS',coverage:{target_ids:['opening','payoff'],modalities:[],ranges:[]},
+      status:'REVIEWED_NO_FINDINGS',coverage:{target_ids:['opening','payoff'],modalities:['script'],ranges:[],media_sha256s:[]},
       findings:[finding('resolved')]}));
     confirmLifecycleResult(root,reviewed.token);
     const accepted=readState(root);
