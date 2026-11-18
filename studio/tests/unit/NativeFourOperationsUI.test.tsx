@@ -16,7 +16,7 @@ const project=(id:string,withDraft=true):NativeStudioState=>({
     unresolvedFindings:1,readyForMedia:false}:null,
   suggestedCorrectScope:{
     script:{editableIds:[],findingIds:[],reviewTaskId:null},
-    native:{editableIds:['shot-1'],findingIds:['N-001'],reviewTaskId:'review-draft',
+    native:{editableIds:[],findingIds:['N-001'],reviewTaskId:'review-draft',
       editablePaths:['/shot_ledger/0/meaning']},
     nativePublished:{editableIds:['shot-2'],findingIds:['P-001'],reviewTaskId:'review-published'}
   },
@@ -29,17 +29,18 @@ function Harness(){
     <ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider></>;
 }
 function install(){
+  const staged=vi.fn(async()=>({token:'staged-native',before:{},after:{manifest:{}},status:'STAGED'}));
   const freeze=vi.fn(async(_id:string,_stage:string,_operation:string,scope:Record<string,unknown>)=>({
     id:'task-'+String(scope.targetContext),revision:1,prompt:'Frozen '+String(scope.targetContext)+' Native mission',
     inputSha256:'b'.repeat(64),artifactSha256:'a'.repeat(64)
   }));
   Object.defineProperty(window,'studio',{configurable:true,value:{
     freezeTask:async()=>({id:'author-task',prompt:'Author prompt'}),
-    freezeLifecycle:freeze,readFrozen:async()=>null,
+    freezeLifecycle:freeze,stageLifecycle:staged,readFrozen:async()=>null,
     readHistory:async()=>[],pendingMedia:async()=>null,
     projectState:async(id:string)=>project(id)
   }});
-  return{freeze};
+  return{freeze,staged};
 }
 afterEach(()=>{cleanup();vi.restoreAllMocks();Object.defineProperty(window,'studio',{configurable:true,value:undefined});});
 describe('Native four-operation UI — explicit draft/published target and session isolation',()=>{
@@ -72,9 +73,49 @@ describe('Native four-operation UI — explicit draft/published target and sessi
     install();render(<AppStateProvider><Harness/></AppStateProvider>);
     fireEvent.click(screen.getByRole('button',{name:'Native'}));
     fireEvent.click(screen.getByRole('button',{name:'Correct'}));
-    expect(await screen.findByDisplayValue('shot-1')).toBeInTheDocument();
+    expect(await screen.findByLabelText('Editable section/shot IDs (comma separated)')).toHaveValue('');
     expect(screen.getByDisplayValue('/shot_ledger/0/meaning')).toBeInTheDocument();
     expect(screen.getByDisplayValue('N-001')).toBeInTheDocument();
+  });
+  it('NF03-01/03/04/07 switches frozen Draft/Published without leaking actionable prompt or losing pasted JSON',async()=>{
+    install();render(<AppStateProvider><Harness/></AppStateProvider>);
+    fireEvent.click(screen.getByRole('button',{name:'Native'}));
+    fireEvent.click(screen.getByRole('button',{name:'Review'}));
+    const target=await screen.findByLabelText('Native review target');
+    fireEvent.click(screen.getByRole('button',{name:'Build Task'}));
+    await screen.findByText('Frozen DRAFT Native mission');
+    fireEvent.change(screen.getByLabelText('Import JSON'),{target:{value:'{"payload":"draft"}'}});
+    expect(screen.getByRole('button',{name:'Copy prompt'})).toBeEnabled();
+    expect(screen.getByRole('button',{name:'Export .md'})).toBeEnabled();
+    fireEvent.change(target,{target:{value:'PUBLISHED'}});
+    expect(screen.getByText(/Native target or scope differs from the frozen task/)).toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'Copy prompt'})).toBeDisabled();
+    expect(screen.getByRole('button',{name:'Export .md'})).toBeDisabled();
+    expect(screen.getByRole('button',{name:'Validate import'})).toBeDisabled();
+    expect(screen.getByLabelText('Import JSON')).toHaveValue('{"payload":"draft"}');
+    fireEvent.change(target,{target:{value:'DRAFT'}});
+    expect(screen.getByRole('button',{name:'Copy prompt'})).toBeEnabled();
+    expect(screen.getByRole('button',{name:'Export .md'})).toBeEnabled();
+    expect(screen.getByRole('button',{name:'Validate import'})).toBeEnabled();
+    expect(screen.getByLabelText('Import JSON')).toHaveValue('{"payload":"draft"}');
+  });
+  it('NF03-02/05: changing target blocks confirmation of already staged JSON; Rebuild gets a new target',async()=>{
+    const {freeze,staged}=install();render(<AppStateProvider><Harness/></AppStateProvider>);
+    fireEvent.click(screen.getByRole('button',{name:'Native'}));
+    fireEvent.click(screen.getByRole('button',{name:'Review'}));
+    const target=await screen.findByLabelText('Native review target');
+    fireEvent.click(screen.getByRole('button',{name:'Build Task'}));
+    await screen.findByText('Frozen DRAFT Native mission');
+    fireEvent.change(screen.getByLabelText('Import JSON'),{target:{value:'{"result":"draft"}'}});
+    fireEvent.click(screen.getByRole('button',{name:'Validate import'}));
+    await waitFor(()=>expect(staged).toHaveBeenCalled());
+    expect(screen.getByRole('button',{name:/Confirm reviewed import/})).toBeEnabled();
+    fireEvent.change(target,{target:{value:'PUBLISHED'}});
+    expect(screen.queryByRole('button',{name:/Confirm reviewed import/})).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:'Rebuild Task'}));
+    await waitFor(()=>expect(freeze).toHaveBeenCalledWith('A','native','review',
+      expect.objectContaining({targetContext:'PUBLISHED'}),true));
+    expect(screen.getByTestId('external-task-prompt')).toHaveTextContent('Frozen PUBLISHED Native mission');
   });
   it('N05-UI-04 project switch does not expose A draft evidence or its frozen prompt on B',async()=>{
     install();render(<AppStateProvider><Harness/></AppStateProvider>);
