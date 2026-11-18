@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {getCaptionReview} from './captionReview.js';
 import {suggestedCorrectScope} from './externalLifecycle.js';
+import {readNativeDraft} from './externalTasks.js';
 import {verifyPersistedNativeEvidence,type NativeVerificationAdapter} from './nativeEvidence.js';
 import {assertLocalRoot,readState,resolveProjectFile,sha,strictJson} from './services.js';
 
@@ -30,6 +31,20 @@ export async function projectSnapshot(root:string,appPath:string,verifier?:Nativ
   const ambience=(Array.isArray(manifest.ambience)?manifest.ambience as Array<Record<string,unknown>>:[]).map((value,index)=>clip(typeof value.id==='string'&&value.id.trim()?value.id:text(value.path,`ambience ${index+1} path`),finite(value.start,`ambience ${index+1} start`),finite(value.end,`ambience ${index+1} end`)));
   const tracks={Scenes:shots.map(item=>({...clip(item.id,item.start,item.end),captionCount:item.captions.length,captionTexts:item.captions.map(cue=>cue.text+' ['+cue.start+'–'+cue.end+']')})),Layers:layers,Captions:captions.map(item=>clip(item.text,item.start,item.end)),Narration:state.voice&&!state.voice.stale?[clip(state.voice.origin??state.voice.path,0,state.voice.duration!)]:[],SFX:sfx,Ambience:ambience};
   const jobPath=path.join(projectRoot,'.studio','jobs','latest.json'),job=fs.existsSync(jobPath)?strictJson(fs.readFileSync(jobPath,'utf8')):null;
+  const nativeDraft=readNativeDraft(projectRoot,state);
+  const draftReports=nativeDraft?Object.values(state.lifecycle?.artifacts??{}).filter(item=>
+    item.stage==='native'&&item.artifactContext==='DRAFT'&&
+    (item.operation==='review'||item.operation==='recheck')&&
+    (item.value as {artifact_sha256?:string})?.artifact_sha256===nativeDraft.sha256)
+    .sort((a,b)=>b.createdAt.localeCompare(a.createdAt)):[],latestDraftReview=draftReports[0];
+  const currentFindings=(latestDraftReview?.value as {findings?:Array<{status:string}>}|undefined)?.findings??[];
   return{...state,manifest,projection:{shots,duration,tracks,captionReady,captionStatus,demo:false as const},job,
-    suggestedCorrectScope:{script:suggestedCorrectScope(projectRoot,state,'script'),native:suggestedCorrectScope(projectRoot,state,'native')}};
+    nativeDraft:nativeDraft?{context:'DRAFT' as const,token:nativeDraft.token,authorTaskId:nativeDraft.authorTaskId,
+      revision:nativeDraft.revision,artifactSha256:nativeDraft.sha256,
+      reviewStatus:latestDraftReview?.status??'NOT_REVIEWED',
+      unresolvedFindings:currentFindings.filter(item=>item.status==='open'||item.status==='uncertain').length,
+      readyForMedia:latestDraftReview?.status==='REVIEWED_NO_FINDINGS'}:null,
+    suggestedCorrectScope:{script:suggestedCorrectScope(projectRoot,state,'script'),
+      native:suggestedCorrectScope(projectRoot,state,'native',nativeDraft?'DRAFT':'PUBLISHED'),
+      nativePublished:state.external.native?suggestedCorrectScope(projectRoot,state,'native','PUBLISHED'):undefined}};
 }
