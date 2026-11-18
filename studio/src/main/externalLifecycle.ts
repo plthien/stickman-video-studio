@@ -3,6 +3,8 @@ import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {atomicJson,readState,resolveProjectFile,sha,strictJson,writeState,type ExternalOperation,type Stage,type StudioState} from './services.js';
 import {compileAuthority} from './externalAuthority.js';
+import {getCaptionReview,nativeVoiceTiming} from './captionReview.js';
+import {alignmentText} from './alignment.js';
 import {rejectNativeUnsafePaths,validateAuthoring} from './sourceCitations.js';
 import {activateScriptCandidate,scriptCorrectionRechecked,freezeTask,sourceFingerprint,stageImport,confirmImport,validateScript,validateManifest,externalJsonFileDelivery,readNativeDraft,publishNativeDraftCorrection,type ConfirmOptions} from './externalTasks.js';
 
@@ -17,6 +19,50 @@ const lifecycleDir=(root:string)=>resolveProjectFile(root,'.studio/external/life
 const resultPath=(root:string,id:string)=>path.join(lifecycleDir(root),'results',id+'.json');
 const pendingPath=(root:string)=>path.join(lifecycleDir(root),'pending.json');
 const canonical=(value:unknown):string=>Array.isArray(value)?`[${value.map(canonical).join(',')}]`:value&&typeof value==='object'?`{${Object.entries(value as Record<string,unknown>).sort(([a],[b])=>a.localeCompare(b)).map(([key,item])=>`${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`:JSON.stringify(value);
+
+/** Source-exact, read-only Native lifecycle evidence. No character-level timing. */
+function nativeLifecycleEvidence(root:string,state:StudioState){
+  const script=state.approvedScript,voice=state.voice,alignment=state.alignment;
+  if(!script||sha(script.text)!==script.sha256||!Array.isArray(script.sections)||
+    script.sections.map(row=>row.text).join('\n\n')!==script.text)
+    throw new Error('NATIVE_LIFECYCLE_APPROVED_NARRATION_INVALID');
+  if(!voice||voice.stale||typeof voice.duration!=='number'||!Number.isFinite(voice.duration)||voice.duration<=0||
+    sha(fs.readFileSync(resolveProjectFile(root,voice.path)))!==voice.sha256)
+    throw new Error('NATIVE_LIFECYCLE_ACCEPTED_WAV_INVALID');
+  if(!alignment||alignment.audioSha256!==voice.sha256||
+    alignment.scriptSha256!==sha(alignmentText(script.text))||!alignment.wordsSha256)
+    throw new Error('NATIVE_LIFECYCLE_ALIGNMENT_STALE');
+  const bytes=fs.readFileSync(resolveProjectFile(root,alignment.path));
+  if(sha(bytes)!==alignment.wordsSha256)throw new Error('NATIVE_LIFECYCLE_WORDS_SHA_MISMATCH');
+  const raw=strictJson(bytes.toString('utf8')) as {words?:Array<{word:string;start:number;end:number}>};
+  if(!Array.isArray(raw.words)||!raw.words.length)throw new Error('NATIVE_LIFECYCLE_WORDS_MISSING');
+  let end=0;
+  const words=raw.words.map((row,index)=>{
+    if(!row||typeof row.word!=='string'||!row.word.trim()||
+      typeof row.start!=='number'||typeof row.end!=='number'||
+      !Number.isFinite(row.start)||!Number.isFinite(row.end)||
+      row.start<end||row.end<=row.start||row.end>voice.duration+.05)
+      throw new Error('NATIVE_LIFECYCLE_WORD_TIMING_INVALID: '+index);
+    end=row.end;
+    return{word:row.word,start:row.start,end:row.end};
+  });
+  const captions=getCaptionReview(root);
+  if(!['VERIFIED','AUTO_VERIFIED'].includes(captions.status)||!captions.approved)
+    throw new Error('NATIVE_LIFECYCLE_APPROVED_CAPTIONS_REQUIRED');
+  const timing=nativeVoiceTiming(root,state);
+  return{
+    approved_narration:{sections:script.sections,authoring:script.authoring??null,
+      revision:script.revision,sha256:script.sha256},
+    accepted_wav:{path:voice.path,sha256:voice.sha256,duration_seconds:voice.duration},
+    verified_word_alignment:{source_sha256:alignment.wordsSha256,ordered_words:words},
+    approved_caption_cues:captions.approved.cues,
+    voice_timeline:{lead:timing.lead,tail:timing.tail,trim_start:timing.trimStart,
+      timeline_duration_seconds:timing.timelineDuration},
+    source_fingerprints:{script_sha256:script.sha256,audio_sha256:alignment.audioSha256,
+      alignment_words_sha256:alignment.wordsSha256,caption_source_sha256:captions.sourceSha256,
+      native_author_source_sha256:state.tasks?.native?.sourceFingerprint??null}
+  };
+}
 
 function artifactFor(root:string,state:StudioState,stage:Stage,operation:ExternalOperation,
   requested?:'DRAFT'|'PUBLISHED'):Artifact{
@@ -67,7 +113,7 @@ export function suggestedCorrectScope(root:string,state:StudioState,stage:Stage,
   // Suggest auxiliary pointers only when the reviewer wrote ONE explicit, existing,
   // concrete JSON pointer and that ledger entry names an actual finding target.
   // Do not guess paths from prose or grant whole ledgers automatically.
-  const inferredPaths:string[]=[];
+  const inferredPaths:string[]=[],auxiliaryOnlyFindingIds=new Set<string>();
   if(stage==='native'){
     for(const finding of unresolved){
       const withEvidence=finding as typeof finding & {evidence?:{detail?:string};requirement?:string};
@@ -80,11 +126,15 @@ export function suggestedCorrectScope(root:string,state:StudioState,stage:Stage,
       if(!row||typeof row!=='object'||Array.isArray(row))continue;
       const owner=row.shot_id??row.shotId??row.target_id??row.targetId;
       if(typeof owner!=='string'||!finding.target_ids.includes(owner))continue;
-      try{checkEditablePaths(stage,current.value,[pointer]);inferredPaths.push(pointer);}catch{/* Require owner selection. */}
+      try{
+        checkEditablePaths(stage,current.value,[pointer]);inferredPaths.push(pointer);
+        if(!/\/manifest\/shots\/(?:0|[1-9]\d*)\//.test(evidence))
+          auxiliaryOnlyFindingIds.add(finding.id);
+      }catch{/* Require owner selection. */}
     }
   }
   return {
-    editableIds:[...new Set(unresolved.flatMap(item=>item.target_ids))],
+    editableIds:[...new Set(unresolved.filter(item=>!auxiliaryOnlyFindingIds.has(item.id)).flatMap(item=>item.target_ids))],
     editablePaths:[...new Set(inferredPaths)],
     findingIds:[...new Set(unresolved.map(item=>item.id))],
     reviewTaskId:latest.taskId
@@ -231,6 +281,9 @@ function assertLifecycleFresh(appPath:string,root:string,state:StudioState,task:
   const authority=compileAuthority(appPath,state.project.style,task.stage,task.operation);
   if(!task.authorityFingerprint||task.authorityFingerprint!==authorityIdentity(authority))
     throw new Error('REBUILD_REQUIRED: installed Mode B creative authority changed.');
+  if(task.stage==='native'&&task.evidenceSha256&&
+    sha(JSON.stringify(nativeLifecycleEvidence(root,state)))!==task.evidenceSha256)
+    throw new Error('STALE: Native approved narration, word or caption evidence changed.');
   for(const item of task.mediaBaseline??[]){
     const live=(state.media??[]).find(row=>JSON.stringify(row)===JSON.stringify(item));
     if(!live)throw new Error('STALE: accepted media ledger entry changed or was removed.');
@@ -410,7 +463,7 @@ function dedicatedLifecyclePrompt(
   prior:Array<{taskId:string;operation:ExternalOperation;value:unknown}>,
   targetIds:string[],findingIds:string[],editableIds:string[],editablePaths:string[],
   evidencePack:unknown,mediaKind:Scope['media'],lineage:Lineage|null,
-  envelope:Record<string,unknown>,fileDelivery:string
+  envelope:Record<string,unknown>,fileDelivery:string,nativeSourceEvidence?:unknown
 ):string{
   const current=artifact.value;
   const payload=envelope.payload as {schema:string;artifact_sha256:string};
@@ -548,6 +601,9 @@ Return the complete corrected artifact, not a partial patch.`
     '# MODE B EXTERNAL '+stage.toUpperCase()+' '+operation.toUpperCase()+(kind?' — '+kind.toUpperCase():''),
     '## A — OPERATION-SPECIFIC MISSION',...missions,
     '## B — PROJECT BRIEF',JSON.stringify(brief,null,2),
+    ...(stage==='native'?['## B2 — NATIVE SOURCE EVIDENCE (VERIFIED, READ-ONLY)',
+      'Complete approved narration and real word-level timestamps. No character timings, second Author appendix or false media playback claims.',
+      JSON.stringify(nativeSourceEvidence,null,2)]:[]),
     '## C — ONE IMMUTABLE CURRENT TARGET',
     stage==='native'?'Native context: '+artifact.context+'; draft revision '+(artifact.draftRevision??'not applicable')+'; original Author '+(artifact.authorTaskId??'published original')+'. DRAFT is NOT published to project.json; PUBLISHED is the confirmed manifest. Never switch targets silently.':'Only this artifact is current. Do not replace it with an earlier approved Script, a previous Native manifest or the Author appendix.',
     JSON.stringify({id:artifact.id,sha256:artifact.sha256,value:current},null,2),
@@ -698,16 +754,16 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
       evidencePack.status='OWNER_ATTESTED_FILE_TRANSFER_NOT_VERIFIED_BY_STUDIO';
     }else evidencePack.status='AVAILABLE_LOCALLY_NOT_TRANSFERRED';
   }
-  const editablePaths=[...new Set(scope.editablePaths??[])];
   const suggested=operation==='correct'?suggestedCorrectScope(root,state,stage,artifact.context):null;
+  const editablePaths=[...new Set(scope.editablePaths??suggested?.editablePaths??[])];
   const selectedFindings=scope.findingIds?.length?scope.findingIds:suggested?.findingIds??[];
   const inferredTargets=suggested&&scope.findingIds?.length?
     suggested.editableIds.filter(id=>Object.values(state.lifecycle?.artifacts??{}).some(item=>
       item.taskId===suggested.reviewTaskId&&
       (item.value as {findings?:Array<{id:string;target_ids:string[]}>}).findings?.some(f=>
         selectedFindings.includes(f.id)&&f.target_ids.includes(id)))):suggested?.editableIds??[];
-  const editableIds=[...new Set(scope.editableIds?.length||editablePaths.length?
-    scope.editableIds??[]:inferredTargets)];
+  const editableIds=[...new Set(scope.editableIds!==undefined?scope.editableIds:
+    editablePaths.length?[]:inferredTargets)];
   if(operation==='correct'&&!editableIds.length&&!editablePaths.length)
     throw new Error('Correct requires unresolved findings from a confirmed current-artifact Review or an explicit editable section/shot scope.');
   if(editableIds.some(id=>typeof id!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(id)))throw new Error('Invalid editable ID.');
@@ -782,7 +838,9 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
     evidencePack,mediaTransferAttested,mediaSha256s,mediaDuration,editableIds,editablePaths,findingIds,targetIds,relevantPrior,
     correctionLineage:lineage?{correctTaskId:lineage.correctTaskId,reviewTaskId:lineage.reviewTaskId}:null};
   const sourceContextSha256=lifecycleSourceContext(state,stage,operation),authorityFingerprint=authorityIdentity(authority);
-  const inputSha256=sha(JSON.stringify({...snapshot,sourceContextSha256,authorityFingerprint}));
+  const nativeSourceEvidence=stage==='native'?nativeLifecycleEvidence(root,state):undefined;
+  const evidenceSha256=nativeSourceEvidence?sha(JSON.stringify(nativeSourceEvidence)):undefined;
+  const inputSha256=sha(JSON.stringify({...snapshot,sourceContextSha256,authorityFingerprint,evidenceSha256}));
   if(!rebuild&&prior?.status==='FROZEN'&&prior.inputSha256===inputSha256&&fs.existsSync(resolveProjectFile(root,prior.promptPath)))
     return{...prior,prompt:fs.readFileSync(resolveProjectFile(root,prior.promptPath),'utf8')};
   if(!rebuild&&prior?.status==='FROZEN')
@@ -802,12 +860,12 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   const prompt=stage==='script'&&operation==='review'?
     scriptReviewPrompt(state,artifact,originalTask,authority,relevantPrior,targetIds,envelope,fileDelivery):
     dedicatedLifecyclePrompt(state,stage,operation,artifact,originalTask,authority,relevantPrior,
-      targetIds,findingIds,editableIds,editablePaths,evidencePack,scope.media,lineage,envelope,fileDelivery);
+      targetIds,findingIds,editableIds,editablePaths,evidencePack,scope.media,lineage,envelope,fileDelivery,nativeSourceEvidence);
   const relative='.studio/external/lifecycle/tasks/'+stage+'-'+operation+'-'+revision+'-'+id+'.md',target=resolveProjectFile(root,relative);
   fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,prompt,{encoding:'utf8',flag:'wx'});
   state.lifecycle??={tasks:{},artifacts:{}};
   state.lifecycle.tasks[key]={id,stage,operation,revision,inputSha256,artifactSha256:artifact.sha256,
-    artifactContext:artifact.context,draftToken:artifact.draftToken,draftAuthorTaskId:artifact.authorTaskId,draftRevision:artifact.draftRevision,promptPath:relative,promptSha256:sha(prompt),status:'FROZEN',createdAt:new Date().toISOString(),editableIds,editablePaths,targetIds,findingIds,sourceReviewTaskId:operation==='correct'?reviewSource?.taskId:undefined,originalTaskSha256:sha(originalTask),sourceContextSha256,authorityFingerprint,mediaTransferAttested,mediaKind:scope.media,mediaSha256s,mediaDuration,mediaBaseline:structuredClone(state.media??[])};
+    artifactContext:artifact.context,draftToken:artifact.draftToken,draftAuthorTaskId:artifact.authorTaskId,draftRevision:artifact.draftRevision,promptPath:relative,promptSha256:sha(prompt),status:'FROZEN',createdAt:new Date().toISOString(),editableIds,editablePaths,targetIds,findingIds,sourceReviewTaskId:operation==='correct'?reviewSource?.taskId:undefined,originalTaskSha256:sha(originalTask),sourceContextSha256,authorityFingerprint,evidenceSha256,mediaTransferAttested,mediaKind:scope.media,mediaSha256s,mediaDuration,mediaBaseline:structuredClone(state.media??[])};
   writeState(root,state);
   return{...state.lifecycle.tasks[key],prompt};
 }
@@ -935,6 +993,9 @@ function validateReview(payload:Record<string,unknown>,task:NonNullable<StudioSt
   }
   if(operation==='recheck'&&task.findingIds?.some(id=>!ids.has(id)))throw new Error('Recheck omitted a previously unresolved finding.');
   if(payload.status==='REVIEWED_WITH_FINDINGS'&&!findings.length)throw new Error('Review declares findings but supplies none.');
+  if(payload.status==='REVIEWED_WITH_FINDINGS'&&
+    !findings.some(item=>['open','uncertain'].includes((item as {status:string}).status)))
+    throw new Error('REVIEW_WITH_FINDINGS_REQUIRES_UNRESOLVED_FINDING');
   if(payload.status==='REVIEWED_NO_FINDINGS'&&findings.some(item=>(item as {status:string}).status!=='resolved'))throw new Error('No-findings recheck contains unresolved findings.');
   if(operation==='recheck'&&payload.status==='REVIEWED_WITH_FINDINGS'&&
     !findings.some(item=>['open','uncertain'].includes((item as {status:string}).status)))
