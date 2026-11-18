@@ -8,7 +8,7 @@ import { reconcileScriptActivation, confirmImport, freezeTask, stageImport, getP
 import {confirmLifecycleResult,freezeLifecycleTask,readFrozenExternalTask,stageLifecycleResult} from './externalLifecycle.js';
 import {readExternalHistory} from './externalHistory.js';
 import { getCaptionReview, draftCaptionReview, approveCaptionReview,autoCaptionReview } from './captionReview.js';
-import {glabsSettings,saveGlabsSettings,glabsCredentialStatus,saveGlabsKey,clearGlabsKey,glabsProbe,listGlabsJobs,submitGlabsImage,pollGlabsImage,approveGlabsImage,type GLabsSettings,type ImageRequest} from './glabs.js';
+import {glabsSettings,saveGlabsSettings,glabsCredentialStatus,saveGlabsKey,clearGlabsKey,glabsProbe,listGlabsJobs,submitGlabsImage,pollGlabsImage,approveGlabsImage,cancelQueuedGlabsImage,type GLabsSettings,type ImageRequest} from './glabs.js';
 import { discoverNano, generateNano, nanoBase } from './nanoClient.js';
 import { cancelJob, nativeJob, reconcileJob } from './nativeJobs.js';
 import { importAlignedWords, importApprovedWav, longformStatus, runLongform, narrationAction } from './voiceMedia.js';
@@ -45,13 +45,14 @@ function registerIpc() {
   ipcMain.handle('glabs:clearKey',()=>clearGlabsKey(app.getPath('userData'),safeStorage));
   ipcMain.handle('glabs:probe',()=>glabsProbe(app.getPath('userData'),safeStorage));
   ipcMain.handle('glabs:jobs',(_event,id:string)=>listGlabsJobs(rootFor(id)));
-  ipcMain.handle('glabs:generate',(_event,id:string,input:ImageRequest)=>submitGlabsImage(app.getAppPath(),rootFor(id),app.getPath('userData'),safeStorage,input));
-  ipcMain.handle('glabs:poll',(_event,id:string,jobId:string)=>pollGlabsImage(app.getAppPath(),rootFor(id),app.getPath('userData'),safeStorage,jobId,bytes=>{
+  const decodeGlabsImage=(bytes:Buffer)=>{
     const decoded=nativeImage.createFromBuffer(bytes);
     if(decoded.isEmpty())throw new Error('GLABS_IMAGE_DECODE_FAILED');
-    const size=decoded.getSize();
-    return{png:decoded.toPNG(),width:size.width,height:size.height};
-  }));
+    const size=decoded.getSize();return{png:decoded.toPNG(),width:size.width,height:size.height};
+  };
+  ipcMain.handle('glabs:generate',(_event,id:string,input:ImageRequest)=>submitGlabsImage(app.getAppPath(),rootFor(id),app.getPath('userData'),safeStorage,input,decodeGlabsImage));
+  ipcMain.handle('glabs:poll',(_event,id:string,jobId:string)=>pollGlabsImage(app.getAppPath(),rootFor(id),app.getPath('userData'),safeStorage,jobId,decodeGlabsImage));
+  ipcMain.handle('glabs:cancelQueued',(_event,id:string,jobId:string)=>cancelQueuedGlabsImage(rootFor(id),jobId));
   ipcMain.handle('glabs:approve',(_event,id:string,jobId:string,rights:string)=>approveGlabsImage(app.getAppPath(),rootFor(id),jobId,rights));
   ipcMain.handle('settings:elevenlabsStatus', () => elevenLabsStatus(app.getPath('userData'),safeStorage));
   ipcMain.handle('settings:elevenlabsSave', (_event,key:string) => saveElevenLabsKey(app.getPath('userData'),safeStorage,key));
