@@ -12,7 +12,7 @@ const project=(id:string,withDraft=true):NativeStudioState=>({
   brief:{topic:'A coherent story',language:'English',ratio:'9:16'},
   external:{native:{revision:2,artifact:{},importedAt:'now'}},
   nativeDraft:withDraft?{context:'DRAFT',token:'pending-'+id,authorTaskId:'author-'+id,
-    revision:2,artifactSha256:'a'.repeat(64),reviewStatus:'REVIEWED_WITH_FINDINGS',
+    revision:2,artifactSha256:(id==='A'?'a':'b').repeat(64),reviewStatus:'REVIEWED_WITH_FINDINGS',
     unresolvedFindings:1,readyForMedia:false}:null,
   suggestedCorrectScope:{
     script:{editableIds:[],findingIds:[],reviewTaskId:null},
@@ -84,7 +84,8 @@ describe('Native four-operation UI — explicit draft/published target and sessi
     fireEvent.click(screen.getByRole('button',{name:'Build Task'}));
     await screen.findByText('Frozen DRAFT Native mission');
     fireEvent.click(screen.getByRole('button',{name:'Switch project B'}));
-    await waitFor(()=>expect(screen.getByText(/DRAFT revision 2/)).toBeInTheDocument());
+    await waitFor(()=>expect(screen.getByText(/DRAFT revision 2/)).toHaveTextContent('b'.repeat(64)));
+    expect(screen.getByText(/DRAFT revision 2/)).not.toHaveTextContent('a'.repeat(64));
     expect(screen.getByTestId('external-task-prompt')).toHaveTextContent('');
     expect(screen.getByRole('button',{name:'Validate import'})).toBeDisabled();
   });
