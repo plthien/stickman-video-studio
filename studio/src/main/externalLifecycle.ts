@@ -164,7 +164,16 @@ export function suggestedCorrectScope(
     // A concrete auxiliary-only finding never grants an entire Shot. A mixed
     // finding may grant both scopes ONLY if it explicitly references a Shot
     // field in the current manifest as well as an existing auxiliary pointer.
-    const explicitShotEvidence=/\/manifest\/shots\/(?:0|[1-9]\d*)\//.test(evidence);
+    const shotPaths=stage==='native'?
+      [...new Set(evidence.match(/\/manifest\/shots\/(?:0|[1-9]\d*)\/(?:[A-Za-z0-9_~\/-]+)/g)??[])]:[];
+    const shots=stage==='native'?
+      ((current.value as {manifest:{shots?:Array<{id:string}>}}).manifest.shots??[]):[];
+    const explicitShotEvidence=shotPaths.some(pointer=>{
+      const index=Number(pointer.split('/')[3]),target=shots[index];
+      if(!target||!finding.target_ids.includes(target.id))return false;
+      try{checkEditablePaths(stage,current.value,[pointer]);return true;}
+      catch{return false;}
+    });
     const auxiliaryOnly=paths.length>0&&!explicitShotEvidence;
     findingScopes[finding.id]={
       editableIds:auxiliaryOnly?[]:[...new Set(finding.target_ids)],
