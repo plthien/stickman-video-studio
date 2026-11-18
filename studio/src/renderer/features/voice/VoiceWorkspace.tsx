@@ -138,7 +138,7 @@ export function VoiceWorkspace() {
   </Card>
   <Card><CardHeader title="Auto Captions" hint="Verified real-word timings · original Core grouping · optional manual correction" action={<Badge tone={review?.approved?'mint':'amber'}>{review?.workflowStatus??'NOT_READY'}</Badge>}/>
     {!review?<div className="info">NOT_READY — Align or import verified word timestamps to enable automatic local caption grouping.</div>:<>
-      <dl className="kvs"><dt>Auto status</dt><dd>{review.workflowStatus}</dd><dt>Words</dt><dd>{review.wordCount}</dd><dt>Cues</dt><dd>{review.cueCount}</dd><dt>Voice timeline</dt><dd>{review.duration.toFixed(2)}s</dd><dt>Revision</dt><dd>{review.approved?.revision??'Not verified'}</dd></dl>
+      <dl className="kvs"><dt>Auto status</dt><dd>{review.workflowStatus??(review.approved?'USER_APPROVED':'REVIEW_REQUIRED')}</dd><dt>Words</dt><dd>{review.wordCount??review.words.length}</dd><dt>Cues</dt><dd>{review.cueCount??captionCues.length}</dd><dt>Voice timeline</dt><dd>{Number.isFinite(review.duration)?review.duration.toFixed(2):(native?.voice?.duration?.toFixed(2)??'—')}s</dd><dt>Revision</dt><dd>{review.approved?.revision??'Not verified'}</dd></dl>
       {review.error&&<div className="info error" role="alert">{review.error}</div>}
       <div className="info" aria-live="polite">Synced caption at {timelineSeconds.toFixed(2)}s: {currentCue?.text??'—'}</div>
       <div className="stack" aria-label="Caption cue timestamps">{captionCues.map((cue,i)=><div key={i} className="info">{cue.start.toFixed(3)}–{cue.end.toFixed(3)}s · {cue.text}</div>)}</div>
