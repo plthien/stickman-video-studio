@@ -1133,7 +1133,7 @@ async function publishNativeCorrection(appPath:string,root:string,pending:Record
   if(saved&&(saved.token!==pending.token||saved.taskId!==task.id||
     saved.desiredSha256!==desiredSha256||saved.desiredArtifactSha256!==desiredArtifactSha256))
     throw new Error('RECOVERY_REQUIRED: another native correction publication is pending.');
-  const initial=readState(root),initialArtifact=artifactFor(root,initial,'native','correct');
+  const initial=readState(root),initialArtifact=artifactFor(root,initial,'native','correct','PUBLISHED');
   const initialArtifactSha256=sha(canonical(initialArtifact.value));
   const journal:Record<string,unknown>=saved??{
     token:pending.token,taskId:task.id,baselineSha256,desiredSha256,
@@ -1176,7 +1176,7 @@ async function publishNativeCorrection(appPath:string,root:string,pending:Record
     // If a future ledger becomes a render dependency, it must use the manifest
     // validation/invalidation path rather than this metadata-only publication.
     const current=readState(root);
-    if(artifactFor(root,current,'native','correct').sha256!==task.artifactSha256||
+    if(artifactFor(root,current,'native','correct','PUBLISHED').sha256!==task.artifactSha256||
       manifestSemanticHash(manifestPath)!==baselineSha256)
       throw new Error('STALE: native creative state changed during auxiliary publication.');
     const prior=current.external.native;
