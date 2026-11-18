@@ -137,8 +137,22 @@ export async function publishAlignment(appPath: string, root: string, raw: Recor
     assertAlignmentPin(root,expectedPin);if(!fs.existsSync(stagedCaptions))throw new Error('Original captions command did not publish cues.');
     fs.mkdirSync(path.dirname(target),{recursive:true});fs.renameSync(stagedWords,target);fs.renameSync(stagedCaptions,captionsTarget);
     const latest=readState(root);assertAlignmentPin(root,expectedPin);
-    latest.alignment = { path: relative, captionsPath: captionsRelative, audioSha256: wav.sha256, scriptSha256: sha(transcript), wordsSha256: sha(fs.readFileSync(target)), cuesSha256: sha(fs.readFileSync(captionsTarget)), origin, words, ...(characters ? { characters } : {}), ...(typeof raw.loss === 'number' ? { loss: raw.loss } : {}), generatedAt: new Date().toISOString() };
-    latest.preview = undefined; latest.approval = undefined; latest.render = undefined; writeState(root, latest);
+    const previous=latest.alignment,newWordsSha=sha(fs.readFileSync(target)),newCoreSha=sha(fs.readFileSync(captionsTarget));
+    let preserveReview=false;
+    if(previous?.captionReview&&previous.audioSha256===wav.sha256&&
+      previous.scriptSha256===sha(transcript)&&previous.wordsSha256===newWordsSha&&previous.cuesSha256===newCoreSha){
+      try{
+        const {getCaptionReview}=await import('./captionReview.js');
+        preserveReview=['VERIFIED','AUTO_VERIFIED'].includes(getCaptionReview(root).status);
+      }catch{/* A missing/corrupt old review is never inherited. */}
+    }
+    latest.alignment = { path: relative, captionsPath: captionsRelative, audioSha256: wav.sha256, scriptSha256: sha(transcript), wordsSha256:newWordsSha, cuesSha256:newCoreSha, origin, words, ...(characters ? { characters } : {}), ...(typeof raw.loss === 'number' ? { loss: raw.loss } : {}), generatedAt: new Date().toISOString(),
+      ...(preserveReview?{captionReview:previous!.captionReview,captionDraft:previous!.captionDraft}:{}) };
+    if(!preserveReview){
+      if(latest.tasks?.native)latest.tasks.native.status='STALE';
+      latest.nativeReadiness=undefined;latest.preview=undefined;latest.approval=undefined;latest.render=undefined;
+    }
+    writeState(root, latest);
     // R3: Local word-boundary regroup only. Never re-upload to ElevenLabs or edit WAV.
     try{
       const {autoCaptionReview}=await import('./captionReview.js');
