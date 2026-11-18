@@ -55,6 +55,7 @@ export function suggestedCorrectScope(root:string,state:StudioState,stage:Stage,
   const reports=Object.values(state.lifecycle?.artifacts??{})
     .filter(item=>item.stage===stage&&(item.operation==='review'||item.operation==='recheck')&&
       (item.value as {artifact_sha256?:string})?.artifact_sha256===current.sha256&&
+      (current.context!=='DRAFT'||(item.draftAuthorTaskId===current.authorTaskId&&item.draftToken===current.draftToken))&&
       (stage!=='native'||item.artifactContext===current.context||
         (current.context==='PUBLISHED'&&!item.artifactContext)))
     .sort((a,b)=>b.createdAt.localeCompare(a.createdAt)||b.taskId.localeCompare(a.taskId));
@@ -96,8 +97,9 @@ type Lineage={correctTaskId:string;reviewTaskId:string;findingIds:string[];prior
  * never an authorization to resolve a different or retired artifact. */
 function correctionLineage(state:StudioState,stage:Stage,current:Artifact):Lineage{
   const correct=state.lifecycle?.tasks[stage+':correct'];
-  if(stage==='native'&&(correct?.artifactContext??'PUBLISHED')!==current.context)
-    throw new Error('RECHECK_LINEAGE_REQUIRED: Native correction belongs to another artifact context.');
+  if(stage==='native'&&((correct?.artifactContext??'PUBLISHED')!==current.context||
+    (current.context==='DRAFT'&&(correct?.draftAuthorTaskId!==current.authorTaskId||correct?.draftToken!==current.draftToken))))
+    throw new Error('RECHECK_LINEAGE_REQUIRED: Native correction belongs to another draft/author lineage.');
   if(!correct||correct.status!=='IMPORTED')throw new Error('RECHECK_LINEAGE_REQUIRED: a confirmed current Correct task is required.');
   const record=state.lifecycle?.artifacts[correct.id];
   const payload=record?.value as {schema?:string;artifact_sha256?:string;finding_ids?:string[];artifact?:unknown}|undefined;
@@ -115,6 +117,7 @@ function correctionLineage(state:StudioState,stage:Stage,current:Artifact):Linea
   const sources=Object.values(state.lifecycle?.artifacts??{}).filter(row=>row.stage===stage&&
     (row.operation==='review'||row.operation==='recheck')&&row.createdAt<=correct.createdAt&&
     (row.value as {artifact_sha256?:string})?.artifact_sha256===correct.artifactSha256&&
+    (current.context!=='DRAFT'||(row.draftAuthorTaskId===current.authorTaskId&&row.draftToken===current.draftToken))&&
     (stage!=='native'||row.artifactContext===correct.artifactContext||
       (correct.artifactContext==='PUBLISHED'&&!row.artifactContext)))
     .filter(row=>{
@@ -748,6 +751,7 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   const sources=Object.values(state.lifecycle?.artifacts??{});
   const reviewSource=operation==='correct'&&suggested?.reviewTaskId?
     sources.find(item=>item.taskId===suggested.reviewTaskId&&item.stage===stage&&
+      (artifact.context!=='DRAFT'||(item.draftAuthorTaskId===artifact.authorTaskId&&item.draftToken===artifact.draftToken))&&
       (stage!=='native'||item.artifactContext===artifact.context||
         (artifact.context==='PUBLISHED'&&!item.artifactContext))&&
       (item.operation==='review'||item.operation==='recheck')&&
@@ -757,6 +761,7 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   const relevantPrior=lineage?.prior??(reviewSource?
     [{taskId:reviewSource.taskId,operation:reviewSource.operation,value:reviewSource.value}]:
     operation==='review'?sources.filter(item=>item.stage===stage&&item.operation==='review'&&
+      (artifact.context!=='DRAFT'||(item.draftAuthorTaskId===artifact.authorTaskId&&item.draftToken===artifact.draftToken))&&
       (stage!=='native'||item.artifactContext===artifact.context||
         (artifact.context==='PUBLISHED'&&!item.artifactContext))&&
       (item.value as {artifact_sha256?:string}).artifact_sha256===artifact.sha256)
