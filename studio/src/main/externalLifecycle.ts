@@ -63,8 +63,28 @@ export function suggestedCorrectScope(root:string,state:StudioState,stage:Stage,
   const findings=(latest.value as {findings?:Array<{id:string;status:string;target_ids:string[]}>}).findings??[];
   const unresolved=findings.filter(item=>(item.status==='open'||item.status==='uncertain')&&
     /^[A-Za-z0-9_-]{1,80}$/.test(item.id)&&Array.isArray(item.target_ids));
+  // Suggest auxiliary pointers only when the reviewer wrote ONE explicit, existing,
+  // concrete JSON pointer and that ledger entry names an actual finding target.
+  // Do not guess paths from prose or grant whole ledgers automatically.
+  const inferredPaths:string[]=[];
+  if(stage==='native'){
+    for(const finding of unresolved){
+      const withEvidence=finding as typeof finding & {evidence?:{detail?:string};requirement?:string};
+      const evidence=[withEvidence.evidence?.detail,withEvidence.requirement].filter(Boolean).join(' ');
+      const paths=[...new Set(evidence.match(/\/(?:shot_ledger|sound_script|asset_needs)\/(?:0|[1-9]\d*)(?:\/[A-Za-z0-9_~\/-]+)+/g)??[])];
+      if(paths.length!==1)continue;
+      const pointer=paths[0],parts=pointer.slice(1).split('/'),collection=(current.value as Record<string,unknown>)[parts[0]];
+      if(!Array.isArray(collection))continue;
+      const row=collection[Number(parts[1])] as Record<string,unknown>|undefined;
+      if(!row||typeof row!=='object'||Array.isArray(row))continue;
+      const owner=row.shot_id??row.shotId??row.target_id??row.targetId;
+      if(typeof owner!=='string'||!finding.target_ids.includes(owner))continue;
+      try{checkEditablePaths(stage,current.value,[pointer]);inferredPaths.push(pointer);}catch{/* Require owner selection. */}
+    }
+  }
   return {
     editableIds:[...new Set(unresolved.flatMap(item=>item.target_ids))],
+    editablePaths:[...new Set(inferredPaths)],
     findingIds:[...new Set(unresolved.map(item=>item.id))],
     reviewTaskId:latest.taskId
   };
