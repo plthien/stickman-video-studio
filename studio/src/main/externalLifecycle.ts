@@ -187,6 +187,9 @@ export function suggestedCorrectScope(
   };
 }
 
+type Lineage={correctTaskId:string;reviewTaskId:string;findingIds:string[];prior:Array<{taskId:string;operation:ExternalOperation;value:unknown}>};
+/** Exact persisted correction-to-review ancestry. Stage-wide review history is
+ * never an authorization to resolve a different or retired artifact. */
 function correctionLineage(state:StudioState,stage:Stage,current:Artifact):Lineage{
   const correct=state.lifecycle?.tasks[stage+':correct'];
   if(stage==='native'&&((correct?.artifactContext??'PUBLISHED')!==current.context||
