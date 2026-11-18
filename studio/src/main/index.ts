@@ -7,7 +7,7 @@ import {acceptedNarrationPlaybackUrl,serveAcceptedNarration} from './voicePlayba
 import { reconcileScriptActivation, confirmImport, freezeTask, stageImport, getPendingMedia, fulfillMedia, importMediaFile } from './externalTasks.js';
 import {confirmLifecycleResult,freezeLifecycleTask,readFrozenExternalTask,stageLifecycleResult} from './externalLifecycle.js';
 import {readExternalHistory} from './externalHistory.js';
-import { getCaptionReview, draftCaptionReview, approveCaptionReview } from './captionReview.js';
+import { getCaptionReview, draftCaptionReview, approveCaptionReview,autoCaptionReview } from './captionReview.js';
 import { discoverNano, generateNano, nanoBase } from './nanoClient.js';
 import { cancelJob, nativeJob, reconcileJob } from './nativeJobs.js';
 import { importAlignedWords, importApprovedWav, longformStatus, runLongform, narrationAction } from './voiceMedia.js';
@@ -54,6 +54,7 @@ function registerIpc() {
   ipcMain.handle('external:pendingMedia', (_event, id: string) => getPendingMedia(app.getAppPath(), rootFor(id)));
   ipcMain.handle('external:fulfillMedia', (_event, id: string, token:string, key:string, relative:string, rights:string) => fulfillMedia(app.getAppPath(), rootFor(id), token, key, relative, rights));
   ipcMain.handle('voice:captionReview', (_event, id: string) => getCaptionReview(rootFor(id)));
+  ipcMain.handle('voice:captionAuto',(_event,id:string)=>autoCaptionReview(rootFor(id)));
   ipcMain.handle('voice:captionDraft', (_event, id: string, boundaries: number[]) => draftCaptionReview(rootFor(id),boundaries));
   ipcMain.handle('voice:captionApprove', (_event, id: string, note: string) => approveCaptionReview(rootFor(id),note));
   ipcMain.handle('voice:nanoDiscover', (_event, endpoint: string) => discoverNano(endpoint));
