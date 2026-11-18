@@ -8,6 +8,7 @@ import {freezeTask,getPendingMedia,readNativeDraft,stageImport,confirmImport,ful
 import {freezeLifecycleTask,stageLifecycleResult,confirmLifecycleResult,suggestedCorrectScope} from '../../src/main/externalLifecycle';
 import {fixture,stageNative,nativePayload,importedSource,validator,cleanup,appPath} from './SixIssueFixtures';
 import {readState,sha} from '../../src/main/services';
+import {projectSnapshot} from '../../src/main/projectSnapshot';
 import {saveGlabsKey,submitGlabsImage,pollGlabsImage,approveGlabsImage} from '../../src/main/glabs';
 
 afterEach(()=>{cleanup();vi.unstubAllGlobals();});
@@ -617,5 +618,54 @@ describe('RF01 — Native Correct subset authorization and confirmed lineage',()
     expect(cli.calls.some(call=>call.includes('validate'))).toBe(true);
     expect((JSON.parse(fs.readFileSync(path.join(root,'project.json'),'utf8')) as typeof manifest).shots[1].layers[0].text)
       .toBe('An explicit Shot-2 correction');
+  });
+});
+
+describe('Native Author re-freeze: safe project-open recovery',()=>{
+  it('ND-REC01 opens a project with stale draft provenance without deleting the original pending Author payload',async()=>{
+    const {root}=fixture();
+    stageNative(root,nativePayload(root));
+    const draftBefore=readNativeDraft(root)!;
+    const pendingFile=path.join(root,'.studio','external','pending.json');
+    const pendingBytes=fs.readFileSync(pendingFile);
+    const manifestBytes=fs.readFileSync(path.join(root,'project.json'));
+    const newTask=freezeTask(appPath,root,'native',true);
+    expect(newTask.id).not.toBe(draftBefore.authorTaskId);
+    expect(()=>readNativeDraft(root)).toThrow(/NATIVE_DRAFT_STALE_AUTHOR_TASK/);
+    const snapshot=await projectSnapshot(root,appPath);
+    expect(snapshot.project.id).toBe(readState(root).project.id);
+    expect(snapshot.nativeDraft).toBeNull();
+    expect(snapshot.nativeDraftRecovery).toBe('NATIVE_DRAFT_STALE_AUTHOR_TASK');
+    expect(fs.readFileSync(pendingFile)).toEqual(pendingBytes);
+    expect(fs.readFileSync(path.join(root,'project.json'))).toEqual(manifestBytes);
+    expect(()=>freezeLifecycleTask(appPath,root,'native','review',{targetContext:'DRAFT'}))
+      .toThrow(/NATIVE_DRAFT_STALE_AUTHOR_TASK/);
+  });
+  it('ND-REC02 imports a newly bound Author reply and recovers DRAFT without changing the preserved former response',async()=>{
+    const {root}=fixture();
+    stageNative(root,nativePayload(root));
+    const oldPending=JSON.parse(fs.readFileSync(path.join(root,'.studio','external','pending.json'),'utf8')) as {responsePath:string};
+    const originalResponseFile=path.join(root,oldPending.responsePath);
+    const originalBytes=fs.readFileSync(originalResponseFile);
+    const next=freezeTask(appPath,root,'native',true);
+    const state=readState(root);
+    const envelope={schema:'mode-b-external-result-v1',project_id:state.project.id,
+      task_id:next.id,revision:next.revision,input_sha256:next.inputSha256,stage:'native',
+      payload:nativePayload(root)};
+    const staged=stageImport(appPath,root,'native',JSON.stringify(envelope));
+    expect(['STAGED','WAITING_FOR_MEDIA']).toContain(staged.status);
+    const snapshot=await projectSnapshot(root,appPath);
+    expect(snapshot.nativeDraftRecovery).toBeNull();
+    expect(snapshot.nativeDraft?.authorTaskId).toBe(next.id);
+    expect(fs.readFileSync(originalResponseFile)).toEqual(originalBytes);
+  });
+  it('ND-REC03 still blocks project open when staged pending payload integrity is invalid',async()=>{
+    const {root}=fixture();
+    stageNative(root,nativePayload(root));
+    const file=path.join(root,'.studio','external','pending.json');
+    const pending=JSON.parse(fs.readFileSync(file,'utf8')) as Record<string,unknown>;
+    pending.payloadSha256='0'.repeat(64);
+    fs.writeFileSync(file,JSON.stringify(pending));
+    await expect(projectSnapshot(root,appPath)).rejects.toThrow(/Pending imported payload was modified/);
   });
 });
