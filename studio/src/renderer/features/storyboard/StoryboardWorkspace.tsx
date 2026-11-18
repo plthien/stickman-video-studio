@@ -152,6 +152,11 @@ export function StoryboardWorkspace(){
       {job.staged&&imageUrls[job.id]&&<img src={imageUrls[job.id]} alt={'G-Labs candidate for '+job.shotId+'/'+job.layerId} style={{maxWidth:'100%',maxHeight:260,objectFit:'contain'}}/>}
       <div className="actions">
         {['SUBMITTED','RUNNING','DOWNLOADED','UNKNOWN'].includes(job.status)&&job.providerTaskId&&<Button disabled={glabsBusy} onClick={()=>void pollImage(job.id)}>Resume / Check status (read-only)</Button>}
+        {job.status==='QUEUED'&&<Button disabled={glabsBusy} onClick={async()=>{
+          const scope=captureProjectSession();if(!scope||!window.studio||!window.confirm('Cancel this queued G-Labs attempt before paid submission?'))return;
+          try{await window.studio.glabsCancelQueued(scope.projectId,job.id);if(isCurrentProjectSession(scope))await refreshImages(scope);}
+          catch(error){if(isCurrentProjectSession(scope))setGlabsError(String(error));}
+        }}>Cancel queued attempt</Button>}
         {job.status==='VALIDATED'&&<Button variant="primary" disabled={glabsBusy||!rights.trim()} onClick={()=>void approveImage(job.id)}>Approve inspected image + bind</Button>}
       </div>
       {job.approved&&<div className="info">Owner approved media: {job.approved.path} · SHA {job.approved.sha256}. Native candidate confirmation is separate.</div>}
