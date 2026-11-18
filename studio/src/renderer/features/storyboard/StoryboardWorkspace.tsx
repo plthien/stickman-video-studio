@@ -23,6 +23,7 @@ export function StoryboardWorkspace(){
   const [selected,setSelected]=useState(0),[targetKey,setTargetKey]=useState(''),[rights,setRights]=useState(''),[pending,setPending]=useState<PendingTargets|null>(null),[error,setError]=useState('');
   type ImageJob=Awaited<ReturnType<NonNullable<Window['studio']>['glabsJobs']>>[number];
   const [glabsJobs,setGlabsJobs]=useState<ImageJob[]>([]),[imageUrls,setImageUrls]=useState<Record<string,string>>({});
+  const [previewReady,setPreviewReady]=useState<Record<string,string>>({}),[previewErrors,setPreviewErrors]=useState<Record<string,string>>({}),[previewAttempts,setPreviewAttempts]=useState<Record<string,number>>({});
   const [glabsConfig,setGlabsConfig]=useState<{model:string;aspectRatio:string}|null>(null);
   const [imagePrompt,setImagePrompt]=useState(''),[referencePaths,setReferencePaths]=useState(''),[glabsBusy,setGlabsBusy]=useState(false),[glabsError,setGlabsError]=useState('');
   const {native,captureProjectSession,isCurrentProjectSession,setNativeIfSessionCurrent,showNotice}=useAppState(),id=native?.project.id;
@@ -35,7 +36,7 @@ export function StoryboardWorkspace(){
   });
   const active=candidateShots.length?candidateShots:(native?.projection?.shots??[]);
   const index=Math.min(selected,Math.max(0,active.length-1)),shot=active[index];
-  useEffect(()=>{const scope=captureProjectSession();let mounted=true;setPending(null);setTargetKey('');setRights('');setError('');setGlabsJobs([]);setImageUrls({});setImagePrompt('');setReferencePaths('');setGlabsError('');if(!id||!scope||!window.studio)return()=>{mounted=false};void window.studio.pendingMedia(id).then(value=>{if(mounted&&isCurrentProjectSession(scope))setPending(value as PendingTargets|null)}).catch(reason=>{if(mounted&&isCurrentProjectSession(scope)){setPending(null);setError('Pending media ERROR: '+(reason instanceof Error?reason.message:String(reason)))}});return()=>{mounted=false};},[id,native?.external?.native?.revision]);
+  useEffect(()=>{const scope=captureProjectSession();let mounted=true;setPending(null);setTargetKey('');setRights('');setError('');setGlabsJobs([]);setImageUrls({});setPreviewReady({});setPreviewErrors({});setPreviewAttempts({});setImagePrompt('');setReferencePaths('');setGlabsError('');if(!id||!scope||!window.studio)return()=>{mounted=false};void window.studio.pendingMedia(id).then(value=>{if(mounted&&isCurrentProjectSession(scope))setPending(value as PendingTargets|null)}).catch(reason=>{if(mounted&&isCurrentProjectSession(scope)){setPending(null);setError('Pending media ERROR: '+(reason instanceof Error?reason.message:String(reason)))}});return()=>{mounted=false};},[id,native?.external?.native?.revision]);
   const refreshImages=async(scope=captureProjectSession())=>{
     if(!scope||!window.studio?.glabsJobs)return;
     const jobs=await window.studio.glabsJobs(scope.projectId);
@@ -57,6 +58,8 @@ export function StoryboardWorkspace(){
   const target=available.find(item=>item.key===targetKey);
   const shotJobs=glabsJobs.filter(item=>item.shotId===shot?.id);
   const latestTargetJob=glabsJobs.find(item=>item.targetKey===targetKey&&item.token===pending?.token);
+  // A load belongs only to this project, immutable job, image SHA, URL and preview attempt.
+  const previewIdentity=(job:ImageJob)=>[id,job.id,job.token,job.staged?.sha256??'-',imageUrls[job.id]??'-',previewAttempts[job.id]??0].join('|');
   const matchingLedger=(pending?.shotLedger??[]).filter(item=>{
     if(!shot||!item||typeof item!=='object')return false;
     const row=item as Record<string,unknown>;
@@ -95,7 +98,11 @@ export function StoryboardWorkspace(){
   const approveImage=async(jobId:string)=>{
     const scope=captureProjectSession();if(!scope||!window.studio)return;
     if(!rights.trim()){setGlabsError('Owner source/rights attestation required before approval.');return;}
-    if(!window.confirm('Approve the inspected image revision and bind exactly this Native target?'))return;
+    const job=glabsJobs.find(item=>item.id===jobId);
+    if(!job||job.status!=='VALIDATED'||!job.staged||!imageUrls[job.id]||previewReady[job.id]!==previewIdentity(job)){
+      setGlabsError('GLABS_PREVIEW_NOT_VERIFIED: load and inspect the current generated image before approval.');return;
+    }
+    if(!window.confirm('I have inspected the displayed current image. Approve this exact image revision and bind only its Native target?'))return;
     setGlabsBusy(true);setGlabsError('');
     try{
       await window.studio.glabsApprove(scope.projectId,jobId,rights.trim());
@@ -160,7 +167,28 @@ export function StoryboardWorkspace(){
     {shotJobs.length>0&&<div className="stack" aria-label="G-Labs image attempts">{shotJobs.map(job=><Card key={job.id}>
       <CardHeader title={job.layerId+' · '+job.status} hint={job.model+' / '+job.aspectRatio}/>
       <div className="info">Target: {job.targetPath} · Task: {job.providerTaskId??'Unconfirmed'} · {job.reason??''}</div>
-      {job.staged&&imageUrls[job.id]&&<img src={imageUrls[job.id]} alt={'G-Labs candidate for '+job.shotId+'/'+job.layerId} style={{maxWidth:'100%',maxHeight:260,objectFit:'contain'}}/>}
+      {job.staged&&imageUrls[job.id]&&<img key={previewIdentity(job)} src={imageUrls[job.id]} alt={'G-Labs candidate for '+job.shotId+'/'+job.layerId} style={{maxWidth:'100%',maxHeight:260,objectFit:'contain'}}
+        onLoad={event=>{
+          if(event.currentTarget.complete&&event.currentTarget.naturalWidth>0&&event.currentTarget.naturalHeight>0){
+            setPreviewReady(previous=>({...previous,[job.id]:previewIdentity(job)}));
+            setPreviewErrors(previous=>{const next={...previous};delete next[job.id];return next;});
+          }else{
+            setPreviewReady(previous=>{const next={...previous};delete next[job.id];return next;});
+            setPreviewErrors(previous=>({...previous,[job.id]:'The image did not decode to visible pixels.'}));
+          }
+        }}
+        onError={()=>{
+          setPreviewReady(previous=>{const next={...previous};delete next[job.id];return next;});
+          setPreviewErrors(previous=>({...previous,[job.id]:'Generated image preview failed to load.'}));
+        }}/>} 
+      {job.status==='VALIDATED'&&previewReady[job.id]!==previewIdentity(job)&&<div className="info">Preview not verified — approve is disabled until the actual image loads.</div>}
+      {previewErrors[job.id]&&<div className="info error" role="alert">{previewErrors[job.id]}</div>}
+      {job.staged&&previewErrors[job.id]&&<Button disabled={glabsBusy} onClick={()=>{
+        setPreviewReady(previous=>{const next={...previous};delete next[job.id];return next;});
+        setPreviewErrors(previous=>{const next={...previous};delete next[job.id];return next;});
+        setPreviewAttempts(previous=>({...previous,[job.id]:(previous[job.id]??0)+1}));
+        void refreshImages().catch(error=>setGlabsError(String(error)));
+      }}>Retry image preview</Button>}
       <div className="actions">
         {['SUBMITTED','RUNNING','DOWNLOADED','UNKNOWN'].includes(job.status)&&<Button disabled={glabsBusy} onClick={()=>void pollImage(job.id)}>{job.providerTaskId?'Resume / Check status (read-only)':'Reconcile unconfirmed submission (read-only)'}</Button>}
         {job.status==='QUEUED'&&<Button disabled={glabsBusy} onClick={async()=>{
@@ -168,7 +196,7 @@ export function StoryboardWorkspace(){
           try{await window.studio.glabsCancelQueued(scope.projectId,job.id);if(isCurrentProjectSession(scope))await refreshImages(scope);}
           catch(error){if(isCurrentProjectSession(scope))setGlabsError(String(error));}
         }}>Cancel queued attempt</Button>}
-        {job.status==='VALIDATED'&&<Button variant="primary" disabled={glabsBusy||!rights.trim()} onClick={()=>void approveImage(job.id)}>Approve inspected image + bind</Button>}
+        {job.status==='VALIDATED'&&<Button variant="primary" disabled={glabsBusy||!rights.trim()||!imageUrls[job.id]||previewReady[job.id]!==previewIdentity(job)} onClick={()=>void approveImage(job.id)}>Approve inspected image + bind</Button>}
       </div>
       {job.approved&&<div className="info">Owner approved media: {job.approved.path} · SHA {job.approved.sha256}. Native candidate confirmation is separate.</div>}
     </Card>)}</div>}
