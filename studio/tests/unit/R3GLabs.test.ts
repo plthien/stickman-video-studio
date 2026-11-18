@@ -310,7 +310,12 @@ describe('NF02 — effective per-target Native image identity across corrections
     const pending=getPendingMedia(appPath,root)!;
     expect(pending.fulfillments[targets[0].key]).toBeUndefined();
     expect(pending.missing.some(item=>item.key===targets[0].key)).toBe(true);
-    expect(readState(root).media!.find(item=>item.path===approved.path)).toEqual(approved);
+    // The ledger retains both the original unassigned import and the approved
+    // Shot/Layer audit entry at the same path. Match exact ownership, not the
+    // first (unassigned) row. The *active* pending binding was revoked above.
+    expect(readState(root).media!.find(item=>item.path===approved.path&&
+      item.shotId===approved.shotId&&item.layerId===approved.layerId)).toEqual(approved);
+    expect(sha(fs.readFileSync(path.join(root,approved.path)))).toBe(approved.sha256);
     const history=listGlabsJobs(root).find(item=>item.id===job.id)!;
     expect(history.status).toBe('APPROVED');
     expect(history.reason).toMatch(/GLABS_APPROVED_OUTPUT_SUPERSEDED/);
