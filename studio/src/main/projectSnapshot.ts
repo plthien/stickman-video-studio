@@ -34,6 +34,7 @@ export async function projectSnapshot(root:string,appPath:string,verifier?:Nativ
   const nativeDraft=readNativeDraft(projectRoot,state);
   const draftReports=nativeDraft?Object.values(state.lifecycle?.artifacts??{}).filter(item=>
     item.stage==='native'&&item.artifactContext==='DRAFT'&&
+    item.draftAuthorTaskId===nativeDraft.authorTaskId&&item.draftToken===nativeDraft.token&&
     (item.operation==='review'||item.operation==='recheck')&&
     (item.value as {artifact_sha256?:string})?.artifact_sha256===nativeDraft.sha256)
     .sort((a,b)=>b.createdAt.localeCompare(a.createdAt)):[],latestDraftReview=draftReports[0];
