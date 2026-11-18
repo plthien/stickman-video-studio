@@ -236,6 +236,16 @@ function assertLifecycleFresh(appPath:string,root:string,state:StudioState,task:
       throw new Error('STALE: accepted media bytes changed outside an authorized correction.');
   }
   const source=state.tasks?.[task.stage];
+  if(task.stage==='native'&&task.artifactContext==='DRAFT'){
+    if(!source?.sourceFingerprint||sourceFingerprint(appPath,root,'native')!==source.sourceFingerprint)
+      throw new Error('NATIVE_DRAFT_AUTHOR_SOURCE_STALE: approved creative/voice/alignment changed.');
+    const draft=readNativeDraft(root,state);
+    const retry=task.operation==='correct'&&draft?.history.some(item=>
+      item.correctTaskId===task.id&&item.previousSha256===task.artifactSha256);
+    if(!draft||draft.token!==task.draftToken||draft.authorTaskId!==task.draftAuthorTaskId||
+      (draft.revision!==task.draftRevision&&!retry))
+      throw new Error('NATIVE_DRAFT_REVISION_STALE: rebuild the exact current draft task.');
+  }
   if(!journalResume&&(!source||!task.originalTaskSha256||source.promptSha256!==task.originalTaskSha256))
     throw new Error('REBUILD_REQUIRED: original frozen author task changed.');
   const file=resolveProjectFile(root,task.promptPath);
@@ -664,6 +674,9 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
     throw new Error('INVALID_MEDIA_KIND: Script only supports voice/captions; Native only supports preview/film.');
   const state=readState(root),artifact=artifactFor(root,state,stage,operation,scope.targetContext),authority=compileAuthority(appPath,state.project.style,stage,operation);
   const ownerTask=state.tasks?.[stage];
+  if(stage==='native'&&artifact.context==='DRAFT'&&
+    (!ownerTask?.sourceFingerprint||sourceFingerprint(appPath,root,'native')!==ownerTask.sourceFingerprint))
+    throw new Error('NATIVE_DRAFT_AUTHOR_SOURCE_STALE: rebuild Author after the current input changed.');
   if(!ownerTask||!fs.existsSync(resolveProjectFile(root,ownerTask.promptPath)))
     throw new Error('REBUILD_REQUIRED: original frozen author task is unavailable for independent review/correction.');
   const originalTask=fs.readFileSync(resolveProjectFile(root,ownerTask.promptPath),'utf8');
