@@ -306,7 +306,21 @@ interface PendingImport {
   payloadSha256:string;payload:Record<string,unknown>;before:unknown;
   references:MissingNativeReference[];fulfillments:Record<string,{relative:string;sha256:string;rights:string;kind:'image'|'sfx'}>;
   createdAt:string;
+  draftHistory?:NativeDraftRevision[];
 }
+interface NativeDraftRevision {
+  schema:'mode-b-native-draft-revision-v1';
+  revision:number;authorTaskId:string;previousSha256:string;artifactSha256:string;
+  correctTaskId:string;reviewTaskId:string;authorizedEditableIds:string[];
+  authorizedEditablePaths:string[];authorizedFindingIds:string[];
+  recordPath:string;recordSha256:string;
+}
+const nativeDraftValue=(pending:PendingImport)=>({
+  manifest:(pending.payload as {manifest:unknown}).manifest,
+  shot_ledger:(pending.payload as {shotLedger:unknown}).shotLedger,
+  sound_script:(pending.payload as {soundScript:unknown}).soundScript,
+  asset_needs:(pending.payload as {assetNeeds:unknown}).assetNeeds
+});
 const pendingPath=(root:string)=>path.join(root,'.studio','external','pending.json');
 const fulfillmentTxnPath=(root:string)=>path.join(root,'.studio','external','fulfillment-transaction.json');
 type MediaRow=NonNullable<StudioState['media']>[number];
@@ -320,8 +334,97 @@ const readPending=(root:string):PendingImport=>{
   const frozenResponse=resolveProjectFile(root,pending.responsePath);
   if(!fs.existsSync(frozenResponse)||sha(fs.readFileSync(frozenResponse))!==pending.responseSha256)throw new Error('Frozen ChatGPT response bytes are missing or modified.');
   if(pending.payloadSha256!==sha(JSON.stringify(pending.payload)))throw new Error('Pending imported payload was modified.');
+  if(pending.stage==='native'&&pending.draftHistory){
+    if(!Array.isArray(pending.draftHistory))throw new Error('NATIVE_DRAFT_HISTORY_INVALID');
+    let previous:string|undefined;
+    for(const [index,item] of pending.draftHistory.entries()){
+      if(!item||item.schema!=='mode-b-native-draft-revision-v1'||item.revision!==index+2||
+        item.authorTaskId!==pending.taskId||!/^\.studio\/external\/draft-revisions\/native-[a-f0-9-]+\.json$/.test(item.recordPath))
+        throw new Error('NATIVE_DRAFT_HISTORY_INVALID');
+      const file=resolveProjectFile(root,item.recordPath);
+      if(!fs.existsSync(file)||sha(fs.readFileSync(file))!==item.recordSha256)
+        throw new Error('NATIVE_DRAFT_REVISION_TAMPERED');
+      const stored=strictJson(readUtf8(file)) as {schema?:string;revision?:number;
+        artifactSha256?:string;previousSha256?:string;artifact?:unknown};
+      if(stored.schema!==item.schema||stored.revision!==item.revision||
+        stored.artifactSha256!==item.artifactSha256||stored.previousSha256!==item.previousSha256||
+        sha(JSON.stringify(stored.artifact))!==item.artifactSha256||
+        (previous!==undefined&&item.previousSha256!==previous))
+        throw new Error('NATIVE_DRAFT_REVISION_IDENTITY_INVALID');
+      previous=item.artifactSha256;
+    }
+    if(previous&&sha(JSON.stringify(nativeDraftValue(pending)))!==previous)
+      throw new Error('NATIVE_DRAFT_CURRENT_REVISION_MISMATCH');
+  }
   return pending;
 };
+/** Read the immutable current Native Author draft; never fall back to project.json. */
+export function readNativeDraft(root:string,state=readState(root)){
+  if(!fs.existsSync(pendingPath(root)))return null;
+  const pending=readPending(root);
+  if(pending.stage!=='native')return null;
+  const author=state.tasks?.native;
+  if(pending.projectId!==state.project.id||!author||author.status!=='FROZEN'||
+    author.id!==pending.taskId||author.revision!==pending.revision||author.inputSha256!==pending.inputSha256)
+    throw new Error('NATIVE_DRAFT_STALE_AUTHOR_TASK');
+  const artifact=nativeDraftValue(pending);
+  return{context:'DRAFT' as const,token:pending.token,authorTaskId:pending.taskId,
+    revision:1+(pending.draftHistory?.length??0),artifact,sha256:sha(JSON.stringify(artifact)),
+    history:pending.draftHistory??[]};
+}
+/** Publish an immutable corrected draft revision without touching original Author
+ * response, published project.json or unrelated accepted media. */
+export function publishNativeDraftCorrection(appPath:string,root:string,originalSha256:string,
+  corrected:Record<string,unknown>,proof:{correctTaskId:string;reviewTaskId:string;
+    editableIds:string[];editablePaths:string[];findingIds:string[]}){
+  const state=readState(root),draft=readNativeDraft(root,state);
+  if(!draft)throw new Error('NATIVE_DRAFT_REQUIRED');
+  const normalized=validateManifest(state,root,corrected);
+  const newArtifact={manifest:normalized.manifest,shot_ledger:normalized.shotLedger,
+    sound_script:normalized.soundScript,asset_needs:normalized.assetNeeds};
+  const newSha256=sha(JSON.stringify(newArtifact));
+  const existing=draft.history.find(item=>item.correctTaskId===proof.correctTaskId);
+  if(existing){
+    if(existing.previousSha256!==originalSha256||existing.artifactSha256!==newSha256)
+      throw new Error('NATIVE_DRAFT_CORRECTION_REPLAY_CONFLICT');
+    return draft;
+  }
+  if(draft.sha256!==originalSha256)throw new Error('NATIVE_DRAFT_STALE_CORRECTION');
+  assertTaskCurrent(appPath,root,'native',state);
+  const pending=readPending(root);
+  if(pending.token!==draft.token)throw new Error('NATIVE_DRAFT_TOKEN_CHANGED');
+  const kept=Object.fromEntries(Object.entries(pending.fulfillments).filter(([key,binding])=>{
+    const previous=pending.references.find(ref=>ref.key===key);
+    const next=normalized.missing.find(ref=>ref.key===key);
+    if(!previous||!next||JSON.stringify(previous)!==JSON.stringify(next))return false;
+    const saved=state.media?.find(row=>row.path===binding.relative&&row.kind===binding.kind&&
+      row.sha256===binding.sha256&&row.rights===binding.rights);
+    const file=resolveProjectFile(root,binding.relative);
+    return Boolean(saved&&fs.existsSync(file)&&sha(fs.readFileSync(file))===binding.sha256);
+  }));
+  const recordPath='.studio/external/draft-revisions/native-'+randomUUID()+'.json';
+  const record={schema:'mode-b-native-draft-revision-v1' as const,
+    revision:draft.revision+1,authorTaskId:draft.authorTaskId,previousSha256:originalSha256,
+    artifactSha256:newSha256,correctTaskId:proof.correctTaskId,reviewTaskId:proof.reviewTaskId,
+    authorizedEditableIds:proof.editableIds,authorizedEditablePaths:proof.editablePaths,
+    authorizedFindingIds:proof.findingIds,artifact:newArtifact};
+  const target=resolveProjectFile(root,recordPath);
+  fs.mkdirSync(path.dirname(target),{recursive:true});
+  fs.writeFileSync(target,JSON.stringify(record,null,2)+'\n',{flag:'wx'});
+  const updated:PendingImport={...pending,
+    payload:{...normalized},payloadSha256:sha(JSON.stringify(normalized)),
+    references:normalized.missing,fulfillments:kept,
+    draftHistory:[...(pending.draftHistory??[]),{
+      schema:'mode-b-native-draft-revision-v1',revision:record.revision,
+      authorTaskId:record.authorTaskId,previousSha256:record.previousSha256,
+      artifactSha256:record.artifactSha256,correctTaskId:proof.correctTaskId,
+      reviewTaskId:proof.reviewTaskId,authorizedEditableIds:proof.editableIds,
+      authorizedEditablePaths:proof.editablePaths,authorizedFindingIds:proof.findingIds,
+      recordPath,recordSha256:sha(fs.readFileSync(target))
+    }]};
+  atomicJson(pendingPath(root),updated);
+  return readNativeDraft(root)!;
+}
 const pendingResult=(root:string,pending:PendingImport)=>{
   const state=readState(root);
   if(pending.stage==='script')return{token:pending.token,stage:pending.stage,before:pending.before,after:pending.payload,changes:1,status:'STAGED',missing:[]};
