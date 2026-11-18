@@ -222,6 +222,24 @@ describe('N01–N07: original Native Author plus pre-publication four-operation 
     expect(readState(root).external.native).toBeDefined();
     expect(readNativeDraft(root)).toBeNull();
   });
+  it('N05 target selection is mandatory when a new pending draft coexists with last-good Published Native',async()=>{
+    const {root,staged}=stageFixture();
+    await confirmImport(appPath,root,staged.response.token,{validator:validator().run,previewSeconds:30});
+    const published=fs.readFileSync(path.join(root,'project.json'));
+    const nextAuthor=freezeTask(appPath,root,'native',true);
+    const newPayload=nativePayload(root);
+    const envelope={schema:'mode-b-external-result-v1',project_id:readState(root).project.id,
+      task_id:nextAuthor.id,revision:nextAuthor.revision,input_sha256:nextAuthor.inputSha256,
+      stage:'native',payload:newPayload};
+    stageImport(appPath,root,'native',JSON.stringify(envelope));
+    expect(()=>freezeLifecycleTask(appPath,root,'native','review')).toThrow(/NATIVE_TARGET_SELECTION_REQUIRED/);
+    const draft=freezeLifecycleTask(appPath,root,'native','review',{targetContext:'DRAFT'});
+    expect(draft.artifactContext).toBe('DRAFT');
+    const confirmed=freezeLifecycleTask(appPath,root,'native','review',{targetContext:'PUBLISHED'},true);
+    expect(confirmed.artifactContext).toBe('PUBLISHED');
+    expect(confirmed.artifactSha256).not.toBe(draft.artifactSha256);
+    expect(fs.readFileSync(path.join(root,'project.json'))).toEqual(published);
+  });
   it('NR07 old Published Native Review remains supported after the original CLI confirms Author',async()=>{
     const {root,staged}=stageFixture();
     await confirmImport(appPath,root,staged.response.token,{validator:validator().run,previewSeconds:30});
