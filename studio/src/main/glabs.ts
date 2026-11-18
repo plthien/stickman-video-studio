@@ -214,7 +214,7 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
       verified.width>8192||verified.height>8192||imageMime(verified.png)!=='image/png')
       throw new Error('GLABS_REFERENCE_IMAGE_UNDECODABLE');
     const ext=checked.mime==='image/jpeg'?'jpg':checked.mime==='image/png'?'png':'webp';
-    return{path:relative,sha256:checked.sha256,mime:checked.mime,name:'ref_'+String(index+1).padStart(3,'0')+'.'+ext,rightsSha256:sha(entry.rights.trim())};
+    return{path:relative,sha256:checked.sha256,mime:checked.mime,name:'ref_'+String(index+1).padStart(3,'0')+'.'+ext,rightsSha256:sha(entry.rights)};
   });
   // Only read-only probes before an explicitly authorized paid POST.
   const probe=await glabsProbe(userData,cipher);
@@ -345,7 +345,7 @@ function assertJobReferences(root:string,job:GLabsJob,decode:GLabsDecoder){
        !/^[a-f0-9]{64}$/.test(ref.rightsSha256))
       throw new Error('GLABS_REFERENCE_RIGHTS_EVIDENCE_MISSING: inspect and explicitly regenerate if needed.');
     const approved=media.some(item=>item.path===ref.path&&item.kind==='image'&&
-      item.sha256===ref.sha256&&Boolean(item.rights?.trim())&&sha(item.rights.trim())===ref.rightsSha256);
+      item.sha256===ref.sha256&&Boolean(item.rights?.trim())&&sha(item.rights)===ref.rightsSha256);
     if(!approved)throw new Error('GLABS_REFERENCE_RIGHTS_CHANGED_OR_REVOKED');
     const checked=validatedImage(root,ref.path,ref.sha256);
     if(checked.mime!==ref.mime)throw new Error('GLABS_REFERENCE_MIME_CHANGED');
