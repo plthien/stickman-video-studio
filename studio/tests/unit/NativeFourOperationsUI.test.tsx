@@ -28,6 +28,29 @@ function Harness(){
   return <><button onClick={()=>setNative(project('B'))}>Switch project B</button>
     <ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider></>;
 }
+function projectWithFindings(id:string):NativeStudioState{
+  const base=project(id),isA=id==='A';
+  return {...base,suggestedCorrectScope:{...base.suggestedCorrectScope!,
+    native:isA?{
+      editableIds:['shot-2'],editablePaths:['/shot_ledger/0/meaning'],
+      findingIds:['RF-A','RF-B'],reviewTaskId:'review-A',
+      findingScopes:{
+        'RF-A':{editableIds:[],editablePaths:['/shot_ledger/0/meaning']},
+        'RF-B':{editableIds:['shot-2'],editablePaths:[]}
+      }
+    }:{
+      editableIds:['shot-1'],editablePaths:[],
+      findingIds:['RF-D'],reviewTaskId:'review-B',
+      findingScopes:{'RF-D':{editableIds:['shot-1'],editablePaths:[]}}
+    }
+  }};
+}
+function MultiFindingHarness(){
+  const {setNative}=useAppState();
+  useEffect(()=>{setNative(projectWithFindings('A'));},[]);
+  return <><button onClick={()=>setNative(projectWithFindings('B'))}>Switch findings project B</button>
+    <ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider></>;
+}
 function install(){
   const staged=vi.fn(async()=>({token:'staged-native',before:{},after:{manifest:{}},status:'STAGED'}));
   const freeze=vi.fn(async(_id:string,_stage:string,_operation:string,scope:Record<string,unknown>)=>({
@@ -116,6 +139,59 @@ describe('Native four-operation UI — explicit draft/published target and sessi
     await waitFor(()=>expect(freeze).toHaveBeenCalledWith('A','native','review',
       expect.objectContaining({targetContext:'PUBLISHED'}),true));
     expect(screen.getByTestId('external-task-prompt')).toHaveTextContent('Frozen PUBLISHED Native mission');
+  });
+  it('RF01-13: narrowing finding IDs removes only auto-inferred rights from unselected findings',async()=>{
+    const {freeze}=install();
+    render(<AppStateProvider><MultiFindingHarness/></AppStateProvider>);
+    fireEvent.click(screen.getByRole('button',{name:'Native'}));
+    fireEvent.click(screen.getByRole('button',{name:'Correct'}));
+    const findings=await screen.findByLabelText('Finding IDs to resolve (optional; defaults to unresolved findings)');
+    const shots=screen.getByLabelText('Editable section/shot IDs (comma separated)');
+    const paths=screen.getByLabelText('Expanded editable field paths (optional, comma separated)');
+    await waitFor(()=>expect(findings).toHaveValue('RF-A, RF-B'));
+    expect(shots).toHaveValue('shot-2');
+    expect(paths).toHaveValue('/shot_ledger/0/meaning');
+    fireEvent.change(findings,{target:{value:'RF-B'}});
+    expect(shots).toHaveValue('shot-2');
+    expect(paths).toHaveValue('');
+    fireEvent.click(screen.getByRole('button',{name:'Build Task'}));
+    await waitFor(()=>expect(freeze).toHaveBeenCalledWith('A','native','correct',
+      expect.objectContaining({findingIds:['RF-B'],editableIds:undefined,editablePaths:undefined}),false));
+    // After freezing, switching to F-A cannot keep submitting the old task.
+    fireEvent.change(findings,{target:{value:'RF-A'}});
+    expect(shots).toHaveValue('');
+    expect(paths).toHaveValue('/shot_ledger/0/meaning');
+    expect(screen.getByRole('button',{name:'Validate import'})).toBeDisabled();
+  });
+  it('RF01-13 explicit manual fields remain owner-controlled when findings narrow',async()=>{
+    install();render(<AppStateProvider><MultiFindingHarness/></AppStateProvider>);
+    fireEvent.click(screen.getByRole('button',{name:'Native'}));
+    fireEvent.click(screen.getByRole('button',{name:'Correct'}));
+    const findings=await screen.findByLabelText('Finding IDs to resolve (optional; defaults to unresolved findings)');
+    const shots=screen.getByLabelText('Editable section/shot IDs (comma separated)');
+    const paths=screen.getByLabelText('Expanded editable field paths (optional, comma separated)');
+    await waitFor(()=>expect(findings).toHaveValue('RF-A, RF-B'));
+    fireEvent.change(shots,{target:{value:'shot-1'}});
+    fireEvent.change(paths,{target:{value:''}});
+    fireEvent.change(findings,{target:{value:'RF-B'}});
+    expect(shots).toHaveValue('shot-1');
+    expect(paths).toHaveValue('');
+  });
+  it('RF01-14 switching project changes both suggestions and selected findings without scope leakage',async()=>{
+    const {freeze}=install();render(<AppStateProvider><MultiFindingHarness/></AppStateProvider>);
+    fireEvent.click(screen.getByRole('button',{name:'Native'}));
+    fireEvent.click(screen.getByRole('button',{name:'Correct'}));
+    const input=await screen.findByLabelText('Finding IDs to resolve (optional; defaults to unresolved findings)');
+    await waitFor(()=>expect(input).toHaveValue('RF-A, RF-B'));
+    fireEvent.change(input,{target:{value:'RF-B'}});
+    fireEvent.click(screen.getByRole('button',{name:'Switch findings project B'}));
+    await waitFor(()=>expect(input).toHaveValue('RF-D'));
+    expect(screen.getByLabelText('Editable section/shot IDs (comma separated)')).toHaveValue('shot-1');
+    expect(screen.getByLabelText('Expanded editable field paths (optional, comma separated)')).toHaveValue('');
+    expect(screen.getByLabelText('Import JSON')).toHaveValue('');
+    fireEvent.click(screen.getByRole('button',{name:'Build Task'}));
+    await waitFor(()=>expect(freeze).toHaveBeenCalledWith('B','native','correct',
+      expect.objectContaining({findingIds:['RF-D'],editableIds:undefined,editablePaths:undefined}),false));
   });
   it('N05-UI-04 project switch does not expose A draft evidence or its frozen prompt on B',async()=>{
     install();render(<AppStateProvider><Harness/></AppStateProvider>);
