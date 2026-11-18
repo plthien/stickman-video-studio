@@ -197,8 +197,22 @@ function currentJobTarget(appPath:string,root:string,job:GLabsJob):boolean{
 }
 export function invalidateGlabsJobsAfterNativeCorrection(appPath:string,root:string){
   for(const job of listGlabsJobs(root)){
-    if(['QUEUED','SUBMITTED','RUNNING','DOWNLOADED','VALIDATED','UNKNOWN'].includes(job.status))
+    if(['QUEUED','SUBMITTED','RUNNING','DOWNLOADED','VALIDATED','UNKNOWN'].includes(job.status)){
       currentJobTarget(appPath,root,job);
+    }else if(job.status==='APPROVED'){
+      // Approved is historical evidence, not permission to bind an old image to
+      // a revised target. Keep approval and licensed media, flag supersession.
+      let current=false;
+      try{
+        const identity=nativeImageTargetIdentity(root,job.targetKey);
+        current=identity.fingerprint===job.targetCreativeSha256&&
+          identity.authorTaskId===job.authorTaskId;
+      }catch{/* A retired target has no current binding. */}
+      if(!current){
+        job.reason='GLABS_APPROVED_OUTPUT_SUPERSEDED: historical approved media retained; current Native draft requires a new target review.';
+        writeJob(root,job);
+      }
+    }
   }
 }
 export type GLabsDecoder=(bytes:Buffer)=>{png:Buffer;width:number;height:number};
