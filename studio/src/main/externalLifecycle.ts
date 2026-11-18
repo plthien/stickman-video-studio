@@ -96,7 +96,7 @@ type Lineage={correctTaskId:string;reviewTaskId:string;findingIds:string[];prior
  * never an authorization to resolve a different or retired artifact. */
 function correctionLineage(state:StudioState,stage:Stage,current:Artifact):Lineage{
   const correct=state.lifecycle?.tasks[stage+':correct'];
-  if(stage==='native'&&correct?.artifactContext!==current.context)
+  if(stage==='native'&&(correct?.artifactContext??'PUBLISHED')!==current.context)
     throw new Error('RECHECK_LINEAGE_REQUIRED: Native correction belongs to another artifact context.');
   if(!correct||correct.status!=='IMPORTED')throw new Error('RECHECK_LINEAGE_REQUIRED: a confirmed current Correct task is required.');
   const record=state.lifecycle?.artifacts[correct.id];
@@ -289,7 +289,7 @@ export function readFrozenExternalTask(appPath:string,root:string,stage:Stage,op
   if(operation!=='author'){
     const life=task as NonNullable<StudioState['lifecycle']>['tasks'][string];
     assertLifecycleFresh(appPath,root,state,life);
-    if(artifactFor(root,state,stage,operation,life.artifactContext).sha256!==life.artifactSha256)
+    if(artifactFor(root,state,stage,operation,stage==='native'?(life.artifactContext??'PUBLISHED'):undefined).sha256!==life.artifactSha256)
       throw new Error('STALE: saved lifecycle task targets an older creative artifact.');
   }
   return {...task,prompt:fs.readFileSync(target,'utf8')};
@@ -1050,7 +1050,7 @@ function recoverDisabledMediaReviewPending(root:string,state:StudioState):void{
 export function stageLifecycleResult(appPath:string,root:string,stage:Stage,operation:Exclude<ExternalOperation,'author'>,text:string){
   requireActiveLifecycleOperation(operation);
   const state=readState(root),task=state.lifecycle?.tasks[`${stage}:${operation}`];if(!task||task.status!=='FROZEN')throw new Error('No current frozen lifecycle task exists.');
-  const current=artifactFor(root,state,stage,operation,task.artifactContext);if(current.sha256!==task.artifactSha256)throw new Error('Lifecycle artifact is stale.');assertLifecycleFresh(appPath,root,state,task);
+  const current=artifactFor(root,state,stage,operation,stage==='native'?(task.artifactContext??'PUBLISHED'):undefined);if(current.sha256!==task.artifactSha256)throw new Error('Lifecycle artifact is stale.');assertLifecycleFresh(appPath,root,state,task);
   const value=strictJson(text) as Record<string,unknown>;exact(value,['schema','project_id','task_id','revision','input_sha256','stage','operation','payload']);
   if(value.schema!=='mode-b-lifecycle-result-v1'||value.project_id!==state.project.id||value.task_id!==task.id||value.revision!==task.revision||value.input_sha256!==task.inputSha256||value.stage!==stage||value.operation!==operation)throw new Error('Lifecycle project/task/revision binding mismatch.');
   const payload=value.payload as Record<string,unknown>;if(!payload||typeof payload!=='object'||Array.isArray(payload))throw new Error('Invalid lifecycle payload.');
@@ -1266,7 +1266,7 @@ export function confirmLifecycleResult(appPathOrRoot:string,rootOrToken:string,m
     throw new Error('Frozen lifecycle response bytes changed before publication.');
   const frozen=strictJson(fs.readFileSync(frozenFile,'utf8')) as Record<string,unknown>;
   if(canonical(frozen.payload)!==canonical(pending.payload))throw new Error('Lifecycle pending response is corrupt.');
-  const original=artifactFor(root,state,task.stage,task.operation,task.artifactContext);
+  const original=artifactFor(root,state,task.stage,task.operation,task.stage==='native'?(task.artifactContext??'PUBLISHED'):undefined);
   const desiredDraftValue=(pending.payload as {artifact?:{
     manifest:unknown;shot_ledger:unknown;sound_script:unknown;asset_needs:unknown}}).artifact;
   const draftDesiredSha256=desiredDraftValue?sha(JSON.stringify({
