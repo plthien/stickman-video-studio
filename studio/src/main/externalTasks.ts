@@ -56,7 +56,7 @@ const projectContext = (state: StudioState, root: string, stage:Stage) => {
 };
 /** Native prompt projection v1: keep sourceFingerprint() on full frozen evidence.
  * This is an output-size change only; never rewrite the accepted alignment file. */
-function nativePromptProjection(context:ReturnType<typeof projectContext>){
+function nativePromptProjection(context:ReturnType<typeof projectContext>,root:string){
   const source=context as unknown as Record<string,unknown> & {
     alignment?:{words?:unknown;caption_cues?:unknown;approved_caption_cues?:unknown;
       provenance?:unknown;words_sha256?:unknown;cues_sha256?:unknown;
@@ -71,6 +71,11 @@ function nativePromptProjection(context:ReturnType<typeof projectContext>){
     ordered.some(row=>!row||typeof row.word!=='string'||typeof row.start!=='number'||typeof row.end!=='number'))
     throw new Error('NATIVE_AUTHOR_WORD_PROJECTION_INVALID: source word evidence is missing.');
   const words=ordered.map(row=>({word:row.word as string,start:row.start as number,end:row.end as number}));
+  for(const row of source.media_ledger??[]){
+    if(!row.rights?.trim()||typeof row.path!=='string'||!fs.existsSync(resolveProjectFile(root,row.path))||
+      sha(fs.readFileSync(resolveProjectFile(root,row.path)))!==row.sha256)
+      throw new Error('NATIVE_AUTHOR_REGISTERED_MEDIA_STALE: source or rights are not verified.');
+  }
   const {assets:unusedAssets,media_ledger:unusedLedger,...common}=source;
   void unusedAssets;void unusedLedger;
   return {...common,
@@ -197,7 +202,7 @@ export function freezeTask(appPath: string, root: string, stage: Stage, rebuild 
 - Return ONE COMPLETE Native candidate with manifest, shot_ledger, sound_script and asset_needs. Do not return Review/Correct/Recheck verdicts, a published project, fake CLI validation, media observations or a rendered film.
 
 ## ACTUAL AUTHORING SOURCE (COMPACT PROJECTION v1; SOURCE EVIDENCE UNCHANGED)
-${JSON.stringify(nativePromptProjection(context), null, 2)}
+${JSON.stringify(nativePromptProjection(context,root), null, 2)}
 
 ## REQUIRED RESPONSE ENVELOPE\n${JSON.stringify(response, null, 2)}\n\nThe RESPONSE ENVELOPE is a structural starting point, NOT a valid finished film. Fill every required shot, ledger and actual field with project-specific verified data; no placeholder values, invented media, or fabricated timing. The outer identity fields must be returned byte-for-value. For native authoring, payload.manifest is the original B1–B4 project.json v1 and must contain no Studio/task metadata. Ground every shot in the approved script and actual word/caption timing. List missing media honestly; never fabricate an existing asset path.\n\n## AUTHORITATIVE INSTALLED MODE B SOURCES (SOURCE-EXACT VERIFIED STAGE EXTRACTIONS)\n${sources.map(item => `\n--- BEGIN ${item.relative} [full SHA256 ${item.sha256}; extraction SHA256 ${item.extractionSha256}; revision ${item.extractionRevision}; sections ${item.headings.join(' | ') || 'complete original'}] ---\n${item.text}\n--- END ${item.relative} ---`).join('\n')}\n`:'';
   const corePrompt=stage==='script'?scriptAuthorPrompt(context,response,sources):prompt.replace('Do not call tools, return Markdown, executable code or local absolute paths.','Do not claim or use local CLI, local media, paid providers, or file inspection without actual access. Return no Markdown, executable code, secrets, or local absolute paths. Public research is permitted when demanded and evidence is cited.');
