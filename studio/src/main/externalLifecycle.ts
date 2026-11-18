@@ -64,8 +64,10 @@ function nativeLifecycleEvidence(root:string,state:StudioState){
     voice_timeline:{lead:timing.lead,tail:timing.tail,trim_start:timing.trimStart,
       timeline_duration_seconds:timing.timelineDuration},
     source_fingerprints:{script_sha256:script.sha256,audio_sha256:alignment.audioSha256,
-      alignment_words_sha256:alignment.wordsSha256,caption_source_sha256:captions.sourceSha256,
-      native_author_source_sha256:state.tasks?.native?.sourceFingerprint??null}
+      alignment_words_sha256:alignment.wordsSha256,caption_source_sha256:captions.sourceSha256}
+    // The Author task fingerprint is lifecycle bookkeeping, not narration
+    // evidence. Native published correction may re-freeze Author on retry;
+    // binding it here would falsely stale unchanged WAV/words/captions.
   };
 }
 
