@@ -324,6 +324,23 @@ describe('NF02 — effective per-target Native image identity across corrections
       .rejects.toThrow(/GLABS_JOB_STALE_CREATIVE_TARGET/);
     expect(calls.filter(call=>call.method==='POST')).toHaveLength(0);
   });
+  it('NF02-08 late paid POST response cannot resurrect a Native job invalidated while in flight',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls,stub}=transport();
+    let changed=false;
+    vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL,options?:RequestInit)=>{
+      if(!changed&&(options?.method??'GET')==='POST'){
+        changed=true;
+        correctDraftForTest(root,artifact=>{artifact.manifest.shots[0].layers[0].y=31;});
+      }
+      return stub(input,options);
+    }));
+    const job=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    expect(job.status).toBe('STALE');
+    expect(job.providerTaskId).toBe('ab12cd34');
+    expect(listGlabsJobs(root)[0].status).toBe('STALE');
+    expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
+    expect(()=>approveGlabsImage(appPath,root,job.id,'Owner licensed',decode)).toThrow(/NOT_VALIDATED/);
+  });
   it('NF02-06/07 legacy persisted job without target creative fingerprint fails closed on Poll and Approve',async()=>{
     const dir=credential(),{root,targets}=nativeTarget();transport();
     const job=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
