@@ -4,42 +4,59 @@ import {randomUUID} from 'node:crypto';
 import {atomicJson,readState,resolveProjectFile,sha,strictJson,writeState,type ExternalOperation,type Stage,type StudioState} from './services.js';
 import {compileAuthority} from './externalAuthority.js';
 import {rejectNativeUnsafePaths,validateAuthoring} from './sourceCitations.js';
-import {activateScriptCandidate,scriptCorrectionRechecked,freezeTask,sourceFingerprint,stageImport,confirmImport,validateScript,validateManifest,externalJsonFileDelivery,type ConfirmOptions} from './externalTasks.js';
+import {activateScriptCandidate,scriptCorrectionRechecked,freezeTask,sourceFingerprint,stageImport,confirmImport,validateScript,validateManifest,externalJsonFileDelivery,readNativeDraft,publishNativeDraftCorrection,type ConfirmOptions} from './externalTasks.js';
 
-type Scope={targetIds?:string[];editableIds?:string[];editablePaths?:string[];findingIds?:string[];media?:'preview'|'film'|'voice'|'captions';transferAcknowledged?:boolean};
+type Scope={targetIds?:string[];editableIds?:string[];editablePaths?:string[];findingIds?:string[];targetContext?:'DRAFT'|'PUBLISHED';media?:'preview'|'film'|'voice'|'captions';transferAcknowledged?:boolean};
 /** Active execution boundary; persisted Media Review types remain readable for legacy projects. */
 function requireActiveLifecycleOperation(operation:Exclude<ExternalOperation,'author'>):void{
   if(operation==='media-review')throw new Error('MEDIA_REVIEW_DISABLED: legacy history is read-only.');
 }
-type Artifact={value:unknown;sha256:string;id:string};
+type Artifact={value:unknown;sha256:string;id:string;context?:'DRAFT'|'PUBLISHED';draftRevision?:number;draftToken?:string;authorTaskId?:string};
 const exact=(value:Record<string,unknown>,keys:string[])=>{const extra=Object.keys(value).filter(key=>!keys.includes(key));if(extra.length)throw new Error(`Unknown field: ${extra[0]}`)};
 const lifecycleDir=(root:string)=>resolveProjectFile(root,'.studio/external/lifecycle');
 const resultPath=(root:string,id:string)=>path.join(lifecycleDir(root),'results',id+'.json');
 const pendingPath=(root:string)=>path.join(lifecycleDir(root),'pending.json');
 const canonical=(value:unknown):string=>Array.isArray(value)?`[${value.map(canonical).join(',')}]`:value&&typeof value==='object'?`{${Object.entries(value as Record<string,unknown>).sort(([a],[b])=>a.localeCompare(b)).map(([key,item])=>`${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`:JSON.stringify(value);
 
-function artifactFor(root:string,state:StudioState,stage:Stage,operation:ExternalOperation):Artifact{
+function artifactFor(root:string,state:StudioState,stage:Stage,operation:ExternalOperation,
+  requested?:'DRAFT'|'PUBLISHED'):Artifact{
   if(stage==='script'){
     const value=state.scriptCandidate??state.approvedScript;if(!value)throw new Error('REVIEW_REQUIRED: no Script candidate or approved Script exists.');
     return{value,sha256:sha(JSON.stringify(value)),id:`script-${value.revision}`};
   }
-  const file=path.join(root,'project.json');if(!state.external.native||!fs.existsSync(file))throw new Error('REVIEW_REQUIRED: no imported Native artifact exists.');
+  const draft=readNativeDraft(root,state),published=Boolean(state.external.native);
+  if(draft&&published&&!requested)
+    throw new Error('NATIVE_TARGET_SELECTION_REQUIRED: explicitly choose DRAFT or PUBLISHED before reviewing.');
+  const context=requested??(draft?'DRAFT':'PUBLISHED');
+  if(context==='DRAFT'){
+    if(!draft)throw new Error('NATIVE_DRAFT_REQUIRED: no current staged Author candidate.');
+    return{value:draft.artifact,sha256:draft.sha256,
+      id:'native-draft-'+draft.authorTaskId+'-r'+draft.revision+'-'+operation,
+      context,draftRevision:draft.revision,draftToken:draft.token,authorTaskId:draft.authorTaskId};
+  }
+  const file=path.join(root,'project.json');
+  if(!state.external.native||!fs.existsSync(file))
+    throw new Error('REVIEW_REQUIRED: no imported Published Native artifact exists.');
   const manifest=strictJson(fs.readFileSync(file,'utf8'));
   const existing=state.external.native.artifact as Record<string,unknown>|undefined;
-  const value={manifest,shot_ledger:existing?.shotLedger??[],sound_script:existing?.soundScript??[],asset_needs:existing?.assetNeeds??[]};
-  return{value,sha256:sha(JSON.stringify(value)),id:'native-'+state.external.native.revision+'-'+operation};
+  const value={manifest,shot_ledger:existing?.shotLedger??[],
+    sound_script:existing?.soundScript??[],asset_needs:existing?.assetNeeds??[]};
+  return{value,sha256:sha(JSON.stringify(value)),id:'native-'+state.external.native.revision+'-'+operation,
+    context:'PUBLISHED'};
 }
 /** Derive an exact correction scope from the latest CONFIRMED review of the
  * CURRENT artifact. Never authorize edits based on old, unrelated review data.
  * The suggested scope is informational; frozen Correct tasks still lock it.
  */
-export function suggestedCorrectScope(root:string,state:StudioState,stage:Stage){
+export function suggestedCorrectScope(root:string,state:StudioState,stage:Stage,targetContext?:'DRAFT'|'PUBLISHED'){
   const empty={editableIds:[] as string[],findingIds:[] as string[],reviewTaskId:null as string|null};
   let current:Artifact;
-  try{current=artifactFor(root,state,stage,'correct');}catch{return empty;}
+  try{current=artifactFor(root,state,stage,'correct',targetContext??(stage==='native'&&readNativeDraft(root,state)?'DRAFT':undefined));}catch{return empty;}
   const reports=Object.values(state.lifecycle?.artifacts??{})
     .filter(item=>item.stage===stage&&(item.operation==='review'||item.operation==='recheck')&&
-      (item.value as {artifact_sha256?:string})?.artifact_sha256===current.sha256)
+      (item.value as {artifact_sha256?:string})?.artifact_sha256===current.sha256&&
+      (stage!=='native'||item.artifactContext===current.context||
+        (current.context==='PUBLISHED'&&!item.artifactContext)))
     .sort((a,b)=>b.createdAt.localeCompare(a.createdAt)||b.taskId.localeCompare(a.taskId));
   const latest=reports[0];
   if(!latest||latest.status!=='REVIEWED_WITH_FINDINGS')return empty;
@@ -59,6 +76,8 @@ type Lineage={correctTaskId:string;reviewTaskId:string;findingIds:string[];prior
  * never an authorization to resolve a different or retired artifact. */
 function correctionLineage(state:StudioState,stage:Stage,current:Artifact):Lineage{
   const correct=state.lifecycle?.tasks[stage+':correct'];
+  if(stage==='native'&&correct?.artifactContext!==current.context)
+    throw new Error('RECHECK_LINEAGE_REQUIRED: Native correction belongs to another artifact context.');
   if(!correct||correct.status!=='IMPORTED')throw new Error('RECHECK_LINEAGE_REQUIRED: a confirmed current Correct task is required.');
   const record=state.lifecycle?.artifacts[correct.id];
   const payload=record?.value as {schema?:string;artifact_sha256?:string;finding_ids?:string[];artifact?:unknown}|undefined;
