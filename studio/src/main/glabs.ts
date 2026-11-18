@@ -39,8 +39,11 @@ export function glabsSettings(userData:string):GLabsSettings{
   const file=settingsFile(userData);
   if(!fs.existsSync(file))return {...defaultSettings};
   const raw=strictJson(fs.readFileSync(file,'utf8')) as Record<string,unknown>;
-  return{endpoint:glabsEndpoint(String(raw.endpoint??'')),contract:'legacy',
-    model:String(raw.model??defaultSettings.model),aspectRatio:String(raw.aspectRatio??defaultSettings.aspectRatio)};
+  if(raw.contract!=='legacy')throw new Error('GLABS_CONTRACT_UNVERIFIED');
+  const model=String(raw.model??''),aspectRatio=String(raw.aspectRatio??'');
+  if(!(GLABS_MODELS as readonly string[]).includes(model)||!(GLABS_RATIOS as readonly string[]).includes(aspectRatio))
+    throw new Error('GLABS_CONFIG_UNVERIFIED_MODEL_OR_RATIO');
+  return{endpoint:glabsEndpoint(String(raw.endpoint??'')),contract:'legacy',model,aspectRatio};
 }
 export function saveGlabsSettings(userData:string,settings:GLabsSettings){
   if(settings.contract!=='legacy')throw new Error('GLABS_CONTRACT_UNVERIFIED: only the inspected legacy adapter is supported.');
