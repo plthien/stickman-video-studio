@@ -56,7 +56,10 @@ export function rejectNativeUnsafePaths(value:unknown):void {
       return;
     }
     if(typeof item!=='string')return;
-    if(hasControls(item)||schemes.test(item))throw new Error('Unsafe native field.');
+    // Native creative prose can legitimately contain words such as "metadata:".
+    // Reject unsafe control characters, but apply URI/path restrictions only
+    // to actual media path fields below (not every string in the payload).
+    if(hasControls(item))throw new Error('Unsafe native field.');
     if(['path','file','source'].includes(key)){
       if(item.startsWith('@b1/')&&key==='path'&&!item.includes('..'))return;
       const normalized=item.replaceAll('\\','/');
