@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {describe,expect,it,afterEach} from 'vitest';
 import {freezeTask,getPendingMedia,readNativeDraft,stageImport,confirmImport,fulfillMedia,importMediaFile} from '../../src/main/externalTasks';
-import {freezeLifecycleTask,stageLifecycleResult,confirmLifecycleResult} from '../../src/main/externalLifecycle';
+import {freezeLifecycleTask,stageLifecycleResult,confirmLifecycleResult,suggestedCorrectScope} from '../../src/main/externalLifecycle';
 import {fixture,stageNative,nativePayload,importedSource,validator,cleanup,appPath} from './SixIssueFixtures';
 import {readState,sha} from '../../src/main/services';
 
@@ -127,6 +127,18 @@ describe('N01–N07: original Native Author plus pre-publication four-operation 
     falsePicture.coverage.modalities=['picture'];
     expect(()=>stageLifecycleResult(appPath,root,'native','review',delivery(root,task,'review',falsePicture)))
       .toThrow(/NATIVE_TEXT_REVIEW_EVIDENCE_INVALID/);
+  });
+  it('NC03 scope suggestion infers only a source-explicit existing auxiliary field, never a whole ledger',()=>{
+    const {root}=stageFixture();
+    const task=freezeLifecycleTask(appPath,root,'native','review',{targetContext:'DRAFT'}) as Task;
+    const explicit={...issue(),evidence:{kind:'manifest',
+      detail:'The exact existing /shot_ledger/0/meaning field has no visible state change.'}};
+    const proposal=stageLifecycleResult(appPath,root,'native','review',
+      delivery(root,task,'review',reviewPayload(task,'REVIEWED_WITH_FINDINGS',[explicit])));
+    confirmLifecycleResult(appPath,root,proposal.token);
+    const suggested=suggestedCorrectScope(root,readState(root),'native','DRAFT');
+    expect(suggested.editablePaths).toEqual(['/shot_ledger/0/meaning']);
+    expect(suggested.editableIds).toEqual(['shot-1']);
   });
   it('NC03/05/06 and NK01/02/05 keeps published manifest & Author response while correcting only auxiliary data',()=>{
     const {root}=stageFixture(),before=fs.readFileSync(path.join(root,'project.json'));
