@@ -1,6 +1,6 @@
 import {useEffect,useState} from 'react';
 import {useAppState} from '../../app/AppState';
-import {Badge,Button,Card,CardHeader,Field,Input} from '../../components/ui';
+import {Badge,Button,Card,CardHeader,Field,Input,Select} from '../../components/ui';
 
 type KeyStatus=Awaited<ReturnType<NonNullable<Window['studio']>['elevenLabsStatus']>>;
 
@@ -10,6 +10,31 @@ export function SettingsWorkspace(){
   const [compact,setCompact]=useState(true);
   const [key,setKey]=useState(''),[keyStatus,setKeyStatus]=useState<KeyStatus|null>(null);
   const [keyBusy,setKeyBusy]=useState(false),[keyError,setKeyError]=useState('');
+  const [glabs,setGlabs]=useState({endpoint:'http://127.0.0.1:8765',contract:'legacy' as const,model:'nano_banana_2',aspectRatio:'9:16'});
+  const [glabsKey,setGlabsKey]=useState(''),[glabsConfigured,setGlabsConfigured]=useState(false),[glabsSecure,setGlabsSecure]=useState(false);
+  const [glabsBusy,setGlabsBusy]=useState(false),[glabsStatus,setGlabsStatus]=useState('NOT TESTED'),[glabsError,setGlabsError]=useState('');
+  useEffect(()=>{
+    let active=true;
+    if(!window.studio?.glabsSettings)return()=>{active=false};
+    void window.studio.glabsSettings().then(data=>{if(active){setGlabs(data.config);setGlabsConfigured(data.credential.configured);setGlabsSecure(data.credential.secureStorageAvailable);}})
+      .catch(error=>{if(active)setGlabsError(String(error));});
+    return()=>{active=false};
+  },[]);
+  const applyGlabs=async()=>{
+    if(!window.studio||glabsBusy)return;setGlabsBusy(true);setGlabsError('');
+    try{await window.studio.glabsConfigure(glabs);setGlabsStatus('CONFIGURED — NOT TESTED');}
+    catch(error){setGlabsError(String(error));}finally{setGlabsBusy(false);}
+  };
+  const storeGlabsKey=async()=>{
+    if(!window.studio||!glabsKey.trim()||glabsBusy)return;setGlabsBusy(true);setGlabsError('');
+    try{await window.studio.glabsSaveKey(glabsKey);setGlabsKey('');setGlabsConfigured(true);setGlabsStatus('NOT TESTED');}
+    catch(error){setGlabsError(String(error));}finally{setGlabsBusy(false);}
+  };
+  const checkGlabs=async()=>{
+    if(!window.studio||glabsBusy)return;setGlabsBusy(true);setGlabsError('');setGlabsStatus('TESTING (READ-ONLY)');
+    try{const result=await window.studio.glabsProbe();setGlabsStatus(result.ready?'HEALTH + AUTH VERIFIED · '+result.contract+' · '+result.version:'NOT READY');}
+    catch(error){setGlabsError(String(error));setGlabsStatus('BLOCKED');}finally{setGlabsBusy(false);}
+  };
   useEffect(()=>{
     let active=true;
     if(!window.studio?.elevenLabsStatus)return()=>{active=false};
@@ -62,6 +87,25 @@ export function SettingsWorkspace(){
           {' '}The key is never shown or stored in a project. Each alignment still requires explicit upload authorization.
         </div>
         {keyError&&<div className="info error" role="alert">{keyError}</div>}
+      </Card>
+      <Card>
+        <CardHeader title="G-Labs image webhook" hint="Local-only legacy adapter · health/auth check never creates paid jobs" action={<Badge tone={glabsStatus.startsWith('HEALTH')?'mint':'amber'}>{glabsStatus}</Badge>}/>
+        <Field label="Local webhook origin"><Input value={glabs.endpoint} onChange={event=>setGlabs(v=>({...v,endpoint:event.target.value}))} placeholder="http://127.0.0.1:8765"/></Field>
+        <Field label="Selected image model"><Select value={glabs.model} onChange={event=>setGlabs(v=>({...v,model:event.target.value}))}>
+          <option value="nano_banana_2">nano_banana_2</option><option value="nano_banana_pro">nano_banana_pro</option>
+        </Select></Field>
+        <Field label="Aspect ratio"><Select value={glabs.aspectRatio} onChange={event=>setGlabs(v=>({...v,aspectRatio:event.target.value}))}>
+          {['1:1','3:4','4:3','9:16','16:9'].map(ratio=><option key={ratio} value={ratio}>{ratio}</option>)}
+        </Select></Field>
+        <Button disabled={glabsBusy} onClick={applyGlabs}>Save webhook settings</Button>
+        <Field label="G-Labs API key"><Input type="password" autoComplete="off" value={glabsKey} onChange={event=>setGlabsKey(event.target.value)} placeholder="Encrypted in Windows OS storage"/></Field>
+        <div className="actions">
+          <Button disabled={glabsBusy||!glabsSecure||!glabsKey.trim()} onClick={storeGlabsKey}>Save G-Labs key</Button>
+          <Button disabled={glabsBusy||!glabsConfigured} onClick={async()=>{if(!window.studio)return;setGlabsBusy(true);try{await window.studio.glabsClearKey();setGlabsConfigured(false);setGlabsStatus('NOT TESTED');}catch(e){setGlabsError(String(e));}finally{setGlabsBusy(false);}}}>Remove key</Button>
+          <Button variant="primary" disabled={glabsBusy||!glabsConfigured} onClick={checkGlabs}>Test health + auth (free)</Button>
+        </div>
+        <div className="info">Key {glabsConfigured?'configured':'missing'} · OS storage {glabsSecure?'available':'unavailable'}. v5 is blocked until its live request contract can be verified. Every image POST additionally needs explicit confirmation in Storyboard.</div>
+        {glabsError&&<div className="info error" role="alert">{glabsError}</div>}
       </Card>
       <Card>
         <CardHeader title="External authoring"/>
