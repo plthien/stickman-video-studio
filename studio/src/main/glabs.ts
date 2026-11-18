@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import type {CredentialCipher} from './elevenlabsCredentials.js';
-import {getPendingMedia,importMediaFile,fulfillMedia} from './externalTasks.js';
+import {getPendingMedia,importMediaFile,fulfillMedia,nativeImageTargetIdentity} from './externalTasks.js';
 import {atomicJson,readState,resolveProjectFile,sha,strictJson} from './services.js';
 
 export const GLABS_MODELS=['nano_banana_2','nano_banana_pro'] as const;
@@ -12,6 +12,7 @@ type JobStatus='QUEUED'|'SUBMITTED'|'RUNNING'|'DOWNLOADED'|'VALIDATED'|'APPROVED
 export interface GLabsSettings{endpoint:string;contract:'legacy';model:string;aspectRatio:string}
 export interface GLabsJob {
   schema:'r3-glabs-job-v1';id:string;projectId:string;nativeRevision:number;token:string;targetKey:string;shotId:string;layerId:string;targetPath:string;candidateSha256:string;
+  authorTaskId?:string;draftRevisionAtSubmission?:number;targetCreativeSha256?:string;
   prompt:string;promptSha256:string;references:Array<{path:string;sha256:string;mime:string;name:string;rightsSha256:string}>;model:string;aspectRatio:string;status:JobStatus;
   providerTaskId?:string;staged?:{path:string;sha256:string;mime:string;width:number;height:number};
   reason?:string;approved?:{rights:string;path:string;sha256:string};createdAt:string;updatedAt:string;
@@ -175,7 +176,30 @@ function assertJobTarget(appPath:string,root:string,job:GLabsJob){
     current.pending.token!==job.token||current.match.shotId!==job.shotId||
     current.match.layerId!==job.layerId||current.match.path!==job.targetPath)
     throw new Error('GLABS_JOB_STALE_TARGET: review the current Native candidate.');
+  if(!job.authorTaskId||!job.targetCreativeSha256||!/^[a-f0-9]{64}$/.test(job.targetCreativeSha256))
+    throw new Error('GLABS_JOB_CREATIVE_EVIDENCE_MISSING: legacy job cannot be verified; create an authorized new attempt.');
+  const identity=nativeImageTargetIdentity(root,job.targetKey);
+  if(identity.authorTaskId!==job.authorTaskId||identity.fingerprint!==job.targetCreativeSha256||
+    identity.shotId!==job.shotId||identity.layerId!==job.layerId||identity.path!==job.targetPath)
+    throw new Error('GLABS_JOB_STALE_CREATIVE_TARGET: Native image instructions changed.');
   return current;
+}
+/** Persist stale attempts so output history is retained, never silently re-bound. */
+function currentJobTarget(appPath:string,root:string,job:GLabsJob):boolean{
+  try{assertJobTarget(appPath,root,job);return true;}
+  catch(error){
+    if(job.status!=='APPROVED'){
+      job.status='STALE';job.reason=error instanceof Error?error.message:'GLABS_JOB_STALE_CREATIVE_TARGET';
+      writeJob(root,job);
+    }
+    return false;
+  }
+}
+export function invalidateGlabsJobsAfterNativeCorrection(appPath:string,root:string){
+  for(const job of listGlabsJobs(root)){
+    if(['QUEUED','SUBMITTED','RUNNING','DOWNLOADED','VALIDATED','UNKNOWN'].includes(job.status))
+      currentJobTarget(appPath,root,job);
+  }
 }
 export type GLabsDecoder=(bytes:Buffer)=>{png:Buffer;width:number;height:number};
 export interface ImageRequest{
@@ -190,7 +214,8 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
   if(input.model!==config.model||input.aspectRatio!==config.aspectRatio)
     throw new Error('GLABS_MODEL_CONFIG_MISMATCH: save exact chosen model/ratio in Settings.');
   const {pending,match}=pendingTarget(appPath,root,input.targetKey);
-  const state=readState(root),old=listGlabsJobs(root).filter(j=>j.token===pending.token&&j.targetKey===input.targetKey);
+  const state=readState(root),creative=nativeImageTargetIdentity(root,input.targetKey),
+    old=listGlabsJobs(root).filter(j=>j.token===pending.token&&j.targetKey===input.targetKey);
   const shots=(pending.after as Record<string,unknown>).shots;
   if(!['B1','B2','B3','B4'].includes(state.project.style)||state.brief.ratio!=='9:16'||
     !Array.isArray(shots)||shots.some(item=>!pureObject(item)||typeof item.end!=='number'||item.end>=300))
@@ -221,7 +246,9 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
   if(!probe.authVerified)throw new Error('GLABS_HEALTH_AUTH_UNVERIFIED: paid submission blocked before POST.');
   const job:GLabsJob={schema:'r3-glabs-job-v1',id:randomUUID(),projectId:state.project.id,
     nativeRevision:state.tasks?.native?.revision??0,token:pending.token,targetKey:match.key,shotId:match.shotId,layerId:match.layerId,
-    targetPath:match.path,candidateSha256:sha(JSON.stringify(pending.after)),prompt:input.prompt.trim(),promptSha256:sha(input.prompt.trim()),
+    targetPath:match.path,candidateSha256:sha(JSON.stringify(pending.after)),
+    authorTaskId:creative.authorTaskId,draftRevisionAtSubmission:creative.draftRevision,targetCreativeSha256:creative.fingerprint,
+    prompt:input.prompt.trim(),promptSha256:sha(input.prompt.trim()),
     references:referenceFiles,model:input.model,aspectRatio:input.aspectRatio,status:'QUEUED',createdAt:timestamp(),updatedAt:timestamp()};
   const lock=job.projectId+':'+job.token+':'+job.targetKey;
   if(active.has(lock))throw new Error('GLABS_TARGET_ALREADY_RUNNING');
@@ -245,7 +272,8 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
     // All deterministic input validation must finish before the paid/uncertain marker.
     let providerPayload:Record<string,unknown>;
     try{
-      // Authorization or media may have changed during the asynchronous read-only probe.
+      // Creative draft or source rights may have changed during the async probe.
+      assertJobTarget(appPath,root,job);
       assertJobReferences(root,job,decode);
       const refs=job.references.map(ref=>{
         const checked=validatedImage(root,ref.path,ref.sha256);
@@ -258,6 +286,7 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
       job.status='FAILED';job.reason='Request/reference validation failed BEFORE provider submission. No paid POST was made.';
       writeJob(root,job);return job;
     }
+    if(!currentJobTarget(appPath,root,job))return job;
     job.status='SUBMITTED';writeJob(root,job); // durable uncertain marker BEFORE paid HTTP
     try{
       const result=await requestJson(config,userData,cipher,'POST','api/image/generate',providerPayload);
@@ -298,24 +327,28 @@ async function downloadImage(settings:GLabsSettings,urlText:string,userData:stri
 export async function pollGlabsImage(appPath:string,root:string,userData:string,cipher:CredentialCipher,id:string,
   decode:GLabsDecoder){
   const job=readJob(root,id);
-  if(job.status==='VALIDATED'||job.status==='APPROVED'||job.status==='FAILED'||job.status==='CANCELLED')return job;
-  try{assertJobTarget(appPath,root,job);}catch{job.status='STALE';writeJob(root,job);return job;}
+  if(['APPROVED','FAILED','CANCELLED','STALE'].includes(job.status))return job;
+  if(!currentJobTarget(appPath,root,job))return job;
+  if(job.status==='VALIDATED')return job;
   if(!job.providerTaskId){
     job.status='UNKNOWN';job.reason='Submission has no confirmed provider task ID; never auto-POST again.';writeJob(root,job);return job;
   }
   const config=glabsSettings(userData),task=job.providerTaskId;
   const response=await requestJson(config,userData,cipher,'GET','api/status/'+task);
+  if(!currentJobTarget(appPath,root,job))return job;
   if(!pureObject(response)||response.task_id!==task)throw new Error('GLABS_STATUS_TASK_ID_MISMATCH');
   const status=String(response.status);
   if(status==='pending'||status==='running'){job.status='RUNNING';writeJob(root,job);return job;}
   if(status==='failed'){job.status='FAILED';job.reason='Provider reported failure (no automatic retry).';writeJob(root,job);return job;}
   if(status!=='completed')throw new Error('GLABS_STATUS_UNRECOGNIZED');
   const resolved=await requestJson(config,userData,cipher,'GET','api/result/'+task);
+  if(!currentJobTarget(appPath,root,job))return job;
   if(!pureObject(resolved)||resolved.task_id!==task||resolved.status!=='completed'||
     !Array.isArray(resolved.results)||!resolved.results.length||typeof resolved.results[0]!=='string')
     throw new Error('GLABS_RESULT_CONTRACT_INVALID');
   job.status='DOWNLOADED';writeJob(root,job);
   const image=await downloadImage(config,resolved.results[0],userData,cipher);
+  if(!currentJobTarget(appPath,root,job))return job;
   const decoded=decode(image.data);
   if(!decoded||!Buffer.isBuffer(decoded.png)||imageMime(decoded.png)!=='image/png'||
     !Number.isSafeInteger(decoded.width)||!Number.isSafeInteger(decoded.height)||
@@ -360,7 +393,8 @@ export function approveGlabsImage(appPath:string,root:string,id:string,rights:st
   const job=readJob(root,id);
   if(job.status!=='VALIDATED'||!job.staged)throw new Error('GLABS_IMAGE_NOT_VALIDATED');
   if(typeof rights!=='string'||rights.trim().length<5)throw new Error('GLABS_RIGHTS_ATTESTATION_REQUIRED');
-  assertJobTarget(appPath,root,job);
+  if(!currentJobTarget(appPath,root,job))
+    throw new Error('GLABS_JOB_STALE_CREATIVE_TARGET: inspected output cannot be bound.');
   const image=validatedImage(root,job.staged.path,job.staged.sha256);
   if(image.mime!=='image/png'||job.staged.mime!=='image/png')throw new Error('GLABS_IMAGE_MIME_INVALID');
   const decoded=decode(image.bytes);
