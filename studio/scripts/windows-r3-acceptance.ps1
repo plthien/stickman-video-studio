@@ -44,11 +44,44 @@ else {
 $diffLog = Join-Path $reports 'Mode-B-Core-diff.log'
 Push-Location $repo
 try {
-    & git diff --name-only 89761c54dd7ca54c4d0c5769324d5de9828a84e6 HEAD -- skills/directing-stickman-videos *> $diffLog
-    $exitCode = $LASTEXITCODE
-    $modified = if(Test-Path $diffLog){(Get-Content $diffLog -Raw).Trim()}else{''}
-    $coreStatus=if($exitCode -eq 0 -and [string]::IsNullOrWhiteSpace($modified)){'PASS'}else{'FAIL'}
-    $results += @{name='Original-Mode-B-Core-unchanged';status=$coreStatus;exit_code=$exitCode;log=$diffLog}
+    $coreStatus = 'BLOCKED'
+    $exitCode = $null
+    $baseline = 'main'
+    try {
+        # HEAD must be compared with the PR base's merge-base, never an R2 milestone SHA.
+        & git rev-parse --verify 'main^{commit}' *> $diffLog
+        $baseExit = $LASTEXITCODE
+        if($baseExit -ne 0) {
+            "Core baseline main is missing; comparison cannot be verified." | Add-Content -Path $diffLog
+        }
+        else {
+            & git merge-base main HEAD *> $diffLog
+            $mergeExit = $LASTEXITCODE
+            if($mergeExit -ne 0) {
+                "No trustworthy merge-base for main...HEAD." | Add-Content -Path $diffLog
+            }
+            else {
+                & git diff --name-only main...HEAD -- skills/directing-stickman-videos/ *> $diffLog
+                $exitCode = $LASTEXITCODE
+                if($exitCode -ne 0) {
+                    $coreStatus = 'FAIL'
+                }
+                elseif(!(Test-Path $diffLog)) {
+                    $coreStatus = 'BLOCKED'
+                }
+                else {
+                    $modified = (Get-Content -Path $diffLog -Raw).Trim()
+                    $coreStatus = if([string]::IsNullOrWhiteSpace($modified)){'PASS'}else{'FAIL'}
+                }
+            }
+        }
+    }
+    catch {
+        $_ | Out-String | Add-Content -Path $diffLog
+        $coreStatus = 'BLOCKED'
+    }
+    $results += @{name='Original-Mode-B-Core-unchanged';status=$coreStatus;baseline=$baseline;exit_code=$exitCode;log=$diffLog}
+    Write-Host "Original-Mode-B-Core-unchanged : $coreStatus"
 }
 finally {Pop-Location}
 
@@ -65,5 +98,5 @@ $report = @{
 $json=Join-Path $reports 'R3_WINDOWS_GATES.json'
 $report | ConvertTo-Json -Depth 10 | Set-Content -Path $json -Encoding utf8
 Write-Host "Evidence: $json"
-if(@($results | Where-Object { $_.status -eq 'FAIL' }).Count -gt 0){exit 1}
+if(@($results | Where-Object { $_.status -in @('FAIL','BLOCKED') }).Count -gt 0){exit 1}
 exit 0
