@@ -76,13 +76,15 @@ describe('ElevenLabs provider timing: evidence-grounded zero-duration repair',()
   });
 
   it('AL-07/08/09: failed normalization retains bounded response and prior WAV and approvals',()=>{
-    const {root,voicePath}=fixture(),pin=captureAlignmentPin(root);
+    // The persisted evidence/approval invariant requires actual matching WAV bytes,
+    // not a 30-second silent fixture (1.44 MB, multiplied by parallel test workers).
+    const {root,voicePath}=fixture({seconds:1}),pin=captureAlignmentPin(root);
     const before=readState(root),bytes=fs.readFileSync(path.join(root,voicePath));
     const invalid={characters:[{text:'Wrong',start:0,end:.6}],
       words:[{text:'   ',start:.2,end:.24}]};
     const evidencePath=persistAlignmentResponse(root,pin,invalid);
     expect(fs.existsSync(path.join(root,evidencePath))).toBe(true);
-    expect(()=>validateAlignment(invalid,'One two three',30)).toThrow(/CHARACTER_TEXT_MISMATCH/);
+    expect(()=>validateAlignment(invalid,'One two three',1)).toThrow(/CHARACTER_TEXT_MISMATCH/);
     expect(eligibleAlignmentResponse(root)).toEqual(invalid);
     expect(readState(root).alignment).toEqual(before.alignment);
     expect(fs.readFileSync(path.join(root,voicePath))).toEqual(bytes);
@@ -94,7 +96,7 @@ describe('ElevenLabs provider timing: evidence-grounded zero-duration repair',()
     expect(eligibleAlignmentResponse(root)).toBe(null);
   });
   it('AL-07: keeps malformed successful HTTP JSON as bounded diagnostic evidence',()=>{
-    const {root}=fixture(),pin=captureAlignmentPin(root);
+    const {root}=fixture({seconds:1}),pin=captureAlignmentPin(root);
     const relative=persistAlignmentResponse(root,pin,'{"characters": [');
     const stored=JSON.parse(fs.readFileSync(path.join(root,relative),'utf8')) as Record<string,unknown>;
     expect(stored.responseText).toBe('{"characters": [');
@@ -102,11 +104,11 @@ describe('ElevenLabs provider timing: evidence-grounded zero-duration repair',()
     expect(()=>eligibleAlignmentResponse(root)).toThrow(/MALFORMED_JSON/);
   });
   it('AL-11: a project/script change during caption conversion blocks stale alignment publication',async()=>{
-    const {root,voicePath}=fixture(),pin=captureAlignmentPin(root);
+    const {root,voicePath}=fixture({seconds:1}),pin=captureAlignmentPin(root);
     const prior=readState(root).alignment,wav=fs.readFileSync(path.join(root,voicePath));
     const raw={words:[{text:'One',start:.1,end:.3},{text:'two',start:.35,end:.6},
       {text:'three',start:.65,end:.9}]};
-    const words=validateAlignment(raw,'One two three',30);
+    const words=validateAlignment(raw,'One two three',1);
     const runner=async()=>{
       const state=readState(root);
       state.approvedScript!.revision+=1;
