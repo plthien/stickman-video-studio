@@ -82,7 +82,7 @@ describe('N01–N07: original Native Author plus pre-publication four-operation 
   it('NA05 asset needs with explicit Shot/Layer identities must match actual Native image paths',()=>{
     const {root}=fixture();
     const good=nativePayload(root,{image:'early'});
-    const expectedPath=(good.manifest.shots[0].layers[0] as {path:string}).path;
+    const expectedPath=((good.manifest.shots[0] as {layers:Array<{path:string}>}).layers[0]).path;
     const candidate={...good,asset_needs:[{shot_id:'shot-1',layer_id:'image-1',path:expectedPath,
       content:'Owner to generate a still matching the approved visual world.'}]};
     stageNative(root,candidate);
