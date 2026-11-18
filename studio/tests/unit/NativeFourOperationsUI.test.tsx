@@ -186,7 +186,8 @@ describe('Native four-operation UI — explicit draft/published target and sessi
     fireEvent.click(screen.getByRole('button',{name:'Build Task'}));
     await waitFor(()=>expect(freeze).toHaveBeenCalledTimes(1));
     expect(freeze.mock.calls[0][3]).toMatchObject({
-      findingIds:['RF-A','RF-B'],editableIds:undefined,editablePaths:undefined});
+      findingIds:['RF-A','RF-B'],editableIds:['shot-2'],
+      editablePaths:['/shot_ledger/0/meaning']});
     fireEvent.click(screen.getByRole('button',{name:'Build Task'}));
     await waitFor(()=>expect(freeze).toHaveBeenCalledTimes(2));
     expect(freeze.mock.calls[1][3]).toMatchObject({
