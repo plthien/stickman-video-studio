@@ -15,6 +15,7 @@ export function VoiceWorkspace() {
   const id = native?.project.id, script = native?.approvedScript?.text ?? '';
   useEffect(()=>{setVoice(pinnedVoice??'');setProfiles([]);setAuthorized(false);},[id,pinnedVoice]);
   const [playbackUrl,setPlaybackUrl]=useState(''),[playbackError,setPlaybackError]=useState(''),[playbackRetry,setPlaybackRetry]=useState(0);
+  const [playbackSeconds,setPlaybackSeconds]=useState(0),[manualCorrection,setManualCorrection]=useState(false);
   const audioSha=native?.voice?.sha256,voiceStale=native?.voice?.stale;
   useEffect(()=>setPlaybackRetry(0),[id,audioSha]);
   const refreshVoiceOperations=async(scope=captureProjectSession())=>{
@@ -59,13 +60,17 @@ export function VoiceWorkspace() {
   const hasAlignment = Boolean(native?.alignment);
   const wordsSha256 = native?.alignment?.wordsSha256;
   const captionRevision = native?.alignment?.captionReview?.revision;
-  const [review,setReview]=useState<null|{words:Array<{word:string;start:number;end:number}>;original:Array<{start:number;end:number;text:string}>;originalBoundaries:number[];draft:null|{boundaries:number[];cues:Array<{start:number;end:number;text:string}>};approved:null|{revision:number;cues:Array<{start:number;end:number;text:string}>}}>(null);
+  const [review,setReview]=useState<null|{status:string;workflowStatus:string;error?:string;wordCount:number;cueCount:number;duration:number;words:Array<{word:string;start:number;end:number}>;original:Array<{start:number;end:number;text:string}>;originalBoundaries:number[];draft:null|{boundaries:number[];cues:Array<{start:number;end:number;text:string}>};approved:null|{revision:number;mode?:'AUTO'|'MANUAL';cues:Array<{start:number;end:number;text:string}>}}>(null);
   const [boundaries,setBoundaries]=useState<number[]>([]),[selectedBoundary,setSelectedBoundary]=useState(1),[reviewNote,setReviewNote]=useState('');
   const refreshCaptionReview=async(scope= captureProjectSession())=>{if(!id||!scope||!window.studio)return false;const value=await window.studio.captionReview(scope.projectId);if(!isCurrentProjectSession(scope))return false;setReview(value);setBoundaries(value.draft?.boundaries??value.originalBoundaries);return true;};
-  useEffect(()=>{setMessage('');setStatus('idle');setReview(null);setBoundaries([]);setSelectedBoundary(1);setReviewNote('');let active=true;if(!id||!hasAlignment||!window.studio)return()=>{active=false};void window.studio.captionReview(id).then(value=>{if(active){setReview(value);setBoundaries(value.draft?.boundaries??value.originalBoundaries);}}).catch(reason=>{if(active){setStatus('error');setMessage('Caption review ERROR: '+(reason instanceof Error?reason.message:String(reason)))}});return()=>{active=false};},[id,hasAlignment,wordsSha256,captionRevision]);
+  useEffect(()=>{setMessage('');setStatus('idle');setReview(null);setBoundaries([]);setSelectedBoundary(1);setReviewNote('');setManualCorrection(false);let active=true;if(!id||!hasAlignment||!window.studio)return()=>{active=false};void window.studio.captionReview(id).then(value=>{if(active){setReview(value);setBoundaries(value.draft?.boundaries??value.originalBoundaries);}}).catch(reason=>{if(active){setStatus('error');setMessage('Caption review ERROR: '+(reason instanceof Error?reason.message:String(reason)))}});return()=>{active=false};},[id,hasAlignment,wordsSha256,captionRevision]);
   const runReview=async(work:()=>Promise<unknown>,success:string)=>{const scope=captureProjectSession();if(!id||!scope)return;setStatus('busy');try{await work();if(!isCurrentProjectSession(scope))return;if(window.studio){const next=await window.studio.projectState(scope.projectId);if(!setNativeIfSessionCurrent(scope,next))return;}if(!await refreshCaptionReview(scope))return;setStatus('ready');showNotice(success);}catch(reason){if(isCurrentProjectSession(scope))fail(reason)}};
   const splitAtWord=()=>{const number=selectedBoundary;if(!review||number<1||number>=review.words.length)return;setBoundaries(value=>[...new Set([...value,number])].sort((a,b)=>a-b));};
   const mergeAtWord=()=>{if(!review)return;setBoundaries(value=>value.filter(number=>number!==selectedBoundary));};
+  const captionCues=review?.approved?.cues??review?.original??[];
+  const nativeVoice=(native?.manifest?.voice??{}) as Record<string,unknown>;
+  const timelineSeconds=playbackSeconds+(typeof nativeVoice.lead==='number'?nativeVoice.lead:0)-(typeof nativeVoice.trim_start==='number'?nativeVoice.trim_start:0);
+  const currentCue=captionCues.find(cue=>cue.start<=timelineSeconds&&cue.end>=timelineSeconds);
   const fail = (reason: unknown) => { setStatus('error'); setMessage(reason instanceof Error ? reason.message : String(reason)); };
   const act = async (work: () => Promise<unknown>, notice: string,afterSuccess?:()=>void) => { const scope=captureProjectSession();if(!id||!scope)return;setStatus('busy');setMessage(''); try { const result=await work();if(!isCurrentProjectSession(scope))return;if(result===null){setStatus('cancelled');setMessage('CANCELLED — no project data changed.');return;} if (window.studio){const next=await window.studio.projectState(scope.projectId);if(!setNativeIfSessionCurrent(scope,next))return;} afterSuccess?.();setStatus('ready'); showNotice(notice); } catch (reason) { if(isCurrentProjectSession(scope))fail(reason); } finally {if(isCurrentProjectSession(scope))void refreshVoiceOperations(scope).catch(()=>{});} };
   const reportPlaybackError=(code:number|undefined)=>{
@@ -119,6 +124,7 @@ export function VoiceWorkspace() {
       <strong>Listen to accepted narration</strong>
       <audio key={id+':'+audioSha+':'+playbackRetry} aria-label="Accepted narration audio" controls preload="metadata" src={playbackUrl} style={{width:'100%'}}
         onLoadedMetadata={()=>setPlaybackError('')}
+        onTimeUpdate={event=>setPlaybackSeconds(event.currentTarget.currentTime)}
         onError={event=>reportPlaybackError(event.currentTarget.error?.code)}/>
     </div>:<div className="info">{voiceStale?'Narration is stale; regenerate or import approved WAV.':'No verified narration available for playback.'}</div>}
     {playbackError&&<div className="info error" role="alert">{playbackError}</div>}
@@ -130,8 +136,15 @@ export function VoiceWorkspace() {
     <Button disabled={!id||!native?.voice||native.voice.stale||!timingEvidence||status==='busy'} onClick={()=>act(()=>window.studio!.repairTiming(id!),'Saved provider response revalidated without a paid upload.')}>Repair Timing (saved response)</Button></div>
     <div className="info">Vietnamese support is not assumed. Import owner-verified word timestamps when live language coverage is unconfirmed. Secrets remain main-process only.</div><dl className="kvs"><dt>Words file</dt><dd>{native?.alignment?.path??'Not aligned'}</dd><dt>Origin</dt><dd>{native?.alignment?.origin??'Missing'}</dd></dl>
   </Card>
-  <Card><CardHeader title="Semantic caption review" hint="Original Core grouping · real WORDS · owner-approved revision" action={<Badge tone={review?.approved?'mint':'amber'}>{review?.approved?'APPROVED r'+review.approved.revision:'REVIEW REQUIRED'}</Badge>}/>
-    {!review?<div className="info">Align/import real word timestamps, then review exact Core-generated cues. Generated captions are not implicitly approved.</div>:<>
+  <Card><CardHeader title="Auto Captions" hint="Verified real-word timings · original Core grouping · optional manual correction" action={<Badge tone={review?.approved?'mint':'amber'}>{review?.workflowStatus??'NOT_READY'}</Badge>}/>
+    {!review?<div className="info">NOT_READY — Align or import verified word timestamps to enable automatic local caption grouping.</div>:<>
+      <dl className="kvs"><dt>Auto status</dt><dd>{review.workflowStatus}</dd><dt>Words</dt><dd>{review.wordCount}</dd><dt>Cues</dt><dd>{review.cueCount}</dd><dt>Voice timeline</dt><dd>{review.duration.toFixed(2)}s</dd><dt>Revision</dt><dd>{review.approved?.revision??'Not verified'}</dd></dl>
+      {review.error&&<div className="info error" role="alert">{review.error}</div>}
+      <div className="info" aria-live="polite">Synced caption at {timelineSeconds.toFixed(2)}s: {currentCue?.text??'—'}</div>
+      <div className="stack" aria-label="Caption cue timestamps">{captionCues.map((cue,i)=><div key={i} className="info">{cue.start.toFixed(3)}–{cue.end.toFixed(3)}s · {cue.text}</div>)}</div>
+      <Button disabled={!id||status==='busy'||review.workflowStatus==='USER_APPROVED'} onClick={()=>act(()=>window.studio!.captionAuto(id!),'Auto captions generated and verified locally.')}>Generate / Recheck Auto Captions</Button>
+      <Button onClick={()=>setManualCorrection(value=>!value)}>{manualCorrection?'Hide Manual Correction':'Manual Correction'}</Button>
+      {manualCorrection&&<>
       <div className="info">Actual aligned words: {review.words.map((word,i)=>(i+1)+': '+word.word+' ['+word.start+'–'+word.end+']').join(' · ')}</div>
       <Field label="Word boundary to split after / merge at"><Select value={selectedBoundary} onChange={event=>setSelectedBoundary(Number(event.target.value))}>{review.words.slice(0,-1).map((word,i)=><option key={i+1} value={i+1}>{i+1} · after {word.word}</option>)}</Select></Field>
       <div className="actions"><Button disabled={status==='busy'} onClick={splitAtWord}>Split cue at word</Button><Button disabled={status==='busy'} onClick={mergeAtWord}>Merge adjacent cues</Button><Button disabled={status==='busy'||!id} onClick={()=>runReview(()=>window.studio!.captionDraft(id!,boundaries),'Caption draft saved; approval still required.')}>Save reviewed grouping draft</Button></div>
@@ -139,6 +152,7 @@ export function VoiceWorkspace() {
       <dl className="kvs"><dt>Original Core cues</dt><dd>{review.original.map(cue=>cue.text+' ('+cue.start+'–'+cue.end+')').join(' | ')}</dd><dt>Draft cues</dt><dd>{review.draft?.cues.map(cue=>cue.text+' ('+cue.start+'–'+cue.end+')').join(' | ')??'No saved draft'}</dd><dt>Approved cues</dt><dd>{review.approved?.cues.map(cue=>cue.text).join(' | ')??'None'}</dd></dl>
       <Field label="Required owner review note"><Textarea value={reviewNote} onChange={event=>setReviewNote(event.target.value)} placeholder="Confirm exact spoken words and semantic cue grouping"/></Field>
       <Button variant="primary" disabled={!id||!review.draft||!reviewNote.trim()||status==='busy'} onClick={()=>runReview(()=>window.studio!.captionApprove(id!,reviewNote),'Caption revision approved and native task invalidated for re-freeze.')}>Approve caption revision</Button>
+      </>
     </>}
   </Card></div>;
 }
