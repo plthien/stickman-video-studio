@@ -296,7 +296,7 @@ describe('NF02 — effective per-target Native image identity across corrections
     const binding=readState(root).media!.find(item=>item.shotId==='shot-1'&&item.layerId==='image-1')!;
     correctDraftForTest(root,artifact=>{artifact.manifest.shots[1].layers[0].y=456;});
     expect(readState(root).media!.find(item=>item.shotId==='shot-1'&&item.layerId==='image-1')).toEqual(binding);
-    expect(getPendingMedia(appPath,root)!.fulfillments[targets[0].key]).toBeDefined();
+    expect(getPendingMedia(appPath,root)!.fulfillments?.[targets[0].key]).toBeDefined();
     expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
   });
   it('NF02-09 an already approved image remains in the media ledger but loses a changed creative target binding',async()=>{
@@ -305,10 +305,11 @@ describe('NF02 — effective per-target Native image identity across corrections
     await pollGlabsImage(appPath,root,dir,cipher,job.id,decode);
     approveGlabsImage(appPath,root,job.id,'Licensed original creative artwork',decode);
     const approved=readState(root).media!.find(item=>item.shotId==='shot-1'&&item.layerId==='image-1')!;
-    expect(getPendingMedia(appPath,root)!.fulfillments[targets[0].key]).toBeDefined();
+    expect(getPendingMedia(appPath,root)!.fulfillments?.[targets[0].key]).toBeDefined();
     correctDraftForTest(root,artifact=>{artifact.manifest.shots[0].layers[0].x=44;});
     const pending=getPendingMedia(appPath,root)!;
-    expect(pending.fulfillments[targets[0].key]).toBeUndefined();
+    expect(pending.fulfillments).toBeDefined();
+    expect(pending.fulfillments?.[targets[0].key]).toBeUndefined();
     expect(pending.missing.some(item=>item.key===targets[0].key)).toBe(true);
     // The ledger retains both the original unassigned import and the approved
     // Shot/Layer audit entry at the same path. Match exact ownership, not the
