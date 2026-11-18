@@ -113,7 +113,7 @@ function readCues(root:string,relative:string):CaptionCue[] {
   return value;
 }
 export function draftCaptionReview(root:string,boundaries:number[]) {
-  const {state,alignment,words,offset,duration,sourceSha256}=inputs(root);
+  const {state,alignment,words,offset,duration,sourceSha256}=inputs(root,{allowCoreRegroup:true});
   const cues=buildCues(words,boundaries,offset,duration);
   const relative=`.studio/alignment/caption-draft-${randomUUID()}.json`;
   atomicJson(resolveProjectFile(root,relative),cues);
@@ -123,7 +123,7 @@ export function draftCaptionReview(root:string,boundaries:number[]) {
 }
 export function approveCaptionReview(root:string,note:string) {
   if (typeof note!=='string' || !note.trim()) throw new Error('Explicit caption revision review note is required.');
-  const {state,alignment,words,offset,duration,sourceSha256}=inputs(root);
+  const {state,alignment,words,offset,duration,sourceSha256}=inputs(root,{allowCoreRegroup:true});
   const draft=alignment.captionDraft;
   if (!draft || draft.sourceSha256!==sourceSha256 || sha(fs.readFileSync(resolveProjectFile(root,draft.path)))!==draft.sha256) throw new Error('Caption draft source is stale or missing.');
   const cues=buildCues(words,draft.boundaries,offset,duration);
