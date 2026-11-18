@@ -203,7 +203,7 @@ describe('Native four-operation UI — explicit draft/published target and sessi
     await waitFor(()=>expect(input).toHaveValue('RF-A, RF-B'));
     fireEvent.change(input,{target:{value:'RF-B'}});
     fireEvent.click(screen.getByRole('button',{name:'Switch findings project B'}));
-    await waitFor(()=>expect(input).toHaveValue('RF-D'));
+    await waitFor(()=>expect(screen.getByLabelText('Finding IDs to resolve (optional; defaults to unresolved findings)')).toHaveValue('RF-D'));
     expect(screen.getByLabelText('Editable section/shot IDs (comma separated)')).toHaveValue('shot-1');
     expect(screen.getByLabelText('Expanded editable field paths (optional, comma separated)')).toHaveValue('');
     expect(screen.getByLabelText('Import JSON')).toHaveValue('');
