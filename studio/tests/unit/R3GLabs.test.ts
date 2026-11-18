@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {afterEach,describe,expect,it,vi} from 'vitest';
-import {approveGlabsImage,clearGlabsKey,glabsCredentialStatus,glabsProbe,glabsSettings,listGlabsJobs,pollGlabsImage,saveGlabsKey,saveGlabsSettings,submitGlabsImage} from '../../src/main/glabs';
+import {approveGlabsImage,clearGlabsKey,glabsCredentialStatus,glabsProbe,glabsSettings,listGlabsJobs,pollGlabsImage,saveGlabsKey,submitGlabsImage} from '../../src/main/glabs';
 import {getPendingMedia,importMediaFile} from '../../src/main/externalTasks';
 import {readState,sha} from '../../src/main/services';
 import {appPath,cleanup,fixture,importedSource,nativePayload,png,stageNative} from './SixIssueFixtures';
@@ -51,16 +51,16 @@ describe('R3 G-Labs security and lifecycle GL01–GL12',()=>{
   });
   it('GL02 exact legacy route/model/ratio with no automatic fallback',async()=>{
     const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport();
-    const job=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key));
+    const job=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
     expect(job.status).toBe('RUNNING');
     const paid=calls.filter(c=>c.method==='POST');
     expect(paid).toHaveLength(1);expect(paid[0].route).toBe('/api/image/generate');
     expect(paid[0].body).toMatchObject({model:'nano_banana_2',aspect_ratio:'9:16',reference_images:[],upscale:[]});
-    expect((await submitGlabsImage(appPath,root,dir,cipher,{...request(targets[0].key),model:'other'}).catch(e=>String(e)))).toMatch(/MODEL_CONFIG_MISMATCH/);
+    expect((await submitGlabsImage(appPath,root,dir,cipher,{...request(targets[0].key),model:'other'},decode).catch(e=>String(e)))).toMatch(/MODEL_CONFIG_MISMATCH/);
   });
   it('GL03/04 target identity and provider task survive persistence/poll/restart',async()=>{
     const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport();
-    const job=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key));
+    const job=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
     expect(job).toMatchObject({shotId:targets[0].shotId,layerId:targets[0].layerId,token:expect.any(String),providerTaskId:'ab12cd34'});
     expect(listGlabsJobs(root)[0].providerTaskId).toBe('ab12cd34');
     const done=await pollGlabsImage(appPath,root,dir,cipher,job.id,decode);
@@ -70,10 +70,10 @@ describe('R3 G-Labs security and lifecycle GL01–GL12',()=>{
   });
   it('GL05/09 unknown paid submit never automatically replays after reopening',async()=>{
     const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport({postError:true});
-    const uncertain=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key));
+    const uncertain=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
     expect(uncertain.status).toBe('UNKNOWN');expect(uncertain.providerTaskId).toBeUndefined();
     expect(listGlabsJobs(root)[0].status).toBe('UNKNOWN');
-    await expect(submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key))).rejects.toThrow(/UNKNOWN/);
+    await expect(submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode)).rejects.toThrow(/UNKNOWN/);
     const checked=await pollGlabsImage(appPath,root,dir,cipher,uncertain.id,decode);
     expect(checked.status).toBe('UNKNOWN');
     expect(calls.filter(c=>c.method==='POST')).toHaveLength(1);
@@ -82,7 +82,7 @@ describe('R3 G-Labs security and lifecycle GL01–GL12',()=>{
     const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport();
     const imported=importMediaFile(root,importedSource(root),'image','Owner created and licensed this image');
     const req={...request(targets[0].key),references:[imported.path]};
-    const job=await submitGlabsImage(appPath,root,dir,cipher,req);
+    const job=await submitGlabsImage(appPath,root,dir,cipher,req,decode);
     expect(job.references).toEqual([{path:imported.path,sha256:imported.sha256,mime:'image/png',name:'ref_001.png'}]);
     const sent=calls.find(c=>c.method==='POST')!.body as {reference_images:Array<{data:string;name:string}>};
     expect(sent.reference_images[0].name).toBe('ref_001.png');
@@ -90,7 +90,7 @@ describe('R3 G-Labs security and lifecycle GL01–GL12',()=>{
   });
   it('GL07/10 explicit approved image binds one exact frozen target and attested rights',async()=>{
     const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport();
-    const job=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key));
+    const job=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
     await pollGlabsImage(appPath,root,dir,cipher,job.id,decode);
     expect(()=>approveGlabsImage(appPath,root,job.id,'')).toThrow(/RIGHTS/);
     const result=approveGlabsImage(appPath,root,job.id,'Original artwork licensed by owner');
@@ -102,7 +102,7 @@ describe('R3 G-Labs security and lifecycle GL01–GL12',()=>{
   it('GL08 modifying one target leaves another target pending',async()=>{
     const dir=credential(),{root,targets}=nativeTarget(true);transport();
     expect(targets).toHaveLength(2);
-    const job=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key));
+    const job=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
     await pollGlabsImage(appPath,root,dir,cipher,job.id,decode);
     approveGlabsImage(appPath,root,job.id,'Original artwork licensed by owner');
     const left=getPendingMedia(appPath,root)!.missing;
@@ -110,14 +110,14 @@ describe('R3 G-Labs security and lifecycle GL01–GL12',()=>{
   });
   it('GL11 unsafe file URLs are blocked with no implicit second paid POST',async()=>{
     const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport({maliciousFile:true});
-    const job=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key));
+    const job=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
     await expect(pollGlabsImage(appPath,root,dir,cipher,job.id,decode)).rejects.toThrow(/RESULT_URL_UNSAFE/);
     expect(calls.filter(c=>c.method==='POST')).toHaveLength(1);
     expect(listGlabsJobs(root)[0].status).toBe('DOWNLOADED');
   });
   it('GL12 no key is persisted in project job ledger or renderer-safe settings',async()=>{
     const dir=credential(),{root,targets}=nativeTarget();transport();
-    const job=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key));
+    const job=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
     expect(JSON.stringify(listGlabsJobs(root))).not.toContain('confidential-test-key');
     expect(JSON.stringify(glabsSettings(dir))).not.toContain('confidential-test-key');
     expect(JSON.stringify(job)).not.toContain('confidential-test-key');
@@ -125,8 +125,8 @@ describe('R3 G-Labs security and lifecycle GL01–GL12',()=>{
   });
   it('GL03/05 rejects unapproved, nonfrozen targets and unauthorized paid submission',async()=>{
     const dir=credential(),{root,targets}=nativeTarget();const {calls}=transport();
-    await expect(submitGlabsImage(appPath,root,dir,cipher,{...request(targets[0].key),authorized:false})).rejects.toThrow(/EXPLICIT_OWNER_AUTHORIZATION/);
-    await expect(submitGlabsImage(appPath,root,dir,cipher,request('unfrozen-layer'))).rejects.toThrow(/NOT_FROZEN/);
+    await expect(submitGlabsImage(appPath,root,dir,cipher,{...request(targets[0].key),authorized:false},decode)).rejects.toThrow(/EXPLICIT_OWNER_AUTHORIZATION/);
+    await expect(submitGlabsImage(appPath,root,dir,cipher,request('unfrozen-layer'),decode)).rejects.toThrow(/NOT_FROZEN/);
     expect(calls.filter(c=>c.method==='POST')).toHaveLength(0);
   });
 });
