@@ -77,7 +77,7 @@ describe('WP-D: safe inert public citations without weakening native path rules'
     expect(()=>rejectNativeUnsafePaths({description:'metadata: and data: are plain text'})).not.toThrow();
   });
   it('UT-D07 Native unsafe control characters and prototype keys remain rejected',()=>{
-    expect(()=>rejectNativeUnsafePaths({note:'Unsafe\\u0000control'})).toThrow(/Unsafe native field/);
+    expect(()=>rejectNativeUnsafePaths({note:'Unsafe'+String.fromCharCode(0)+'control'})).toThrow(/Unsafe native field/);
     expect(()=>rejectNativeUnsafePaths(JSON.parse('{"__proto__":"unsafe"}'))).toThrow(/Forbidden native key/);
   });
 });
