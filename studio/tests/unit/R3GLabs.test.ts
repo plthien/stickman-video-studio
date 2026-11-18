@@ -7,7 +7,7 @@ import {afterEach,describe,expect,it,vi} from 'vitest';
 import {approveGlabsImage,clearGlabsKey,glabsCredentialStatus,glabsProbe,glabsSettings,listGlabsJobs,pollGlabsImage,saveGlabsKey,saveGlabsSettings,submitGlabsImage} from '../../src/main/glabs';
 import {getPendingMedia,importMediaFile} from '../../src/main/externalTasks';
 import {readState,sha,writeState} from '../../src/main/services';
-import {appPath,cleanup,fixture,importedSource,nativePayload,png,stageNative} from './SixIssueFixtures';
+import {appPath,cleanup,fixture,importedSource,nativePayload,stageNative} from './SixIssueFixtures';
 const userFolders:string[]=[];
 afterEach(()=>{cleanup();vi.restoreAllMocks();vi.unstubAllGlobals();for(const p of userFolders.splice(0))fs.rmSync(p,{recursive:true,force:true});});
 const cipher={isEncryptionAvailable:()=>true,encryptString:(s:string)=>Buffer.from(s),decryptString:(b:Buffer)=>b.toString('utf8')};
