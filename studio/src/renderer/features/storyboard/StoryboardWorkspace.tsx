@@ -42,11 +42,15 @@ export function StoryboardWorkspace(){
     const jobs=await window.studio.glabsJobs(scope.projectId);
     if(!isCurrentProjectSession(scope))return;
     setGlabsJobs(jobs);
-    const urls:Record<string,string>={};
+    const urls:Record<string,string>={},errors:Record<string,string>={};
     await Promise.all(jobs.filter(item=>item.staged).map(async item=>{
-      try{urls[item.id]=await window.studio!.mediaUrl(scope.projectId,item.staged!.path);}catch{/* Failed candidate previews cannot be fabricated. */}
+      try{urls[item.id]=await window.studio!.mediaUrl(scope.projectId,item.staged!.path);}
+      catch{errors[item.id]='Generated image preview URL is unavailable. Retry preview after checking the project asset.';}
     }));
-    if(isCurrentProjectSession(scope))setImageUrls(urls);
+    if(isCurrentProjectSession(scope)){
+      setImageUrls(urls);
+      if(Object.keys(errors).length)setPreviewErrors(previous=>({...previous,...errors}));
+    }
   };
   useEffect(()=>{const scope=captureProjectSession();if(!scope||!window.studio?.glabsSettings)return;
     void window.studio.glabsSettings().then(value=>{if(isCurrentProjectSession(scope))setGlabsConfig(value.config);})
