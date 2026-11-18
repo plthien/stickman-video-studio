@@ -57,7 +57,7 @@ const projectContext = (state: StudioState, root: string, stage:Stage) => {
 /** Native prompt projection v1: keep sourceFingerprint() on full frozen evidence.
  * This is an output-size change only; never rewrite the accepted alignment file. */
 function nativePromptProjection(context:ReturnType<typeof projectContext>){
-  const source=context as ReturnType<typeof projectContext> & {
+  const source=context as unknown as Record<string,unknown> & {
     alignment?:{words?:unknown;caption_cues?:unknown;approved_caption_cues?:unknown;
       provenance?:unknown;words_sha256?:unknown;cues_sha256?:unknown;
       audio_sha256?:unknown;script_sha256?:unknown};
