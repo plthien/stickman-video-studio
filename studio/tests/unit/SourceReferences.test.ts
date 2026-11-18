@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {afterEach,describe,expect,it,vi} from 'vitest';
 import {confirmImport,freezeTask,stageImport} from '../../src/main/externalTasks';
-import {validateAuthoring} from '../../src/main/sourceCitations';
+import {rejectNativeUnsafePaths,validateAuthoring} from '../../src/main/sourceCitations';
 import {readState} from '../../src/main/services';
 import {appPath,cleanup,fixture,frozenEnvelope,nativePayload,stageNative} from './SixIssueFixtures';
 
@@ -56,5 +56,28 @@ describe('WP-D: safe inert public citations without weakening native path rules'
     expect(readState(root).approvedScript?.authoring?.creative_direction).toEqual({description});
     expect(fetch).not.toHaveBeenCalled();
     expect(fs.readFileSync(path.join(root,'.studio/state.json'),'utf8')).toContain('museum.example.org');
+  });
+  it('UT-D05 Native prose containing metadata: and URI-like words is imported without altering the original JSON',()=>{
+    const {root}=fixture();
+    const notes='Original voice WAV is referenced only by supplied project metadata: path assets/audio/narration.wav';
+    const payload={...nativePayload(root),
+      shot_ledger:[{shot_id:'shot-1',meaning:'The label says data: but is only creative prose.'}],
+      sound_script:[{target_id:'shot-1',note:'A file: label, not a file URI.'}],
+      asset_needs:[{notes}]};
+    const {response,envelope}=stageNative(root,payload);
+    expect(['STAGED','WAITING_FOR_MEDIA']).toContain(response.status);
+    expect(JSON.stringify(envelope)).toContain(notes);
+    expect(JSON.stringify(envelope)).toContain('data: but is only creative prose');
+  });
+  it('UT-D06 actual Native media paths still reject URI schemes, traversal and absolute paths',()=>{
+    for(const unsafe of ['data:image/png;base64,AAAA','javascript:alert(1)','file:///tmp/local.png',
+      'vbscript:run','C:\\\\Users\\\\name\\\\asset.png','../outside.png','assets/images/../../secret.png'])
+      expect(()=>rejectNativeUnsafePaths({path:unsafe})).toThrow(/safe project-local paths/);
+    expect(()=>rejectNativeUnsafePaths({path:'assets/images/approved.png'})).not.toThrow();
+    expect(()=>rejectNativeUnsafePaths({description:'metadata: and data: are plain text'})).not.toThrow();
+  });
+  it('UT-D07 Native unsafe control characters and prototype keys remain rejected',()=>{
+    expect(()=>rejectNativeUnsafePaths({note:'Unsafe\\u0000control'})).toThrow(/Unsafe native field/);
+    expect(()=>rejectNativeUnsafePaths(JSON.parse('{"__proto__":"unsafe"}'))).toThrow(/Forbidden native key/);
   });
 });
