@@ -70,16 +70,21 @@ export function ExternalWorkspace(){
   const effectiveNativeTarget=native?.nativeDraft?nativeTarget:'PUBLISHED';
   // Unedited suggestions are display-only. The backend recomputes rights from
   // the exact selected finding subset; only explicit owner edits are overrides.
-  const lifecycleScope=()=>({targetContext:stage==='native'?effectiveNativeTarget:undefined,
-    targetIds:splitList(reviewTargets),
-    editableIds:operation==='Correct'&&!local.editableTouched?undefined:splitList(editable),
-    editablePaths:operation==='Correct'&&!local.editablePathsTouched?undefined:splitList(editablePaths),
-    findingIds:findingScope.trim()?splitList(findingScope):undefined});
-  // Frozen identity is keyed by the VISIBLE exact scope; it survives reopening
-  // even though pre-freeze automatic suggestions were not owner overrides.
+  // Frozen identity is keyed by the VISIBLE exact scope, independent of how
+  // the user obtained each field before freezing (manual or suggestion).
   const scopeKey=()=>JSON.stringify({targetContext:stage==='native'?effectiveNativeTarget:undefined,
     targetIds:splitList(reviewTargets),editableIds:splitList(editable),
     editablePaths:splitList(editablePaths),findingIds:findingScope.trim()?splitList(findingScope):undefined});
+  const lifecycleScope=()=>{
+    // Reusing an unchanged saved task must preserve its exact frozen arrays.
+    // On a changed selection, unedited fields are instead inferred by backend.
+    const reuseFrozen=Boolean(frozenTaskId&&scopeKey()===frozenScopeKey);
+    return {targetContext:stage==='native'?effectiveNativeTarget:undefined,
+      targetIds:splitList(reviewTargets),
+      editableIds:operation==='Correct'&&!local.editableTouched&&!reuseFrozen?undefined:splitList(editable),
+      editablePaths:operation==='Correct'&&!local.editablePathsTouched&&!reuseFrozen?undefined:splitList(editablePaths),
+      findingIds:findingScope.trim()?splitList(findingScope):undefined};
+  };
   const autoFindingFields=(text:string)=>{
     const map=suggested?.findingScopes;
     const ids=text.trim()?splitList(text):suggested?.findingIds??[];
