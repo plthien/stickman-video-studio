@@ -1234,10 +1234,16 @@ export function confirmLifecycleResult(appPathOrRoot:string,rootOrToken:string,m
   const frozen=strictJson(fs.readFileSync(frozenFile,'utf8')) as Record<string,unknown>;
   if(canonical(frozen.payload)!==canonical(pending.payload))throw new Error('Lifecycle pending response is corrupt.');
   const original=artifactFor(root,state,task.stage,task.operation,task.artifactContext);
+  const desiredDraftValue=(pending.payload as {artifact?:{
+    manifest:unknown;shot_ledger:unknown;sound_script:unknown;asset_needs:unknown}}).artifact;
+  const draftDesiredSha256=desiredDraftValue?sha(JSON.stringify({
+    manifest:desiredDraftValue.manifest,shot_ledger:desiredDraftValue.shot_ledger,
+    sound_script:desiredDraftValue.sound_script,asset_needs:desiredDraftValue.asset_needs
+  })):null;
   const draftRecovery=task.stage==='native'&&task.operation==='correct'&&
     task.artifactContext==='DRAFT'&&readNativeDraft(root,state)?.history.some(item=>
       item.correctTaskId===task.id&&item.previousSha256===task.artifactSha256&&
-      item.artifactSha256===sha(JSON.stringify((pending.payload as {artifact:unknown}).artifact)))===true;
+      item.artifactSha256===draftDesiredSha256)===true;
   if(original.sha256!==task.artifactSha256&&!draftRecovery) {
     const journal=nativeCorrectionJournal(root);
     const saved=fs.existsSync(journal)?strictJson(fs.readFileSync(journal,'utf8')) as Record<string,unknown>:null;
