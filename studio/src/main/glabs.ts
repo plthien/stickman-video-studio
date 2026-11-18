@@ -16,7 +16,7 @@ export interface GLabsJob {
   providerTaskId?:string;staged?:{path:string;sha256:string;mime:string;width:number;height:number};
   reason?:string;approved?:{rights:string;path:string;sha256:string};createdAt:string;updatedAt:string;
 }
-const MAX_RESPONSE=2*1024*1024,MAX_IMAGE=16*1024*1024;
+const MAX_RESPONSE=262_144,MAX_REQUEST=5_242_880,MAX_IMAGE=16*1024*1024;
 const active=new Set<string>();
 const defaultSettings:GLabsSettings={endpoint:'http://127.0.0.1:8765',contract:'legacy',model:'nano_banana_2',aspectRatio:'9:16'};
 const settingsFile=(userData:string)=>path.join(userData,'glabs-config-r3.json');
@@ -85,8 +85,10 @@ async function requestJson(settings:GLabsSettings,userData:string,cipher:Credent
   const headers:Record<string,string>={};
   if(auth)headers['X-API-Key']=keyFor(userData,cipher);
   if(payload)headers['Content-Type']='application/json';
+  const body=payload?JSON.stringify(payload):undefined;
+  if(body&&Buffer.byteLength(body,'utf8')>MAX_REQUEST)throw new Error('GLABS_REQUEST_OVERSIZE');
   let res:Response;
-  try{res=await fetch(url,{method,headers,body:payload?JSON.stringify(payload):undefined,redirect:'error',signal:AbortSignal.timeout(30000)});}
+  try{res=await fetch(url,{method,headers,body,redirect:'error',signal:AbortSignal.timeout(30000)});}
   catch{throw new Error('GLABS_TRANSPORT_UNKNOWN: request failed or timed out.');}
   if(!res.ok)throw new Error('GLABS_HTTP_'+res.status);
   if(method==='POST'&&res.status!==202)throw new Error('GLABS_SUBMISSION_STATUS_UNVERIFIED');
