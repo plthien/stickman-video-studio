@@ -408,6 +408,43 @@ export function readNativeDraft(root:string,state=readState(root)){
     revision:1+(pending.draftHistory?.length??0),artifact,sha256:sha(JSON.stringify(artifact)),
     history:pending.draftHistory??[]};
 }
+/** Target-specific creative identity for a G-Labs image attempt. The draft
+ * revision number is reported as provenance, but unrelated Shot corrections do
+ * not change this hash. Unscoped auxiliary requirements are conservatively
+ * treated as global instructions rather than silently ignored. */
+export function nativeImageTargetIdentity(root:string,targetKey:string){
+  const state=readState(root),draft=readNativeDraft(root,state);
+  if(!draft)throw new Error('GLABS_NATIVE_DRAFT_REQUIRED');
+  const manifest=draft.artifact.manifest as Record<string,unknown>;
+  const reference=nativeRefs(manifest).find(item=>item.kind==='image'&&item.key===targetKey);
+  if(!reference||!reference.shotId||!reference.layerId||reference.shotIndex===undefined)
+    throw new Error('GLABS_TARGET_NOT_FROZEN');
+  const shot=(manifest.shots as Array<Record<string,unknown>>)[reference.shotIndex];
+  if(!shot||shot.id!==reference.shotId)throw new Error('GLABS_TARGET_SHOT_IDENTITY_INVALID');
+  const aux=(rows:unknown)=>Array.isArray(rows)?rows.filter(value=>{
+    if(!value||typeof value!=='object'||Array.isArray(value))return true;
+    const row=value as Record<string,unknown>;
+    const shotId=row.shot_id??row.shotId??row.target_shot_id??row.targetShotId;
+    const layerId=row.layer_id??row.layerId??row.target_layer_id??row.targetLayerId;
+    const expectedPath=row.path??row.expected_path??row.asset_path;
+    if(typeof shotId==='string')return shotId===reference.shotId;
+    if(typeof layerId==='string')return layerId===reference.layerId;
+    if(typeof expectedPath==='string')return expectedPath===reference.path;
+    return true; // Unscoped global creative instruction, potentially relevant to all images.
+  }):[];
+  const fingerprint=sha(JSON.stringify({
+    project_id:state.project.id,author_task_id:draft.authorTaskId,
+    author_task_revision:state.tasks?.native?.revision,draft_token:draft.token,
+    style:manifest.style,width:manifest.width,height:manifest.height,fps:manifest.fps,
+    opening:reference.shotIndex===0?manifest.opening??null:null,
+    shot_index:reference.shotIndex,shot_id:reference.shotId,
+    layer_id:reference.layerId,expected_path:reference.path,
+    shot,shot_ledger:aux(draft.artifact.shot_ledger),
+    asset_needs:aux(draft.artifact.asset_needs)
+  }));
+  return {fingerprint,authorTaskId:draft.authorTaskId,draftRevision:draft.revision,
+    targetKey,shotId:reference.shotId,layerId:reference.layerId,path:reference.path};
+}
 /** Publish an immutable corrected draft revision without touching original Author
  * response, published project.json or unrelated accepted media. */
 export function publishNativeDraftCorrection(appPath:string,root:string,originalSha256:string,
