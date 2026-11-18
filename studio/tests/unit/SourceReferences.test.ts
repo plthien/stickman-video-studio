@@ -80,4 +80,22 @@ describe('WP-D: safe inert public citations without weakening native path rules'
     expect(()=>rejectNativeUnsafePaths({note:'Unsafe'+String.fromCharCode(0)+'control'})).toThrow(/Unsafe native field/);
     expect(()=>rejectNativeUnsafePaths(JSON.parse('{"__proto__":"unsafe"}'))).toThrow(/Forbidden native key/);
   });
+  it('UT-D08 Native Author rejects absent, duplicate or malformed Shot IDs before staging Review',()=>{
+    const {root}=fixture(),base=nativePayload(root),valid=frozenEnvelope(root,'native',base);
+    for(const mode of ['missing','duplicate','invalid'] as const){
+      const payload=structuredClone(base);
+      if(mode==='missing')delete (payload.manifest.shots[0] as {id?:string}).id;
+      if(mode==='duplicate')payload.manifest.shots[1].id=payload.manifest.shots[0].id;
+      if(mode==='invalid')payload.manifest.shots[0].id='bad shot id';
+      expect(()=>stageImport(appPath,root,'native',JSON.stringify({...valid,payload})))
+        .toThrow(/NATIVE_SHOT_IDS_REQUIRED/);
+    }
+    const staged=stageImport(appPath,root,'native',JSON.stringify(valid));
+    expect(staged.status).toBe('STAGED');
+  });
+  it('UT-D09 Native Author prompt explicitly requires unique Shot IDs shared with ledgers',()=>{
+    const {root}=fixture(),task=freezeTask(appPath,root,'native');
+    expect(task.prompt).toContain('Every manifest.shots[] entry MUST have a unique explicit stable id');
+    expect(task.prompt).toContain('match that exact id in shot_ledger and sound_script target IDs');
+  });
 });
