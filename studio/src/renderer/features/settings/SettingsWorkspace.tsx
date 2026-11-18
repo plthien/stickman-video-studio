@@ -32,7 +32,7 @@ export function SettingsWorkspace(){
   };
   const checkGlabs=async()=>{
     if(!window.studio||glabsBusy)return;setGlabsBusy(true);setGlabsError('');setGlabsStatus('TESTING (READ-ONLY)');
-    try{const result=await window.studio.glabsProbe();setGlabsStatus(result.ready?'HEALTH + AUTH VERIFIED · '+result.contract+' · '+result.version:'NOT READY');}
+    try{const result=await window.studio.glabsProbe();setGlabsStatus(result.status+' · '+result.modelCapability+' · selected '+result.configuredModel);if(result.status!=='AUTH_VERIFIED')setGlabsError(result.diagnostic);}
     catch(error){setGlabsError(String(error));setGlabsStatus('BLOCKED');}finally{setGlabsBusy(false);}
   };
   useEffect(()=>{
