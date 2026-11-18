@@ -31,7 +31,17 @@ export async function projectSnapshot(root:string,appPath:string,verifier?:Nativ
   const ambience=(Array.isArray(manifest.ambience)?manifest.ambience as Array<Record<string,unknown>>:[]).map((value,index)=>clip(typeof value.id==='string'&&value.id.trim()?value.id:text(value.path,`ambience ${index+1} path`),finite(value.start,`ambience ${index+1} start`),finite(value.end,`ambience ${index+1} end`)));
   const tracks={Scenes:shots.map(item=>({...clip(item.id,item.start,item.end),captionCount:item.captions.length,captionTexts:item.captions.map(cue=>cue.text+' ['+cue.start+'–'+cue.end+']')})),Layers:layers,Captions:captions.map(item=>clip(item.text,item.start,item.end)),Narration:state.voice&&!state.voice.stale?[clip(state.voice.origin??state.voice.path,0,state.voice.duration!)]:[],SFX:sfx,Ambience:ambience};
   const jobPath=path.join(projectRoot,'.studio','jobs','latest.json'),job=fs.existsSync(jobPath)?strictJson(fs.readFileSync(jobPath,'utf8')):null;
-  const nativeDraft=readNativeDraft(projectRoot,state);
+  // A replaced Native Author task can leave an older, integrity-checked draft
+  // pending on disk. Opening the project is read-only: report the stale lineage
+  // without treating that draft as current or destroying its evidence.
+  let nativeDraft:ReturnType<typeof readNativeDraft>=null;
+  let nativeDraftRecovery:'NATIVE_DRAFT_STALE_AUTHOR_TASK'|null=null;
+  try{nativeDraft=readNativeDraft(projectRoot,state);}
+  catch(error){
+    if(error instanceof Error&&error.message==='NATIVE_DRAFT_STALE_AUTHOR_TASK')
+      nativeDraftRecovery='NATIVE_DRAFT_STALE_AUTHOR_TASK';
+    else throw error; // Integrity/tamper and transaction errors are not recoverable warnings.
+  }
   const draftReports=nativeDraft?Object.values(state.lifecycle?.artifacts??{}).filter(item=>
     item.stage==='native'&&item.artifactContext==='DRAFT'&&
     item.draftAuthorTaskId===nativeDraft.authorTaskId&&item.draftToken===nativeDraft.token&&
@@ -40,6 +50,7 @@ export async function projectSnapshot(root:string,appPath:string,verifier?:Nativ
     .sort((a,b)=>b.createdAt.localeCompare(a.createdAt)):[],latestDraftReview=draftReports[0];
   const currentFindings=(latestDraftReview?.value as {findings?:Array<{status:string}>}|undefined)?.findings??[];
   return{...state,manifest,projection:{shots,duration,tracks,captionReady,captionStatus,demo:false as const},job,
+    nativeDraftRecovery,
     nativeDraft:nativeDraft?{context:'DRAFT' as const,token:nativeDraft.token,authorTaskId:nativeDraft.authorTaskId,
       revision:nativeDraft.revision,artifactSha256:nativeDraft.sha256,
       reviewStatus:latestDraftReview?.status??'NOT_REVIEWED',
