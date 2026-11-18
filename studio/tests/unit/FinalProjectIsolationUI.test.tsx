@@ -73,7 +73,27 @@ describe('REG-03 final project-session isolation',()=>{
     expect(screen.getByText(/Auto-filled from confirmed Review/)).toBeInTheDocument();
   });
   it('REG03-F06 validate Script response cannot become Native pending',async()=>{const staged=deferred<StudioStagedImport>();bridge({stageImport:()=>staged.promise,exportPrompt:async()=>null});render(<AppStateProvider><Harness><ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider></Harness></AppStateProvider>);fireEvent.click(await screen.findByRole('button',{name:'Build Task'}));await screen.findByText('A-script-prompt');fireEvent.change(screen.getByLabelText('Import JSON'),{target:{value:'{"script":"A"}'}});fireEvent.click(screen.getByRole('button',{name:'Validate import'}));fireEvent.click(screen.getByRole('button',{name:'Native'}));staged.resolve({token:'script-A',stage:'script',before:{},after:{},changes:1,status:'STAGED',missing:[],fulfillments:{}});await flush();expect(screen.queryByText(/Schema valid/)).not.toBeInTheDocument();expect(screen.queryByText(/BEFORE/)).not.toBeInTheDocument()});
-  it('REG03-F07 caption refresh after draft cannot display A words on B',async()=>{const gate=deferred<typeof caption>(),captionReview=vi.fn().mockResolvedValueOnce(caption).mockReturnValueOnce(gate.promise);const aligned=project('A',{preview,alignment:{path:'words.json',captionsPath:'captions.json',audioSha256:'a',wordsSha256:'b',cuesSha256:'c'}});bridge({captionReview,captionDraft:async()=>({}),projectState:async()=>aligned});render(<AppStateProvider><Harness first={aligned}><VoiceWorkspace/></Harness></AppStateProvider>);await screen.findByText(/Actual aligned words:.*A-WORD/);fireEvent.click(screen.getByRole('button',{name:'Save reviewed grouping draft'}));await waitFor(()=>expect(captionReview).toHaveBeenCalledTimes(2));fireEvent.click(screen.getByRole('button',{name:'Switch B'}));gate.resolve(caption);await flush();expect(screen.queryByText(/A-WORD/)).not.toBeInTheDocument();expect(screen.getByLabelText('active-project')).toHaveTextContent('B')});
+  it('REG03-F07 caption refresh after draft cannot display A words on B',async()=>{
+    const gate=deferred<typeof caption>();
+    const captionReview=vi.fn().mockResolvedValueOnce(caption).mockReturnValueOnce(gate.promise);
+    const aligned=project('A',{preview,alignment:{path:'words.json',captionsPath:'captions.json',audioSha256:'a',wordsSha256:'b',cuesSha256:'c'}});
+    bridge({captionReview,captionDraft:async()=>({}),projectState:async()=>aligned});
+    render(<AppStateProvider><Harness first={aligned}><VoiceWorkspace/></Harness></AppStateProvider>);
+    // R3 keeps all word-level editing inside Manual Correction; Auto Captions
+    // only shows verified caption cues by default.
+    await screen.findByRole('button',{name:'Manual Correction'});
+    fireEvent.click(screen.getByRole('button',{name:'Manual Correction'}));
+    expect(await screen.findByText(/Actual aligned words:.*A-WORD/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:'Save reviewed grouping draft'}));
+    await waitFor(()=>expect(captionReview).toHaveBeenCalledTimes(2));
+    // A's delayed caption refresh must never repopulate B's visible or manual view.
+    fireEvent.click(screen.getByRole('button',{name:'Switch B'}));
+    gate.resolve(caption);
+    await flush();
+    expect(screen.getByLabelText('active-project')).toHaveTextContent('B');
+    expect(screen.queryByText(/A-WORD/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Actual aligned words:/)).not.toBeInTheDocument();
+  });
   it('REG03-F08 Nano Discover A response cannot replace B profile list',async()=>{const gate=deferred<{ready:boolean;profiles:Array<Record<string,unknown>>}>();bridge({nanoDiscover:()=>gate.promise});render(<AppStateProvider><Harness><VoiceWorkspace/></Harness></AppStateProvider>);fireEvent.click(await screen.findByRole('button',{name:'Discover producer'}));fireEvent.click(screen.getByRole('button',{name:'Switch B'}));gate.resolve({ready:true,profiles:[{id:'A-voice',name:'A Voice',version:1}]});await flush();expect(screen.queryByRole('option',{name:/A Voice/})).not.toBeInTheDocument();expect(screen.queryByText(/confirmed profile/)).not.toBeInTheDocument()});
   it('REG03-F09 Save Brief A response cannot replace B',async()=>{const gate=deferred<NativeStudioState>();bridge({saveBrief:()=>gate.promise});render(<AppStateProvider><Harness><ProjectForm/></Harness></AppStateProvider>);fireEvent.click(await screen.findByRole('button',{name:'Save project setup'}));fireEvent.click(screen.getByRole('button',{name:'Switch B'}));gate.resolve({...A,brief:{...A.brief,topic:'saved A'}});await flush();expect(screen.getByLabelText('active-project')).toHaveTextContent('B');expect(screen.queryByText(/Project setup saved/)).not.toBeInTheDocument()});
   it('REG03-F10 latest Open Project request wins inverse completion order',async()=>{const openA=deferred<NativeStudioState>(),openB=deferred<NativeStudioState>();const dialog=vi.fn().mockResolvedValueOnce('A').mockResolvedValueOnce('B');bridge({openProjectDialog:dialog,openProject:vi.fn((path:string)=>path==='A'?openA.promise:openB.promise)});render(<AppStateProvider><ProjectForm/></AppStateProvider>);const open=screen.getByRole('button',{name:'Open project…'});fireEvent.click(open);fireEvent.click(open);await waitFor(()=>expect(dialog).toHaveBeenCalledTimes(2));openB.resolve(B);await waitFor(()=>expect(screen.getByText('B')).toBeInTheDocument());openA.resolve(A);await flush();expect(screen.queryByText('A')).not.toBeInTheDocument();expect(screen.getByDisplayValue('B')).toBeInTheDocument()});
