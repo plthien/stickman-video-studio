@@ -15,7 +15,7 @@ export function VoiceWorkspace() {
   const id = native?.project.id, script = native?.approvedScript?.text ?? '';
   useEffect(()=>{setVoice(pinnedVoice??'');setProfiles([]);setAuthorized(false);},[id,pinnedVoice]);
   const [playbackUrl,setPlaybackUrl]=useState(''),[playbackError,setPlaybackError]=useState(''),[playbackRetry,setPlaybackRetry]=useState(0);
-  const [playbackSeconds,setPlaybackSeconds]=useState(0),[manualCorrection,setManualCorrection]=useState(false);
+  const [playbackSeconds,setPlaybackSeconds]=useState(0),[manualCorrection,setManualCorrection]=useState(false),[autoGenerating,setAutoGenerating]=useState(false);
   const audioSha=native?.voice?.sha256,voiceStale=native?.voice?.stale;
   useEffect(()=>{setPlaybackRetry(0);setPlaybackSeconds(0);},[id,audioSha]);
   const refreshVoiceOperations=async(scope=captureProjectSession())=>{
@@ -63,7 +63,7 @@ export function VoiceWorkspace() {
   const [review,setReview]=useState<null|{status:string;workflowStatus:string;error?:string;wordCount:number;cueCount:number;duration:number;words:Array<{word:string;start:number;end:number}>;original:Array<{start:number;end:number;text:string}>;originalBoundaries:number[];draft:null|{boundaries:number[];cues:Array<{start:number;end:number;text:string}>};approved:null|{revision:number;mode?:'AUTO'|'MANUAL';cues:Array<{start:number;end:number;text:string}>}}>(null);
   const [boundaries,setBoundaries]=useState<number[]>([]),[selectedBoundary,setSelectedBoundary]=useState(1),[reviewNote,setReviewNote]=useState('');
   const refreshCaptionReview=async(scope= captureProjectSession())=>{if(!id||!scope||!window.studio)return false;const value=await window.studio.captionReview(scope.projectId);if(!isCurrentProjectSession(scope))return false;setReview(value);setBoundaries(value.draft?.boundaries??value.originalBoundaries);return true;};
-  useEffect(()=>{setMessage('');setStatus('idle');setReview(null);setBoundaries([]);setSelectedBoundary(1);setReviewNote('');setManualCorrection(false);let active=true;if(!id||!hasAlignment||!window.studio)return()=>{active=false};void window.studio.captionReview(id).then(value=>{if(active){setReview(value);setBoundaries(value.draft?.boundaries??value.originalBoundaries);}}).catch(reason=>{if(active){setStatus('error');setMessage('Caption review ERROR: '+(reason instanceof Error?reason.message:String(reason)))}});return()=>{active=false};},[id,hasAlignment,wordsSha256,captionRevision]);
+  useEffect(()=>{setMessage('');setStatus('idle');setReview(null);setBoundaries([]);setSelectedBoundary(1);setReviewNote('');setManualCorrection(false);setAutoGenerating(false);let active=true;if(!id||!hasAlignment||!window.studio)return()=>{active=false};void window.studio.captionReview(id).then(value=>{if(active){setReview(value);setBoundaries(value.draft?.boundaries??value.originalBoundaries);}}).catch(reason=>{if(active){setStatus('error');setMessage('Caption review ERROR: '+(reason instanceof Error?reason.message:String(reason)))}});return()=>{active=false};},[id,hasAlignment,wordsSha256,captionRevision]);
   const runReview=async(work:()=>Promise<unknown>,success:string)=>{const scope=captureProjectSession();if(!id||!scope)return;setStatus('busy');try{await work();if(!isCurrentProjectSession(scope))return;if(window.studio){const next=await window.studio.projectState(scope.projectId);if(!setNativeIfSessionCurrent(scope,next))return;}if(!await refreshCaptionReview(scope))return;setStatus('ready');showNotice(success);}catch(reason){if(isCurrentProjectSession(scope))fail(reason)}};
   const splitAtWord=()=>{const number=selectedBoundary;if(!review||number<1||number>=review.words.length)return;setBoundaries(value=>[...new Set([...value,number])].sort((a,b)=>a-b));};
   const mergeAtWord=()=>{if(!review)return;setBoundaries(value=>value.filter(number=>number!==selectedBoundary));};
@@ -136,13 +136,17 @@ export function VoiceWorkspace() {
     <Button disabled={!id||!native?.voice||native.voice.stale||!timingEvidence||status==='busy'} onClick={()=>act(()=>window.studio!.repairTiming(id!),'Saved provider response revalidated without a paid upload.')}>Repair Timing (saved response)</Button></div>
     <div className="info">Vietnamese support is not assumed. Import owner-verified word timestamps when live language coverage is unconfirmed. Secrets remain main-process only.</div><dl className="kvs"><dt>Words file</dt><dd>{native?.alignment?.path??'Not aligned'}</dd><dt>Origin</dt><dd>{native?.alignment?.origin??'Missing'}</dd></dl>
   </Card>
-  <Card><CardHeader title="Auto Captions" hint="Verified real-word timings · original Core grouping · optional manual correction" action={<Badge tone={review?.approved?'mint':'amber'}>{review?.workflowStatus??'NOT_READY'}</Badge>}/>
+  <Card><CardHeader title="Auto Captions" hint="Verified real-word timings · original Core grouping · optional manual correction" action={<Badge tone={review?.approved?'mint':'amber'}>{autoGenerating?'GENERATING':review?.workflowStatus??'NOT_READY'}</Badge>}/>
     {!review?<div className="info">NOT_READY — Align or import verified word timestamps to enable automatic local caption grouping.</div>:<>
-      <dl className="kvs"><dt>Auto status</dt><dd>{review.workflowStatus??(review.approved?'USER_APPROVED':'REVIEW_REQUIRED')}</dd><dt>Words</dt><dd>{review.wordCount??review.words.length}</dd><dt>Cues</dt><dd>{review.cueCount??captionCues.length}</dd><dt>Voice timeline</dt><dd>{Number.isFinite(review.duration)?review.duration.toFixed(2):(native?.voice?.duration?.toFixed(2)??'—')}s</dd><dt>Revision</dt><dd>{review.approved?.revision??'Not verified'}</dd></dl>
+      <dl className="kvs"><dt>Auto status</dt><dd>{autoGenerating?'GENERATING':review.workflowStatus??(review.approved?'USER_APPROVED':'REVIEW_REQUIRED')}</dd><dt>Words</dt><dd>{review.wordCount??review.words.length}</dd><dt>Cues</dt><dd>{review.cueCount??captionCues.length}</dd><dt>Voice timeline</dt><dd>{Number.isFinite(review.duration)?review.duration.toFixed(2):(native?.voice?.duration?.toFixed(2)??'—')}s</dd><dt>Revision</dt><dd>{review.approved?.revision??'Not verified'}</dd></dl>
       {review.error&&<div className="info error" role="alert">{review.error}</div>}
       <div className="info" aria-live="polite">Synced caption at {timelineSeconds.toFixed(2)}s: {currentCue?.text??'—'}</div>
       <div className="stack" aria-label="Caption cue timestamps" style={{maxHeight:220,overflowY:'auto'}}>{captionCues.map((cue,i)=><div key={i} className="info">{cue.start.toFixed(3)}–{cue.end.toFixed(3)}s · {cue.text}</div>)}</div>
-      <Button disabled={!id||status==='busy'||review.workflowStatus==='USER_APPROVED'} onClick={()=>act(()=>window.studio!.captionAuto(id!),'Auto captions generated and verified locally.')}>Generate / Recheck Auto Captions</Button>
+      <Button disabled={!id||status==='busy'||autoGenerating||review.workflowStatus==='USER_APPROVED'} onClick={async()=>{
+        setAutoGenerating(true);
+        try{await act(()=>window.studio!.captionAuto(id!),'Auto captions generated and verified locally.');}
+        finally{setAutoGenerating(false);}
+      }}>Generate / Recheck Auto Captions</Button>
       <Button onClick={()=>setManualCorrection(value=>!value)}>{manualCorrection?'Hide Manual Correction':'Manual Correction'}</Button>
       {manualCorrection&&<>
       <div className="info">Actual aligned words: {review.words.map((word,i)=>(i+1)+': '+word.word+' ['+word.start+'–'+word.end+']').join(' · ')}</div>
