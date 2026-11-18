@@ -89,7 +89,7 @@ export function SettingsWorkspace(){
         {keyError&&<div className="info error" role="alert">{keyError}</div>}
       </Card>
       <Card>
-        <CardHeader title="G-Labs image webhook" hint="Local-only legacy adapter · health/auth check never creates paid jobs" action={<Badge tone={glabsStatus.startsWith('HEALTH')?'mint':'amber'}>{glabsStatus}</Badge>}/>
+        <CardHeader title="G-Labs image webhook" hint="Local-only legacy adapter · health/auth check never creates paid jobs" action={<Badge tone={glabsStatus.startsWith('AUTH_VERIFIED')?'neutral':'amber'}>{glabsStatus}</Badge>}/>
         <Field label="Local webhook origin"><Input value={glabs.endpoint} onChange={event=>setGlabs(v=>({...v,endpoint:event.target.value}))} placeholder="http://127.0.0.1:8765"/></Field>
         <Field label="Selected image model"><Select value={glabs.model} onChange={event=>setGlabs(v=>({...v,model:event.target.value}))}>
           <option value="nano_banana_2">nano_banana_2</option><option value="nano_banana_pro">nano_banana_pro</option>
