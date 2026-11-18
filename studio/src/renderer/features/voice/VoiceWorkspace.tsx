@@ -17,7 +17,7 @@ export function VoiceWorkspace() {
   const [playbackUrl,setPlaybackUrl]=useState(''),[playbackError,setPlaybackError]=useState(''),[playbackRetry,setPlaybackRetry]=useState(0);
   const [playbackSeconds,setPlaybackSeconds]=useState(0),[manualCorrection,setManualCorrection]=useState(false);
   const audioSha=native?.voice?.sha256,voiceStale=native?.voice?.stale;
-  useEffect(()=>setPlaybackRetry(0),[id,audioSha]);
+  useEffect(()=>{setPlaybackRetry(0);setPlaybackSeconds(0);},[id,audioSha]);
   const refreshVoiceOperations=async(scope=captureProjectSession())=>{
     if(!scope||!window.studio?.narrationAction)return;
     const [next,evidence]=await Promise.all([
@@ -141,7 +141,7 @@ export function VoiceWorkspace() {
       <dl className="kvs"><dt>Auto status</dt><dd>{review.workflowStatus??(review.approved?'USER_APPROVED':'REVIEW_REQUIRED')}</dd><dt>Words</dt><dd>{review.wordCount??review.words.length}</dd><dt>Cues</dt><dd>{review.cueCount??captionCues.length}</dd><dt>Voice timeline</dt><dd>{Number.isFinite(review.duration)?review.duration.toFixed(2):(native?.voice?.duration?.toFixed(2)??'—')}s</dd><dt>Revision</dt><dd>{review.approved?.revision??'Not verified'}</dd></dl>
       {review.error&&<div className="info error" role="alert">{review.error}</div>}
       <div className="info" aria-live="polite">Synced caption at {timelineSeconds.toFixed(2)}s: {currentCue?.text??'—'}</div>
-      <div className="stack" aria-label="Caption cue timestamps">{captionCues.map((cue,i)=><div key={i} className="info">{cue.start.toFixed(3)}–{cue.end.toFixed(3)}s · {cue.text}</div>)}</div>
+      <div className="stack" aria-label="Caption cue timestamps" style={{maxHeight:220,overflowY:'auto'}}>{captionCues.map((cue,i)=><div key={i} className="info">{cue.start.toFixed(3)}–{cue.end.toFixed(3)}s · {cue.text}</div>)}</div>
       <Button disabled={!id||status==='busy'||review.workflowStatus==='USER_APPROVED'} onClick={()=>act(()=>window.studio!.captionAuto(id!),'Auto captions generated and verified locally.')}>Generate / Recheck Auto Captions</Button>
       <Button onClick={()=>setManualCorrection(value=>!value)}>{manualCorrection?'Hide Manual Correction':'Manual Correction'}</Button>
       {manualCorrection&&<>
