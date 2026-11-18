@@ -311,7 +311,9 @@ describe('NF02 — effective per-target Native image identity across corrections
     expect(pending.fulfillments[targets[0].key]).toBeUndefined();
     expect(pending.missing.some(item=>item.key===targets[0].key)).toBe(true);
     expect(readState(root).media!.find(item=>item.path===approved.path)).toEqual(approved);
-    expect(listGlabsJobs(root).find(item=>item.id===job.id)?.status).toBe('APPROVED');
+    const history=listGlabsJobs(root).find(item=>item.id===job.id)!;
+    expect(history.status).toBe('APPROVED');
+    expect(history.reason).toMatch(/GLABS_APPROVED_OUTPUT_SUPERSEDED/);
     expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
   });
   it('NF02-04 auxiliary target image requirement change invalidates the existing generated output',async()=>{
