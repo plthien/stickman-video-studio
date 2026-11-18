@@ -177,6 +177,23 @@ describe('Native four-operation UI — explicit draft/published target and sessi
     expect(shots).toHaveValue('shot-1');
     expect(paths).toHaveValue('');
   });
+  it('RF01-09 UI same frozen scope can be reused without replacing its exact editable arrays',async()=>{
+    const {freeze}=install();render(<AppStateProvider><MultiFindingHarness/></AppStateProvider>);
+    fireEvent.click(screen.getByRole('button',{name:'Native'}));
+    fireEvent.click(screen.getByRole('button',{name:'Correct'}));
+    await waitFor(()=>expect(screen.getByLabelText('Finding IDs to resolve (optional; defaults to unresolved findings)'))
+      .toHaveValue('RF-A, RF-B'));
+    fireEvent.click(screen.getByRole('button',{name:'Build Task'}));
+    await waitFor(()=>expect(freeze).toHaveBeenCalledTimes(1));
+    expect(freeze.mock.calls[0][3]).toMatchObject({
+      findingIds:['RF-A','RF-B'],editableIds:undefined,editablePaths:undefined});
+    fireEvent.click(screen.getByRole('button',{name:'Build Task'}));
+    await waitFor(()=>expect(freeze).toHaveBeenCalledTimes(2));
+    expect(freeze.mock.calls[1][3]).toMatchObject({
+      findingIds:['RF-A','RF-B'],editableIds:['shot-2'],
+      editablePaths:['/shot_ledger/0/meaning']});
+    expect(freeze.mock.calls[1][4]).toBe(false);
+  });
   it('RF01-14 switching project changes both suggestions and selected findings without scope leakage',async()=>{
     const {freeze}=install();render(<AppStateProvider><MultiFindingHarness/></AppStateProvider>);
     fireEvent.click(screen.getByRole('button',{name:'Native'}));
