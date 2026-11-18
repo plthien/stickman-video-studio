@@ -5,6 +5,16 @@ import {Badge,Button,Card,CardHeader,Field,Input,Select,Textarea} from '../../co
 import type {Shot} from '../../types/app';
 interface MissingTarget {key:string;kind:'image'|'sfx';path:string;shotId?:string;layerId?:string;track?:string;trackIndex?:number}
 interface PendingTargets {token:string;status:string;missing:MissingTarget[];fulfillments:Record<string,unknown>;after?:{shots?:unknown[];captions?:unknown[]};shotLedger?:unknown[];assetNeeds?:unknown[]}
+const nativeImageLayers=(layers:unknown[]):string[]=>{
+  const result:string[]=[];
+  for(const item of layers){
+    if(!item||typeof item!=='object'||Array.isArray(item))continue;
+    const layer=item as Record<string,unknown>;
+    if(layer.type==='image'&&typeof layer.id==='string')result.push(layer.id);
+    if(Array.isArray(layer.children))result.push(...nativeImageLayers(layer.children));
+  }
+  return result;
+};
 const layerPath=(layers:unknown[],id:string):string|null=>{
   for(const value of layers){const layer=value as Record<string,unknown>;if(layer.id===id&&layer.type==='image')return typeof layer.path==='string'?layer.path:null;if(Array.isArray(layer.children)){const found=layerPath(layer.children,id);if(found!==null)return found;}}
   return null;
@@ -43,6 +53,7 @@ export function StoryboardWorkspace(){
     void refreshImages(scope).catch(e=>{if(isCurrentProjectSession(scope))setGlabsError(String(e));});
   },[id,native?.external?.native?.revision]);
   const available=pending?.missing??[];
+  const visibleTargets=available.filter(item=>!shot||item.kind!=='image'||item.shotId===shot.id);
   const target=available.find(item=>item.key===targetKey);
   const shotJobs=glabsJobs.filter(item=>item.shotId===shot?.id);
   const latestTargetJob=glabsJobs.find(item=>item.targetKey===targetKey&&item.token===pending?.token);
@@ -129,13 +140,13 @@ export function StoryboardWorkspace(){
     {active.length?<div className="shot-grid">{active.map((item,i)=><button key={item.id} className={index===i?'selected':''} onClick={()=>{setSelected(i);setTargetKey('');setImagePrompt('');}}><div className="scene-thumb"><strong>{item.id}</strong></div><div><strong>{item.id} · {item.title}</strong><small>{item.duration.toFixed(2)}s · {item.status}</small></div></button>)}</div>:<div className="info">EMPTY — No native shots. Import a reviewed Native Manifest from External ChatGPT. Pending media can still be bound below before promotion.</div>}
   </Card><Card><CardHeader title={shot?shot.id+' · '+shot.title:'Native media fulfillment'} hint="No synthetic image or default layer"/>
     {shot?<dl className="kvs"><dt>Duration</dt><dd>{shot.duration.toFixed(2)} seconds</dd><dt>Caption overlaps</dt><dd>{shot.captions?.map(item=>item.text+' ('+item.start+'–'+item.end+')').join(' | ')??shot.caption}</dd><dt>Committed native media</dt><dd>{mapping.map(item=>item.path).join(', ')||'None'}</dd><dt>Source</dt><dd>{candidateShots.length?'FROZEN NATIVE CANDIDATE':'project.json'}</dd></dl>:<div className="info">No selected native shot. This view does not create or display fixture artwork.</div>}
-    {shot&&<><div className="info">Image layers: {(shot.layers??[]).filter(item=>item&&typeof item==='object'&&(item as Record<string,unknown>).type==='image').map(item=>String((item as Record<string,unknown>).id)).join(', ')||'No top-level image layers'}</div>
+    {shot&&<><div className="info">Image layers: {nativeImageLayers(shot.layers??[]).join(', ')||'No image layers'}</div>
       {matchingLedger.length>0&&<pre className="prompt">Shot creative ledger (read only): {JSON.stringify(matchingLedger,null,2)}</pre>}
       {relevantNeeds.length>0&&<pre className="prompt">Asset needs (read only): {JSON.stringify(relevantNeeds,null,2)}</pre>}
     </>}
     <dl className="kvs"><dt>Unassigned media imports</dt><dd>{importedUnassigned.length}</dd><dt>Pending missing references</dt><dd>{available.length}</dd></dl>
     {native&&<><Field label="Exact missing candidate image layer or original audio track">
-      <Select value={targetKey} onChange={event=>setTargetKey(event.target.value)}><option value="">Choose a real pending reference</option>{available.map(item=><option key={item.key} value={item.key}>{item.kind.toUpperCase()} · {item.shotId||item.track} / {item.layerId||item.trackIndex} · {item.path}</option>)}</Select>
+      <Select value={targetKey} onChange={event=>setTargetKey(event.target.value)}><option value="">Choose a real pending reference</option>{visibleTargets.map(item=><option key={item.key} value={item.key}>{item.kind.toUpperCase()} · {item.shotId||item.track} / {item.layerId||item.trackIndex} · {item.path}</option>)}</Select>
     </Field><Field label="Owner-confirmed rights/source"><Input value={rights} onChange={event=>setRights(event.target.value)} placeholder="Owned or licensed source and rights"/></Field>
     <div className="actions"><Button variant="primary" disabled={!target||!rights.trim()} onClick={importAndBind}>Import and bind target</Button><Button onClick={async()=>{if(!window.studio||!id)return;const scope=captureProjectSession();if(!scope)return;try{const value=await window.studio.pendingMedia(id) as PendingTargets|null;if(!isCurrentProjectSession(scope))return;setPending(value);setError('')}catch(e){if(!isCurrentProjectSession(scope))return;setPending(null);setError('Pending media ERROR: '+String(e))}}}>Refresh missing references</Button></div>
     {pending&&<div className="info">Pending candidate: {pending.status}. A file is not committed until the reviewed native candidate is confirmed in External ChatGPT.</div>}
@@ -161,6 +172,7 @@ export function StoryboardWorkspace(){
       </div>
       {job.approved&&<div className="info">Owner approved media: {job.approved.path} · SHA {job.approved.sha256}. Native candidate confirmation is separate.</div>}
     </Card>)}</div>}
+    {shotJobs.some(job=>job.status==='APPROVED')&&<div className="info">An approved image remains locked. To replace it, start a new reviewed Native correction candidate for the exact Shot/layer; the existing committed asset is retained until the new candidate is confirmed.</div>}
     {glabsError&&<div className="info error" role="alert">{glabsError}</div>}
     {error&&<div className="info error" role="alert">{error}</div>}
     </>}
