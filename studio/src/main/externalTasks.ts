@@ -202,6 +202,7 @@ export function freezeTask(appPath: string, root: string, stage: Stage, rebuild 
 - Each Shot must tell the viewer something through a visibly readable action/state and a meaningful change, not simply restate a narration sentence. Use actual B1–B4 supported layer types, keyframes/motion and compositions from the supplied source authority; never invent renderer capabilities.
 - Build deliberate camera/composition, object contacts, motion feasibility, continuity of identity, geography, pose, prop and screen direction across adjacent and NON-adjacent Shots.
 - Preserve native voice settings and the EXACT current approved caption cue array. Caption boundaries need not coincide with Shot boundaries. No fixed shot count, duration or one-Shot-per-caption rule.
+- Every manifest.shots[] entry MUST have a unique explicit stable id (for example sh_001); match that exact id in shot_ledger and sound_script target IDs. Studio cannot Review/Correct or map Shot/Layer media without explicit Shot IDs. Do not use implicit array indices as Shot IDs.
 - In shot_ledger explain each real shot_id's meaning, visible state, important delta, composition, continuity, motion and constraints using the existing auxiliary ledger format; do not place unsupported extra metadata in manifest.shots.
 - In sound_script place only justified real SFX/ambience intentions tied to actual targets/events; distinguish proposed sounds from existing assets.
 - For EVERY generated image, declare a real manifest.shots[] image layer with an immutable id and safe missing project-relative path. The corresponding asset_needs must name the SAME real Shot ID, layer ID and expected path using the accepted auxiliary format. Describe actual content, orientation and continuity references. Never claim the image exists or fabricate an asset SHA.
@@ -310,6 +311,13 @@ export function validateManifest(state: StudioState, root: string, payload: Reco
   const duration=timing.timelineDuration;let captionEnd=0;
   for(const item of manifest.captions as unknown[]){const cue=item as Record<string,unknown>,start=Number(cue.start),end=Number(cue.end);if(!Number.isFinite(start)||!Number.isFinite(end)||start<captionEnd||end<=start||end>duration+.05||typeof cue.text!=='string'||!cue.text.trim())throw new Error('Native captions must be finite, monotone and within accepted narration.');captionEnd=end}
   let shotEnd=0;for(const item of manifest.shots as unknown[]){const shot=item as Record<string,unknown>,start=Number(shot.start),end=Number(shot.end);if(!Number.isFinite(start)||!Number.isFinite(end)||start<shotEnd||end<=start||end>duration+.05)throw new Error('Native shots must be finite, non-overlapping and within accepted narration.');shotEnd=end}
+  // The original Native renderer accepts a stable Shot ID; Studio requires it
+  // for Review/Correct target inventory and exact Shot/Layer media binding.
+  // Reject invalid Author artifacts HERE, rather than after staging a draft.
+  const shotIds=(manifest.shots as Array<{id?:unknown}>).map(shot=>shot?.id);
+  if(shotIds.some(id=>typeof id!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(id))||
+    new Set(shotIds).size!==shotIds.length)
+    throw new Error('NATIVE_SHOT_IDS_REQUIRED: each manifest Shot needs a unique stable id before Native Review or media mapping.');
   // Structural identity check only: preserve the existing freeform asset_needs
   // format, but entries that explicitly name Shot+Layer must refer to a REAL
   // Native image target with the SAME stated expected path (when supplied).
