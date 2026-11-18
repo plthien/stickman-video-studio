@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {describe,expect,it,afterEach} from 'vitest';
-import {freezeTask,getPendingMedia,readNativeDraft,confirmImport,fulfillMedia,importMediaFile} from '../../src/main/externalTasks';
+import {freezeTask,getPendingMedia,readNativeDraft,stageImport,confirmImport,fulfillMedia,importMediaFile} from '../../src/main/externalTasks';
 import {freezeLifecycleTask,stageLifecycleResult,confirmLifecycleResult} from '../../src/main/externalLifecycle';
 import {fixture,stageNative,nativePayload,importedSource,validator,cleanup,appPath} from './SixIssueFixtures';
 import {readState,sha} from '../../src/main/services';
@@ -78,6 +78,22 @@ describe('N01–N07: original Native Author plus pre-publication four-operation 
     expect(identity).toBe(task.id);
     expect(task.prompt).toContain('"shot_ledger": []');
     expect(task.prompt).toContain('"asset_needs": []');
+  });
+  it('NA05 asset needs with explicit Shot/Layer identities must match actual Native image paths',()=>{
+    const {root}=fixture();
+    const good=nativePayload(root,{image:'early'});
+    const expectedPath=(good.manifest.shots[0].layers[0] as {path:string}).path;
+    const candidate={...good,asset_needs:[{shot_id:'shot-1',layer_id:'image-1',path:expectedPath,
+      content:'Owner to generate a still matching the approved visual world.'}]};
+    stageNative(root,candidate);
+    expect(readNativeDraft(root)?.artifact.asset_needs).toEqual(candidate.asset_needs);
+    const task=readState(root).tasks!.native!;
+    const invalid={...candidate,asset_needs:[{...candidate.asset_needs[0],path:'assets/images/unrelated.png'}]};
+    const envelope={schema:'mode-b-external-result-v1',project_id:readState(root).project.id,
+      task_id:task.id,revision:task.revision,input_sha256:task.inputSha256,
+      stage:'native',payload:invalid};
+    expect(()=>stageImport(appPath,root,'native',JSON.stringify(envelope)))
+      .toThrow(/NATIVE_ASSET_NEED_PATH_MISMATCH/);
   });
   it('NA08 frozen Author bytes/identity remain immutable until an explicit rebuild',()=>{
     const {root}=fixture();
