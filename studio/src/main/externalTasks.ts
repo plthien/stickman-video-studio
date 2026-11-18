@@ -244,7 +244,7 @@ export function validateManifest(state: StudioState, root: string, payload: Reco
   if(!Array.isArray(manifest.shots)||!manifest.shots.length||!Array.isArray(manifest.captions)||!manifest.voice||typeof manifest.voice!=='object')throw new Error('Native voice/captions/shots are required.');
   if(!state.voice||state.voice.stale||(manifest.voice as Record<string,unknown>).path!==state.voice.path||!fs.existsSync(resolveProjectFile(root,state.voice.path))||sha(fs.readFileSync(resolveProjectFile(root,state.voice.path)))!==state.voice.sha256)throw new Error('Manifest voice does not bind actual current accepted WAV bytes.');
   const approved=approvedCaptionCues(root);
-  if(JSON.stringify(manifest.captions)!==JSON.stringify(approved))throw new Error('Native captions must exactly match the current AUTO_VERIFIED or USER_APPROVED word-grounded revision; rebuild after regroup.');
+  if(JSON.stringify(manifest.captions)!==JSON.stringify(approved))throw new Error('Native captions must exactly match the current approved word-grounded revision (AUTO_VERIFIED or USER_APPROVED); rebuild after regroup.');
   const timing=nativeVoiceTiming(root,state), candidateVoice=manifest.voice as Record<string,unknown>;
   const candidateLead=candidateVoice.lead??0,candidateTail=candidateVoice.tail??0,candidateTrim=candidateVoice.trim_start??0;
   if(candidateLead!==timing.lead||candidateTail!==timing.tail||candidateTrim!==timing.trimStart)throw new Error('Native voice timing must match the currently reviewed lead/tail/trim_start configuration.');
