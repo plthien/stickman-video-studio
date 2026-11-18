@@ -138,7 +138,19 @@ export async function publishAlignment(appPath: string, root: string, raw: Recor
     fs.mkdirSync(path.dirname(target),{recursive:true});fs.renameSync(stagedWords,target);fs.renameSync(stagedCaptions,captionsTarget);
     const latest=readState(root);assertAlignmentPin(root,expectedPin);
     latest.alignment = { path: relative, captionsPath: captionsRelative, audioSha256: wav.sha256, scriptSha256: sha(transcript), wordsSha256: sha(fs.readFileSync(target)), cuesSha256: sha(fs.readFileSync(captionsTarget)), origin, words, ...(characters ? { characters } : {}), ...(typeof raw.loss === 'number' ? { loss: raw.loss } : {}), generatedAt: new Date().toISOString() };
-    latest.preview = undefined; latest.approval = undefined; latest.render = undefined; writeState(root, latest); return latest.alignment;
+    latest.preview = undefined; latest.approval = undefined; latest.render = undefined; writeState(root, latest);
+    // R3: Local word-boundary regroup only. Never re-upload to ElevenLabs or edit WAV.
+    try{
+      const {autoCaptionReview}=await import('./captionReview.js');
+      autoCaptionReview(root);
+    }catch(error){
+      const now=readState(root);
+      if(now.alignment?.wordsSha256===latest.alignment.wordsSha256){
+        now.alignment.captionAutoError=error instanceof Error?error.message:String(error);
+        writeState(root,now); // Alignment remains accepted; captions explicitly need review.
+      }
+    }
+    return readState(root).alignment!;
   }catch(error){for(const file of [target,captionsTarget])if(fs.existsSync(file))fs.unlinkSync(file);throw error}finally{if(fs.existsSync(staging))fs.rmSync(staging,{recursive:true,force:true})}
 }
 
