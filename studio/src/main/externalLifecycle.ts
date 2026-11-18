@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
-import {atomicJson,readState,resolveProjectFile,sha,strictJson,writeState,type ExternalOperation,type Stage,type StudioState} from './services.js';
+import {atomicJson,inspectWavBuffer,readState,resolveProjectFile,sha,strictJson,writeState,type ExternalOperation,type Stage,type StudioState} from './services.js';
 import {compileAuthority} from './externalAuthority.js';
 import {getCaptionReview,nativeVoiceTiming} from './captionReview.js';
 import {alignmentText} from './alignment.js';
@@ -27,8 +27,11 @@ function nativeLifecycleEvidence(root:string,state:StudioState){
   if(!script||sha(script.text)!==script.sha256||!Array.isArray(script.sections)||
     script.sections.map(row=>row.text).join('\n\n')!==script.text)
     throw new Error('NATIVE_LIFECYCLE_APPROVED_NARRATION_INVALID');
-  if(!voice||voice.stale||typeof voice.duration!=='number'||!Number.isFinite(voice.duration)||voice.duration<=0||
-    sha(fs.readFileSync(resolveProjectFile(root,voice.path)))!==voice.sha256)
+  if(!voice||voice.stale||typeof voice.duration!=='number'||!Number.isFinite(voice.duration)||voice.duration<=0)
+    throw new Error('NATIVE_LIFECYCLE_ACCEPTED_WAV_INVALID');
+  const wavBytes=fs.readFileSync(resolveProjectFile(root,voice.path));
+  const wav=inspectWavBuffer(wavBytes);
+  if(wav.sha256!==voice.sha256||Math.abs(wav.duration-voice.duration)>.02)
     throw new Error('NATIVE_LIFECYCLE_ACCEPTED_WAV_INVALID');
   if(!alignment||alignment.audioSha256!==voice.sha256||
     alignment.scriptSha256!==sha(alignmentText(script.text))||!alignment.wordsSha256)
