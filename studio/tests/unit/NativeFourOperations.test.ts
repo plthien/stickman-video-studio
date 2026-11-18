@@ -182,6 +182,13 @@ describe('N01–N07: original Native Author plus pre-publication four-operation 
       delivery(root,task,'review',reviewPayload(task,'REVIEWED_NO_FINDINGS'))))
       .toThrow(/NATIVE_LIFECYCLE_WORDS_SHA_MISMATCH/);
   });
+  it('NF01-07: Script lifecycle retains its independent source-specific prompt without Native evidence',()=>{
+    const {root}=fixture();
+    freezeTask(appPath,root,'script');
+    const task=freezeLifecycleTask(appPath,root,'script','review') as Task;
+    expect(task.prompt).toContain('SCRIPT REVIEW');
+    expect(task.prompt).not.toContain('## B2 — NATIVE SOURCE EVIDENCE');
+  });
   it('NR03/04 rejects invented targets and falsely observed picture coverage in text-only Review',()=>{
     const {root}=stageFixture(),task=freezeLifecycleTask(appPath,root,'native','review',{targetContext:'DRAFT'}) as Task;
     const forged=reviewPayload(task,'REVIEWED_WITH_FINDINGS',[{...issue(),target_ids:['not-a-real-shot']}]);
@@ -229,6 +236,31 @@ describe('N01–N07: original Native Author plus pre-publication four-operation 
     }));
     confirmLifecycleResult(appPath,root,staged.token);
     expect(readNativeDraft(root)!.artifact).toEqual(corrected);
+  });
+  it('NF04-04/06: explicit mixed Shot and auxiliary scope remains supported while other Shots stay locked',()=>{
+    const {root}=stageFixture(),review=freezeLifecycleTask(appPath,root,'native','review',{targetContext:'DRAFT'}) as Task;
+    const mixed={...issue(),evidence:{kind:'manifest',
+      detail:'Both /shot_ledger/0/meaning and /manifest/shots/0/layers/0/text require a matching visible action.'}};
+    const reviewed=stageLifecycleResult(appPath,root,'native','review',
+      delivery(root,review,'review',reviewPayload(review,'REVIEWED_WITH_FINDINGS',[mixed])));
+    confirmLifecycleResult(appPath,root,reviewed.token);
+    const suggested=suggestedCorrectScope(root,readState(root),'native','DRAFT');
+    expect(suggested.editableIds).toEqual(['shot-1']);
+    expect(suggested.editablePaths).toEqual(['/shot_ledger/0/meaning']);
+    const correct=freezeLifecycleTask(appPath,root,'native','correct',{
+      targetContext:'DRAFT',editableIds:['shot-1'],
+      editablePaths:['/shot_ledger/0/meaning'],findingIds:['N-001']
+    }) as Task;
+    const artifact=structuredClone(readNativeDraft(root)!.artifact);
+    ((artifact.manifest as {shots:Array<{layers:Array<{text:string}>}>}).shots[0].layers[0]).text='Action is now visible';
+    (artifact.shot_ledger as Array<{meaning:string}>)[0].meaning='The action causes a visible state change.';
+    const staged=stageLifecycleResult(appPath,root,'native','correct',delivery(root,correct,'correct',{
+      schema:'mode-b-correction-v1',artifact_sha256:correct.artifactSha256,
+      finding_ids:correct.findingIds,editable_ids:correct.editableIds,
+      editable_paths:correct.editablePaths,artifact
+    }));
+    confirmLifecycleResult(appPath,root,staged.token);
+    expect(readNativeDraft(root)!.artifact).toEqual(artifact);
   });
   it('NF05-01/02/03: WITH_FINDINGS rejects resolved-only, accepts supported open or uncertain',()=>{
     for(const findingStatus of ['open','uncertain'] as const){
