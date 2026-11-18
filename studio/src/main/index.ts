@@ -50,7 +50,21 @@ function registerIpc() {
     if(decoded.isEmpty())throw new Error('GLABS_IMAGE_DECODE_FAILED');
     const size=decoded.getSize();return{png:decoded.toPNG(),width:size.width,height:size.height};
   };
-  ipcMain.handle('glabs:generate',(_event,id:string,input:ImageRequest)=>submitGlabsImage(app.getAppPath(),rootFor(id),app.getPath('userData'),safeStorage,input,decodeGlabsImage));
+  ipcMain.handle('glabs:generate',async(_event,id:string,input:ImageRequest)=>{
+    const root=rootFor(id);
+    if(!input||input.authorized!==true)throw new Error('GLABS_EXPLICIT_AUTH_REQUIRED');
+    const confirmed=await dialog.showMessageBox({
+      type:'warning',buttons:['Cancel','Authorize ONE paid image request'],defaultId:0,cancelId:0,noLink:true,
+      title:'G-Labs paid image generation',
+      message:'Authorize a potentially paid G-Labs image-generation request?',
+      detail:'Project: '+id+'\nNative target: '+String(input.targetKey)+
+        '\nModel: '+String(input.model)+'\nRatio: '+String(input.aspectRatio)+
+        (input.acknowledgeUnknown?'\nWARNING: A previous attempt has UNKNOWN billing outcome.':'')+
+        '\nNo automatic paid retries will be performed.'
+    });
+    if(confirmed.response!==1)return null;
+    return submitGlabsImage(app.getAppPath(),root,app.getPath('userData'),safeStorage,input,decodeGlabsImage);
+  });
   ipcMain.handle('glabs:poll',(_event,id:string,jobId:string)=>pollGlabsImage(app.getAppPath(),rootFor(id),app.getPath('userData'),safeStorage,jobId,decodeGlabsImage));
   ipcMain.handle('glabs:cancelQueued',(_event,id:string,jobId:string)=>cancelQueuedGlabsImage(rootFor(id),jobId));
   ipcMain.handle('glabs:approve',(_event,id:string,jobId:string,rights:string)=>approveGlabsImage(app.getAppPath(),rootFor(id),jobId,rights));
