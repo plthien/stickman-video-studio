@@ -32,6 +32,7 @@ Invoke-Gate 'TypeScript' 'npm' @('run','typecheck')
 Invoke-Gate 'ESLint' 'npm' @('run','lint')
 Invoke-Gate 'R3-Auto-Captions-And-Shots' 'npx' @('vitest','run','tests/unit/R3AutoCaptions.test.ts')
 Invoke-Gate 'R3-GLabs-Mock' 'npx' @('vitest','run','tests/unit/R3GLabs.test.ts','tests/unit/R3GLabsPreviewUI.test.tsx','tests/unit/R3WindowsAcceptance.test.ts')
+Invoke-Gate 'Native-Four-Operations' 'npx' @('vitest','run','tests/unit/NativeFourOperations.test.ts','tests/unit/NativeFourOperationsUI.test.tsx')
 Invoke-Gate 'R2-R3-Full-Unit' 'npm' @('test')
 Invoke-Gate 'Production-Build' 'npm' @('run','build')
 if($IncludeUi){
