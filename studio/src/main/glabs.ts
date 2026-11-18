@@ -196,7 +196,21 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
   if(active.has(lock))throw new Error('GLABS_TARGET_ALREADY_RUNNING');
   active.add(lock);
   try{
-    writeJob(root,job);assertJobTarget(appPath,root,job);
+    // The initial read occurred before the asynchronous health/auth probe.
+    // Re-check inside the local job lock so concurrent callers cannot send two paid POSTs.
+    assertJobTarget(appPath,root,job);
+    const latest=listGlabsJobs(root).filter(j=>j.token===job.token&&j.targetKey===job.targetKey);
+    if(latest.some(j=>['QUEUED','SUBMITTED','RUNNING','DOWNLOADED'].includes(j.status)))
+      throw new Error('GLABS_EXISTING_ACTIVE_ATTEMPT');
+    if(latest.some(j=>j.status==='UNKNOWN')&&!input.acknowledgeUnknown)
+      throw new Error('GLABS_UNKNOWN_MAY_HAVE_CHARGED');
+    if(latest.length&&!input.regenerate&&!latest.every(j=>['FAILED','CANCELLED','STALE'].includes(j.status)))
+      throw new Error('GLABS_NEW_ATTEMPT_REQUIRES_EXPLICIT_REGENERATE');
+    const refreshedSettings=glabsSettings(userData);
+    if(refreshedSettings.endpoint!==config.endpoint||refreshedSettings.model!==job.model||
+      refreshedSettings.aspectRatio!==job.aspectRatio)
+      throw new Error('GLABS_CONFIG_CHANGED_DURING_PREFLIGHT');
+    writeJob(root,job);
     job.status='SUBMITTED';writeJob(root,job); // durable uncertain marker BEFORE paid HTTP
     try{
       const refs=job.references.map(ref=>{
