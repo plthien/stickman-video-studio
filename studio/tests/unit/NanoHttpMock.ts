@@ -74,7 +74,7 @@ export function createNanoTestProducer(options:NanoMockOptions={}){
             if(number===1)await options.onFirstSpeech?.();
             if(number===options.failSpeechAt)return json({code:'TEMPORARY_FAILURE'},503);
             const body=JSON.parse(raw) as {input:string;speed:number;seed:number};
-            const values={...prior,voice_id:voiceId,voice_version:profile.version,
+            const values:Record<string,unknown>={...prior,voice_id:voiceId,voice_version:profile.version,
               reference_sha256:profile.ref_sha256,reference_binding:binding,
               input_sha256:hash(body.input),native_chunk_sha256:[hash(body.input)],
               seed:body.seed,requested_speed:body.speed.toFixed(6),
