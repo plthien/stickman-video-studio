@@ -208,8 +208,18 @@ describe('Native four-operation UI — explicit draft/published target and sessi
     expect(screen.getByLabelText('Expanded editable field paths (optional, comma separated)')).toHaveValue('');
     expect(screen.getByLabelText('Import JSON')).toHaveValue('');
     fireEvent.click(screen.getByRole('button',{name:'Build Task'}));
+    // Project B has its own full, current suggestion: preserving that explicit
+    // auto-scope is correct. Assert exact B rights, and no leaked A finding/path.
     await waitFor(()=>expect(freeze).toHaveBeenCalledWith('B','native','correct',
-      expect.objectContaining({findingIds:['RF-D'],editableIds:undefined,editablePaths:undefined}),false));
+      expect.objectContaining({
+        findingIds:['RF-D'],editableIds:['shot-1'],editablePaths:[]
+      }),false));
+    const bScope=freeze.mock.calls.find(call=>call[0]==='B')?.[3];
+    expect(bScope).toBeDefined();
+    expect(JSON.stringify(bScope)).not.toContain('RF-A');
+    expect(JSON.stringify(bScope)).not.toContain('RF-B');
+    expect(JSON.stringify(bScope)).not.toContain('shot-2');
+    expect(JSON.stringify(bScope)).not.toContain('/shot_ledger/0/meaning');
   });
   it('N05-UI-04 project switch does not expose A draft evidence or its frozen prompt on B',async()=>{
     install();render(<AppStateProvider><Harness/></AppStateProvider>);
