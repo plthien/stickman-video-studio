@@ -79,10 +79,15 @@ export function ExternalWorkspace(){
     // Reusing an unchanged saved task must preserve its exact frozen arrays.
     // On a changed selection, unedited fields are instead inferred by backend.
     const reuseFrozen=Boolean(frozenTaskId&&scopeKey()===frozenScopeKey);
+    // Preserve existing all-findings Script/Native behavior. For a narrowed
+    // subset, never send aggregate auto-rights: backend derives selected only.
+    const fullSuggestion=Boolean(suggested?.reviewTaskId&&findingScope.trim()&&
+      JSON.stringify(splitList(findingScope))===JSON.stringify(suggested.findingIds));
+    const sendAuto=reuseFrozen||fullSuggestion;
     return {targetContext:stage==='native'?effectiveNativeTarget:undefined,
       targetIds:splitList(reviewTargets),
-      editableIds:operation==='Correct'&&!local.editableTouched&&!reuseFrozen?undefined:splitList(editable),
-      editablePaths:operation==='Correct'&&!local.editablePathsTouched&&!reuseFrozen?undefined:splitList(editablePaths),
+      editableIds:operation==='Correct'&&!local.editableTouched&&!sendAuto?undefined:splitList(editable),
+      editablePaths:operation==='Correct'&&!local.editablePathsTouched&&!sendAuto?undefined:splitList(editablePaths),
       findingIds:findingScope.trim()?splitList(findingScope):undefined};
   };
   const autoFindingFields=(text:string)=>{
