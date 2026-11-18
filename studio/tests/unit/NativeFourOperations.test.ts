@@ -1,13 +1,16 @@
 // @vitest-environment node
 import fs from 'node:fs';
 import path from 'node:path';
-import {describe,expect,it,afterEach} from 'vitest';
+import os from 'node:os';
+import {deflateSync} from 'node:zlib';
+import {describe,expect,it,afterEach,vi} from 'vitest';
 import {freezeTask,getPendingMedia,readNativeDraft,stageImport,confirmImport,fulfillMedia,importMediaFile} from '../../src/main/externalTasks';
 import {freezeLifecycleTask,stageLifecycleResult,confirmLifecycleResult,suggestedCorrectScope} from '../../src/main/externalLifecycle';
 import {fixture,stageNative,nativePayload,importedSource,validator,cleanup,appPath} from './SixIssueFixtures';
 import {readState,sha} from '../../src/main/services';
+import {saveGlabsKey,submitGlabsImage,pollGlabsImage,approveGlabsImage} from '../../src/main/glabs';
 
-afterEach(()=>cleanup());
+afterEach(()=>{cleanup();vi.unstubAllGlobals();});
 type Task={id:string;revision:number;inputSha256:string;artifactSha256:string;
   editableIds?:string[];editablePaths?:string[];findingIds?:string[];prompt:string};
 const delivery=(root:string,task:Task,operation:'review'|'correct'|'recheck',payload:unknown)=>JSON.stringify({
@@ -333,6 +336,53 @@ describe('N01–N07: original Native Author plus pre-publication four-operation 
     expect(mock.calls.some(call=>call.includes('validate'))).toBe(true);
     expect(readState(root).external.native).toBeDefined();
     expect(readNativeDraft(root)).toBeNull();
+  });
+  it('NF02/NF01 integrated: Author -> Draft Review/Correct/Recheck -> mocked G-Labs -> original CLI confirm',async()=>{
+    const {root,staged}=stageFixture(true),lastGood=fs.readFileSync(path.join(root,'project.json'));
+    confirmDraftCorrection(root);
+    const recheck=freezeLifecycleTask(appPath,root,'native','recheck',{targetContext:'DRAFT'}) as Task;
+    const reviewed=stageLifecycleResult(appPath,root,'native','recheck',
+      delivery(root,recheck,'recheck',reviewPayload(recheck,'REVIEWED_NO_FINDINGS',[issue('resolved')])));
+    confirmLifecycleResult(appPath,root,reviewed.token);
+    expect(fs.readFileSync(path.join(root,'project.json'))).toEqual(lastGood);
+    const userData=fs.mkdtempSync(path.join(os.tmpdir(),'native-glabs-integration-'));
+    const cipher={isEncryptionAvailable:()=>true,encryptString:(value:string)=>Buffer.from(value),
+      decryptString:(value:Buffer)=>value.toString('utf8')};
+    const crc=(bytes:Buffer)=>{let sum=0xffffffff;for(const byte of bytes){sum^=byte;for(let k=0;k<8;k++)sum=(sum>>>1)^((sum&1)?0xedb88320:0);}return(sum^0xffffffff)>>>0;};
+    const chunk=(name:string,data:Buffer)=>{const label=Buffer.from(name,'ascii'),size=Buffer.alloc(4),checksum=Buffer.alloc(4);size.writeUInt32BE(data.length);checksum.writeUInt32BE(crc(Buffer.concat([label,data])));return Buffer.concat([size,label,data,checksum]);};
+    const ihdr=Buffer.alloc(13);ihdr.writeUInt32BE(90,0);ihdr.writeUInt32BE(160,4);ihdr[8]=8;ihdr[9]=6;
+    const png=Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),chunk('IHDR',ihdr),
+      chunk('IDAT',deflateSync(Buffer.alloc(160*(1+90*4)))),chunk('IEND',Buffer.alloc(0))]);
+    const decode=(bytes:Buffer)=>({png:bytes,width:bytes.readUInt32BE(16),height:bytes.readUInt32BE(20)});
+    const paid:string[]=[];
+    try{
+      saveGlabsKey(userData,cipher,'test-only-secret');
+      vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL,options?:RequestInit)=>{
+        const route=new URL(String(input)).pathname,method=options?.method??'GET';
+        if(method==='POST'){paid.push(route);return new Response(JSON.stringify({task_id:'ab12cd34',status:'pending'}),{status:202});}
+        if(route==='/api/health')return new Response(JSON.stringify({status:'ok'}),{status:200});
+        if(route==='/api/tasks')return new Response(JSON.stringify({tasks:[]}),{status:200});
+        if(route==='/api/status/ab12cd34')return new Response(JSON.stringify({task_id:'ab12cd34',status:'completed'}),{status:200});
+        if(route==='/api/result/ab12cd34')return new Response(JSON.stringify({task_id:'ab12cd34',status:'completed',results:['http://127.0.0.1:8765/api/files/draft.png']}),{status:200});
+        if(route==='/api/files/draft.png')return new Response(new Uint8Array(png),{status:200,headers:{'Content-Type':'image/png'}});
+        throw new Error('Unexpected provider mock route: '+route);
+      }));
+      const pending=getPendingMedia(appPath,root)!;
+      const image=pending.missing.find(item=>item.kind==='image')!;
+      const job=await submitGlabsImage(appPath,root,userData,cipher,{
+        targetKey:image.key,prompt:'Owner-approved image for a specific surviving Native shot',
+        model:'nano_banana_2',aspectRatio:'9:16',references:[],authorized:true
+      },decode);
+      expect((await pollGlabsImage(appPath,root,userData,cipher,job.id,decode)).status).toBe('VALIDATED');
+      expect(approveGlabsImage(appPath,root,job.id,'Original owner licensed artwork',decode).job.status).toBe('APPROVED');
+      expect(fs.readFileSync(path.join(root,'project.json'))).toEqual(lastGood);
+      const core=validator();
+      await confirmImport(appPath,root,staged.response.token,{validator:core.run,previewSeconds:30});
+      expect(core.calls.some(call=>call.includes('validate'))).toBe(true);
+      expect(readState(root).external.native).toBeDefined();
+      expect(readNativeDraft(root)).toBeNull();
+      expect(paid).toEqual(['/api/image/generate']);
+    }finally{fs.rmSync(userData,{recursive:true,force:true});}
   });
   it('N05 target selection is mandatory when a new pending draft coexists with last-good Published Native',async()=>{
     const {root,staged}=stageFixture();
