@@ -159,7 +159,7 @@ export async function publishAlignment(appPath: string, root: string, raw: Recor
       autoCaptionReview(root);
     }catch(error){
       const now=readState(root);
-      if(now.alignment?.wordsSha256===latest.alignment.wordsSha256){
+      if(now.alignment && now.alignment.wordsSha256===latest.alignment.wordsSha256){
         now.alignment.captionAutoError=error instanceof Error?error.message:String(error);
         writeState(root,now); // Alignment remains accepted; captions explicitly need review.
       }
