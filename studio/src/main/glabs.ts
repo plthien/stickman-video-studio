@@ -221,14 +221,23 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
       refreshedSettings.aspectRatio!==job.aspectRatio)
       throw new Error('GLABS_CONFIG_CHANGED_DURING_PREFLIGHT');
     writeJob(root,job);
-    job.status='SUBMITTED';writeJob(root,job); // durable uncertain marker BEFORE paid HTTP
+    // All deterministic input validation must finish before the paid/uncertain marker.
+    let providerPayload:Record<string,unknown>;
     try{
       const refs=job.references.map(ref=>{
         const checked=validatedImage(root,ref.path,ref.sha256);
         return{data:'data:'+ref.mime+';base64,'+checked.bytes.toString('base64'),name:ref.name};
       });
-      const result=await requestJson(config,userData,cipher,'POST','api/image/generate',
-        {prompt:job.prompt,model:job.model,aspect_ratio:job.aspectRatio,reference_images:refs,upscale:[]});
+      providerPayload={prompt:job.prompt,model:job.model,aspect_ratio:job.aspectRatio,reference_images:refs,upscale:[]};
+      if(Buffer.byteLength(JSON.stringify(providerPayload),'utf8')>MAX_REQUEST)
+        throw new Error('GLABS_REQUEST_OVERSIZE');
+    }catch{
+      job.status='FAILED';job.reason='Request/reference validation failed BEFORE provider submission. No paid POST was made.';
+      writeJob(root,job);return job;
+    }
+    job.status='SUBMITTED';writeJob(root,job); // durable uncertain marker BEFORE paid HTTP
+    try{
+      const result=await requestJson(config,userData,cipher,'POST','api/image/generate',providerPayload);
       if(!pureObject(result)||typeof result.task_id!=='string'||!/^[0-9a-f]{8}$/i.test(result.task_id)||
          !['pending','running'].includes(String(result.status)))
         throw new Error('GLABS_SUBMISSION_CONTRACT_UNVERIFIED');
