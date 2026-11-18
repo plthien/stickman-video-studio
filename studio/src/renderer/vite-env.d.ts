@@ -12,7 +12,7 @@ interface Window { studio?: Readonly<{
   glabsSettings:()=>Promise<{config:{endpoint:string;contract:'legacy';model:string;aspectRatio:string};credential:{configured:boolean;secureStorageAvailable:boolean}}>;
   glabsConfigure:(config:{endpoint:string;contract:'legacy';model:string;aspectRatio:string})=>Promise<unknown>;
   glabsSaveKey:(key:string)=>Promise<unknown>;glabsClearKey:()=>Promise<unknown>;
-  glabsProbe:()=>Promise<{ready:boolean;contract:string;version:string;endpoint:string;supportedModels:string[];supportedRatios:string[];authVerified:boolean}>;
+  glabsProbe:()=>Promise<{ready:false;reachable:boolean;authVerified:boolean;status:'UNREACHABLE'|'REACHABLE'|'AUTH_VERIFIED';modelCapability:'MODEL_CAPABILITY_UNVERIFIED';configuredModel:string;configuredRatio:string;contract:string;version:string;endpoint:string;diagnostic:string}>;
   glabsJobs:(id:string)=>Promise<Array<{id:string;projectId:string;token:string;targetKey:string;shotId:string;layerId:string;targetPath:string;status:string;model:string;aspectRatio:string;prompt:string;providerTaskId?:string;staged?:{path:string;sha256:string;width:number;height:number};reason?:string;approved?:{path:string;sha256:string;rights:string}}>>;
   glabsGenerate:(id:string,input:{targetKey:string;prompt:string;model:string;aspectRatio:string;references:string[];authorized:boolean;regenerate?:boolean;acknowledgeUnknown?:boolean})=>Promise<unknown>;
   glabsPoll:(id:string,jobId:string)=>Promise<unknown>;glabsCancelQueued:(id:string,jobId:string)=>Promise<unknown>;
