@@ -81,7 +81,8 @@ export function ExternalWorkspace(){
     const reuseFrozen=Boolean(frozenTaskId&&scopeKey()===frozenScopeKey);
     // Preserve existing all-findings Script/Native behavior. For a narrowed
     // subset, never send aggregate auto-rights: backend derives selected only.
-    const fullSuggestion=Boolean(suggested?.reviewTaskId&&findingScope.trim()&&
+    const fullSuggestion=Boolean(suggested?.reviewTaskId&&
+      local.suggestedScopeReviewTaskId===suggested.reviewTaskId&&findingScope.trim()&&
       JSON.stringify(splitList(findingScope))===JSON.stringify(suggested.findingIds));
     const sendAuto=reuseFrozen||fullSuggestion;
     return {targetContext:stage==='native'?effectiveNativeTarget:undefined,
