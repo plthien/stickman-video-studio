@@ -183,7 +183,10 @@ export function autoCaptionReview(root:string){
       const gap=j<words.length?words[j].start-words[j-1].end:0;
       const punctuation=/[.!?;:,]$/.test(words[j-1].word.trim());
       const atOriginal=originalBoundaries.includes(j);
+      const crossesRealPause=words.slice(i+1,j).some((word,k)=>word.start-words[i+k].end>=.24);
+      const crossesSentenceBreak=words.slice(i,j-1).some(word=>/[.!?]$/.test(word.word.trim()));
       const cost=3+Math.max(0,1.5-(cue.end-cue.start))*.45+
+        (crossesRealPause?4:0)+(crossesSentenceBreak?1.2:0)+
         (j<words.length&&!punctuation&&!atOriginal&&gap<.24?1.5:0)-
         (punctuation?1.1:0)-(gap>=.24?1.2:0)-(atOriginal?1.8:0)+best[j];
       if(cost<best[i]){best[i]=cost;next[i]=j;}
