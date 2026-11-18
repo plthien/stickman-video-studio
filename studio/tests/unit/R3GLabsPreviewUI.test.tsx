@@ -24,7 +24,9 @@ const second={...first,id:'22222222-2222-4222-8222-222222222222',
   staged:{...first.staged,path:'assets/images/glabs-second.png',sha256:'b'.repeat(64)}};
 function Harness(){
   const {setNative}=useAppState();
-  useEffect(()=>setNative(project('A')),[setNative]);
+  // Seed the initial session once: setNative is not referentially stable across provider renders.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(()=>{setNative(project('A'));},[]);
   return <><button onClick={()=>setNative(project('B'))}>Switch B</button><StoryboardWorkspace/></>;
 }
 const install=(jobs:Array<typeof first>=[first])=>{
