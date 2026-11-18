@@ -279,7 +279,7 @@ const pendingResult=(root:string,pending:PendingImport)=>{
   const state=readState(root);
   if(pending.stage==='script')return{token:pending.token,stage:pending.stage,before:pending.before,after:pending.payload,changes:1,status:'STAGED',missing:[]};
   const resolved=resolvePendingCandidate(root,state,pending);
-  return{token:pending.token,stage:pending.stage,before:pending.before,after:resolved.manifest,changes:1,status:resolved.missing.length?'WAITING_FOR_MEDIA':'STAGED',missing:resolved.missing,fulfillments:pending.fulfillments};
+  return{token:pending.token,stage:pending.stage,before:pending.before,after:resolved.manifest,changes:1,status:resolved.missing.length?'WAITING_FOR_MEDIA':'STAGED',missing:resolved.missing,fulfillments:pending.fulfillments,shotLedger:(pending.payload as {shotLedger?:unknown[]}).shotLedger??[],assetNeeds:(pending.payload as {assetNeeds?:unknown[]}).assetNeeds??[]};
 };
 function resolvePendingCandidate(root:string,state:StudioState,pending:PendingImport){
   const value=pending.payload as {manifest:Record<string,unknown>;shotLedger:unknown;soundScript:unknown;assetNeeds:unknown;missing:MissingNativeReference[]};
