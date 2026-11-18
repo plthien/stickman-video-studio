@@ -4,8 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import {deflateSync} from 'node:zlib';
 import {afterEach,describe,expect,it,vi} from 'vitest';
-import {approveGlabsImage,clearGlabsKey,glabsCredentialStatus,glabsProbe,glabsSettings,listGlabsJobs,pollGlabsImage,saveGlabsKey,saveGlabsSettings,submitGlabsImage} from '../../src/main/glabs';
-import {getPendingMedia,importMediaFile} from '../../src/main/externalTasks';
+import {approveGlabsImage,clearGlabsKey,glabsCredentialStatus,glabsProbe,glabsSettings,listGlabsJobs,pollGlabsImage,saveGlabsKey,saveGlabsSettings,submitGlabsImage,invalidateGlabsJobsAfterNativeCorrection} from '../../src/main/glabs';
+import {getPendingMedia,importMediaFile,readNativeDraft,publishNativeDraftCorrection} from '../../src/main/externalTasks';
 import {readState,sha,writeState} from '../../src/main/services';
 import {appPath,cleanup,fixture,importedSource,nativePayload,stageNative} from './SixIssueFixtures';
 const userFolders:string[]=[];
@@ -152,6 +152,20 @@ describe('R3 G-Labs security and lifecycle GL01–GL12',()=>{
 });
 
 
+type NativeVisualArtifact={manifest:{shots:Array<{layers:Array<Record<string,unknown>>}>};
+  shot_ledger:Array<Record<string,unknown>>;sound_script:unknown[];asset_needs:Array<Record<string,unknown>>};
+function correctDraftForTest(root:string,change:(artifact:NativeVisualArtifact)=>void){
+  const draft=readNativeDraft(root)!;
+  const corrected=structuredClone(draft.artifact) as NativeVisualArtifact;
+  change(corrected);
+  publishNativeDraftCorrection(appPath,root,draft.sha256,corrected,{
+    correctTaskId:'test-correct-'+draft.revision,reviewTaskId:'test-review',
+    editableIds:[],editablePaths:[],findingIds:[]
+  });
+  invalidateGlabsJobsAfterNativeCorrection(appPath,root);
+  return corrected;
+}
+
 describe('R3 final repairs F01/F03/F06 — strict output, references and truthful probes',()=>{
   it('F01-01 validates a real 9:16 generated PNG and F01-05 rechecks ratio at approval',async()=>{
     const dir=credential(),{root,targets}=nativeTarget();transport();
@@ -256,5 +270,70 @@ describe('R3 final repairs F01/F03/F06 — strict output, references and truthfu
     const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport({authStatus:401});
     await expect(submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode)).rejects.toThrow(/HEALTH_AUTH_UNVERIFIED/);
     expect(calls.some(x=>x.method==='POST')).toBe(false);
+  });
+});
+
+
+describe('NF02 — effective per-target Native image identity across corrections and restart',()=>{
+  it('NF02-01/03/08 changing Shot A image properties stales only its old validated job, never re-POSTs',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(true),{calls}=transport();
+    const job=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    await pollGlabsImage(appPath,root,dir,cipher,job.id,decode);
+    correctDraftForTest(root,artifact=>{artifact.manifest.shots[0].layers[0].x=123;});
+    expect(listGlabsJobs(root).find(item=>item.id===job.id)?.status).toBe('STALE');
+    expect(()=>approveGlabsImage(appPath,root,job.id,'Owner licensed',decode)).toThrow(/NOT_VALIDATED/);
+    expect(getPendingMedia(appPath,root)!.missing.some(item=>item.key===targets[0].key)).toBe(true);
+    expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
+  });
+  it('NF02-02/09 unrelated Shot B creative correction does not stale job A or repoint its approved media',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(true),{calls}=transport();
+    const job=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    await pollGlabsImage(appPath,root,dir,cipher,job.id,decode);
+    correctDraftForTest(root,artifact=>{artifact.manifest.shots[1].layers[0].x=321;});
+    expect(listGlabsJobs(root).find(item=>item.id===job.id)?.status).toBe('VALIDATED');
+    const approved=approveGlabsImage(appPath,root,job.id,'Owner licensed unchanged shot A',decode);
+    expect(approved.job.status).toBe('APPROVED');
+    const binding=readState(root).media!.find(item=>item.shotId==='shot-1'&&item.layerId==='image-1')!;
+    correctDraftForTest(root,artifact=>{artifact.manifest.shots[1].layers[0].y=456;});
+    expect(readState(root).media!.find(item=>item.shotId==='shot-1'&&item.layerId==='image-1')).toEqual(binding);
+    expect(getPendingMedia(appPath,root)!.fulfillments[targets[0].key]).toBeDefined();
+    expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
+  });
+  it('NF02-04 auxiliary target image requirement change invalidates the existing generated output',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport();
+    const job=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    await pollGlabsImage(appPath,root,dir,cipher,job.id,decode);
+    correctDraftForTest(root,artifact=>{
+      artifact.asset_needs=[{shot_id:'shot-1',layer_id:'image-1',path:targets[0].path,
+        content:'New owner-approved, contrasting daylight visual requirement'}];
+    });
+    expect(listGlabsJobs(root).find(item=>item.id===job.id)?.status).toBe('STALE');
+    expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
+  });
+  it('NF02-05 changes during async health/auth probe block a paid POST',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls,stub}=transport();
+    let changed=false;
+    vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL,options?:RequestInit)=>{
+      if(!changed&&new URL(String(input)).pathname==='/api/tasks'){
+        changed=true;
+        correctDraftForTest(root,artifact=>{artifact.manifest.shots[0].layers[0].x=56;});
+      }
+      return stub(input,options);
+    }));
+    await expect(submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode))
+      .rejects.toThrow(/GLABS_JOB_STALE_CREATIVE_TARGET/);
+    expect(calls.filter(call=>call.method==='POST')).toHaveLength(0);
+  });
+  it('NF02-06/07 legacy persisted job without target creative fingerprint fails closed on Poll and Approve',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget();transport();
+    const job=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    await pollGlabsImage(appPath,root,dir,cipher,job.id,decode);
+    const file=path.join(root,'.studio','glabs','jobs',job.id+'.json');
+    const saved=JSON.parse(fs.readFileSync(file,'utf8')) as {targetCreativeSha256?:string};
+    delete saved.targetCreativeSha256;
+    fs.writeFileSync(file,JSON.stringify(saved));
+    expect((await pollGlabsImage(appPath,root,dir,cipher,job.id,decode)).status).toBe('STALE');
+    expect(()=>approveGlabsImage(appPath,root,job.id,'Owner licensed',decode)).toThrow(/NOT_VALIDATED/);
+    expect(readState(root).media!.filter(row=>row.shotId==='shot-1')).toHaveLength(0);
   });
 });
