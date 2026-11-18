@@ -99,14 +99,24 @@ describe('R3 G-Labs security and lifecycle GL01–GL12',()=>{
     expect(getPendingMedia(appPath,root)!.missing).toHaveLength(0);
     expect(calls.filter(c=>c.method==='POST')).toHaveLength(1);
   });
-  it('GL08 modifying one target leaves another target pending',async()=>{
-    const dir=credential(),{root,targets}=nativeTarget(true);transport();
+  it('GL08 explicitly regenerates one target while retaining its old validated image and other untouched target',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(true),{calls}=transport();
     expect(targets).toHaveLength(2);
-    const job=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
-    await pollGlabsImage(appPath,root,dir,cipher,job.id,decode);
-    approveGlabsImage(appPath,root,job.id,'Original artwork licensed by owner');
+    const first=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    const previous=await pollGlabsImage(appPath,root,dir,cipher,first.id,decode);
+    expect(previous.status).toBe('VALIDATED');
+    const originalFile=path.join(root,previous.staged!.path),originalSha=sha(fs.readFileSync(originalFile));
+    const second=await submitGlabsImage(appPath,root,dir,cipher,{...request(targets[0].key),regenerate:true},decode);
+    expect(second.id).not.toBe(first.id);
+    const regenerated=await pollGlabsImage(appPath,root,dir,cipher,second.id,decode);
+    expect(regenerated.status).toBe('VALIDATED');
+    expect(regenerated.staged!.path).not.toBe(previous.staged!.path);
+    expect(sha(fs.readFileSync(originalFile))).toBe(originalSha);
+    expect(listGlabsJobs(root).find(job=>job.id===first.id)!.status).toBe('VALIDATED');
+    approveGlabsImage(appPath,root,second.id,'Regenerated artwork licensed by owner');
     const left=getPendingMedia(appPath,root)!.missing;
     expect(left).toHaveLength(1);expect(left[0].key).toBe(targets[1].key);
+    expect(calls.filter(call=>call.method==='POST')).toHaveLength(2);
   });
   it('GL11 unsafe file URLs are blocked with no implicit second paid POST',async()=>{
     const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport({maliciousFile:true});
