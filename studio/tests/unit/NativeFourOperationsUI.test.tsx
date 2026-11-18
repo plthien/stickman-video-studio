@@ -192,7 +192,7 @@ describe('Native four-operation UI — explicit draft/published target and sessi
     expect(freeze.mock.calls[1][3]).toMatchObject({
       findingIds:['RF-A','RF-B'],editableIds:['shot-2'],
       editablePaths:['/shot_ledger/0/meaning']});
-    expect(freeze.mock.calls[1][4]).toBe(false);
+    expect(freeze).toHaveBeenNthCalledWith(2,'A','native','correct',expect.any(Object),false);
   });
   it('RF01-14 switching project changes both suggestions and selected findings without scope leakage',async()=>{
     const {freeze}=install();render(<AppStateProvider><MultiFindingHarness/></AppStateProvider>);
