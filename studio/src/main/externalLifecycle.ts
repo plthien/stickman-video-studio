@@ -33,6 +33,7 @@ function nativeLifecycleEvidence(root:string,state:StudioState){
   if(!alignment||alignment.audioSha256!==voice.sha256||
     alignment.scriptSha256!==sha(alignmentText(script.text))||!alignment.wordsSha256)
     throw new Error('NATIVE_LIFECYCLE_ALIGNMENT_STALE');
+  const duration=voice.duration;
   const bytes=fs.readFileSync(resolveProjectFile(root,alignment.path));
   if(sha(bytes)!==alignment.wordsSha256)throw new Error('NATIVE_LIFECYCLE_WORDS_SHA_MISMATCH');
   const raw=strictJson(bytes.toString('utf8')) as {words?:Array<{word:string;start:number;end:number}>};
@@ -42,7 +43,7 @@ function nativeLifecycleEvidence(root:string,state:StudioState){
     if(!row||typeof row.word!=='string'||!row.word.trim()||
       typeof row.start!=='number'||typeof row.end!=='number'||
       !Number.isFinite(row.start)||!Number.isFinite(row.end)||
-      row.start<end||row.end<=row.start||row.end>voice.duration+.05)
+      row.start<end||row.end<=row.start||row.end>duration+.05)
       throw new Error('NATIVE_LIFECYCLE_WORD_TIMING_INVALID: '+index);
     end=row.end;
     return{word:row.word,start:row.start,end:row.end};
