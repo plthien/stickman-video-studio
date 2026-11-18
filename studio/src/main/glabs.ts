@@ -91,8 +91,16 @@ async function requestJson(settings:GLabsSettings,userData:string,cipher:Credent
   if(!res.ok)throw new Error('GLABS_HTTP_'+res.status);
   if(method==='POST'&&res.status!==202)throw new Error('GLABS_SUBMISSION_STATUS_UNVERIFIED');
   if(Number(res.headers.get('content-length')??0)>MAX_RESPONSE)throw new Error('GLABS_RESPONSE_OVERSIZE');
-  const value=await res.text();
-  if(Buffer.byteLength(value,'utf8')>MAX_RESPONSE)throw new Error('GLABS_RESPONSE_OVERSIZE');
+  if(!res.body)throw new Error('GLABS_RESPONSE_EMPTY');
+  const reader=res.body.getReader(),chunks:Uint8Array[]=[];let total=0;
+  try{
+    while(true){const chunk=await reader.read();if(chunk.done)break;total+=chunk.value.byteLength;
+      if(total>MAX_RESPONSE){await reader.cancel();throw new Error('GLABS_RESPONSE_OVERSIZE');}
+      chunks.push(chunk.value);
+    }
+  }finally{reader.releaseLock();}
+  const value=Buffer.concat(chunks.map(chunk=>Buffer.from(chunk))).toString('utf8');
+  if(!value)throw new Error('GLABS_RESPONSE_EMPTY');
   try{return JSON.parse(value) as unknown;}catch{throw new Error('GLABS_RESPONSE_INVALID_JSON');}
 }
 export async function glabsProbe(userData:string,cipher:CredentialCipher){
@@ -232,8 +240,8 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
 }
 async function downloadImage(settings:GLabsSettings,urlText:string,userData:string,cipher:CredentialCipher){
   const origin=glabsEndpoint(settings.endpoint),url=new URL(urlText);
-  if(url.origin!==origin||!url.pathname.startsWith('/api/files/')||url.username||url.password||url.hash||
-    url.pathname.includes('..')||url.search)
+  if(url.origin!==origin||!/^\/api\/files\/[a-zA-Z0-9._-]+$/.test(url.pathname)||
+    url.pathname.includes('..')||url.username||url.password||url.hash||url.search)
     throw new Error('GLABS_RESULT_URL_UNSAFE');
   let res:Response;
   try{res=await fetch(url,{headers:{'X-API-Key':keyFor(userData,cipher)},redirect:'error',signal:AbortSignal.timeout(60000)});}
