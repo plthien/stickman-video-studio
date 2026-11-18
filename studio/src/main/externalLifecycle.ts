@@ -1110,7 +1110,7 @@ function finalizeLifecycle(root:string,pending:Record<string,unknown>,task:NonNu
     !['FROZEN','IMPORTED'].includes(state.lifecycle.tasks[key].status))throw new Error('Lifecycle finalization is stale.');
   const payload=pending.payload as Record<string,unknown>;
   state.lifecycle.artifacts[task.id]={taskId:task.id,stage:task.stage,operation:task.operation,
-    artifactContext:task.artifactContext,
+    artifactContext:task.artifactContext,draftAuthorTaskId:task.draftAuthorTaskId,draftToken:task.draftToken,
     artifactSha256:sha(JSON.stringify(payload)),value:payload,status:String(payload.status??'CORRECTION_STAGED'),
     createdAt:new Date().toISOString()};
   state.lifecycle.tasks[key].status='IMPORTED';
