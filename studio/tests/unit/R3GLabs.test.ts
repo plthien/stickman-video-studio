@@ -215,6 +215,24 @@ describe('R3 final repairs F01/F03/F06 — strict output, references and truthfu
       expect(calls.filter(x=>x.method==='POST')).toHaveLength(1);
       expect(listGlabsJobs(root).find(x=>x.id===job.id)!.status).toBe('VALIDATED');
     });
+  it('F03-07 rights revoked during the async health/auth probe stop before paid submission',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls,stub}=transport();
+    const media=importMediaFile(root,importedSource(root),'image','Owner original license');
+    vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL,options?:RequestInit)=>{
+      if(new URL(String(input)).pathname==='/api/tasks'){
+        const current=readState(root);
+        current.media!.find(item=>item.path===media.path)!.rights='Revoked license';
+        writeState(root,current);
+      }
+      return stub(input,options);
+    }));
+    const failed=await submitGlabsImage(appPath,root,dir,cipher,
+      {...request(targets[0].key),references:[media.path]},decode);
+    expect(failed.status).toBe('FAILED');
+    expect(failed.reason).toMatch(/BEFORE provider submission/);
+    expect(calls.filter(item=>item.method==='POST')).toHaveLength(0);
+    expect(getPendingMedia(appPath,root)!.missing).toHaveLength(1);
+  });
   it('F06-01 health failure reports unreachable and makes no paid POST',async()=>{
     const dir=credential(),{calls}=transport({healthStatus:503});
     expect(await glabsProbe(dir,cipher)).toMatchObject({ready:false,reachable:false,authVerified:false,status:'UNREACHABLE'});
