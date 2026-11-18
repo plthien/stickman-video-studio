@@ -704,6 +704,8 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
         (artifact.context==='PUBLISHED'&&!item.artifactContext))&&
       (item.operation==='review'||item.operation==='recheck')&&
       (item.value as {artifact_sha256?:string}).artifact_sha256===artifact.sha256):undefined;
+  if(operation==='correct'&&artifact.context==='DRAFT'&&!reviewSource)
+    throw new Error('NATIVE_DRAFT_REVIEW_REQUIRED: confirm a Review of the exact current draft before Correct.');
   const relevantPrior=lineage?.prior??(reviewSource?
     [{taskId:reviewSource.taskId,operation:reviewSource.operation,value:reviewSource.value}]:
     operation==='review'?sources.filter(item=>item.stage===stage&&item.operation==='review'&&
@@ -1206,7 +1208,11 @@ export function confirmLifecycleResult(appPathOrRoot:string,rootOrToken:string,m
   const frozen=strictJson(fs.readFileSync(frozenFile,'utf8')) as Record<string,unknown>;
   if(canonical(frozen.payload)!==canonical(pending.payload))throw new Error('Lifecycle pending response is corrupt.');
   const original=artifactFor(root,state,task.stage,task.operation,task.artifactContext);
-  if(original.sha256!==task.artifactSha256) {
+  const draftRecovery=task.stage==='native'&&task.operation==='correct'&&
+    task.artifactContext==='DRAFT'&&readNativeDraft(root,state)?.history.some(item=>
+      item.correctTaskId===task.id&&item.previousSha256===task.artifactSha256&&
+      item.artifactSha256===sha(JSON.stringify((pending.payload as {artifact:unknown}).artifact)))===true;
+  if(original.sha256!==task.artifactSha256&&!draftRecovery) {
     const journal=nativeCorrectionJournal(root);
     const saved=fs.existsSync(journal)?strictJson(fs.readFileSync(journal,'utf8')) as Record<string,unknown>:null;
     if(!(pending.operation==='correct'&&pending.stage==='native'&&saved?.token===token&&
@@ -1215,6 +1221,19 @@ export function confirmLifecycleResult(appPathOrRoot:string,rootOrToken:string,m
        (manifestSemanticHash(path.join(root,'project.json'))===saved.desiredSha256&&
         state.nativeReadiness?.sampleReady&&state.nativeReadiness.sourceFingerprint===sha(fs.readFileSync(path.join(root,'project.json')))))))
       throw new Error('STALE: original lifecycle artifact changed before confirmation.');
+  }
+  if(pending.operation==='correct'&&pending.stage==='native'&&task.artifactContext==='DRAFT'){
+    const corrected=(pending.payload as {artifact:Record<string,unknown>}).artifact;
+    // Do not ever publish project.json, launch Native CLI or bind old media here.
+    if(!draftRecovery){
+      validateLocks('native',original.value,corrected,task.editableIds??[],task.editablePaths??[]);
+    }
+    publishNativeDraftCorrection(appPath,root,task.artifactSha256,corrected,{
+      correctTaskId:task.id,reviewTaskId:task.sourceReviewTaskId??'',
+      editableIds:task.editableIds??[],editablePaths:task.editablePaths??[],
+      findingIds:task.findingIds??[]
+    });
+    return finalizeLifecycle(root,pending,task);
   }
   if(pending.operation==='correct'&&pending.stage==='native')
     return publishNativeCorrection(appPath,root,pending,task,options);
