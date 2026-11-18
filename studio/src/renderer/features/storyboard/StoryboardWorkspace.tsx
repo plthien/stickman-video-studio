@@ -191,7 +191,8 @@ export function StoryboardWorkspace(){
         setPreviewReady(previous=>{const next={...previous};delete next[job.id];return next;});
         setPreviewErrors(previous=>{const next={...previous};delete next[job.id];return next;});
         setPreviewAttempts(previous=>({...previous,[job.id]:(previous[job.id]??0)+1}));
-        void refreshImages().catch(error=>setGlabsError(String(error)));
+        const scope=captureProjectSession();
+        if(scope)void refreshImages(scope).catch(error=>{if(isCurrentProjectSession(scope))setGlabsError(String(error));});
       }}>Retry image preview</Button>}
       <div className="actions">
         {['SUBMITTED','RUNNING','DOWNLOADED','UNKNOWN'].includes(job.status)&&<Button disabled={glabsBusy} onClick={()=>void pollImage(job.id)}>{job.providerTaskId?'Resume / Check status (read-only)':'Reconcile unconfirmed submission (read-only)'}</Button>}
