@@ -70,7 +70,10 @@ describe('R3 Auto Captions AC01–AC12',()=>{
     fs.writeFileSync(file,JSON.stringify(manifest));
     const result=autoCaptionReview(root),timing=nativeVoiceTiming(root);
     expect(timing).toMatchObject({lead:.5,tail:.25,trimStart:.3});
-    expect(result.cues).toEqual([{start:.55,end:1.1,text:'two three'}]);
+    expect(result.cues).toHaveLength(1);
+    expect(result.cues[0].text).toBe('two three');
+    expect(result.cues[0].start).toBeCloseTo(.55,8);
+    expect(result.cues[0].end).toBeCloseTo(1.1,8);
   });
   it('AC09 manual approval is preserved and never overwritten by auto routine',()=>{
     const {root}=fixture(),before=readState(root).alignment!.captionReview!,cues=approvedCaptionCues(root);
