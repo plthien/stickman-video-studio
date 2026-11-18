@@ -245,6 +245,8 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
     // All deterministic input validation must finish before the paid/uncertain marker.
     let providerPayload:Record<string,unknown>;
     try{
+      // Authorization or media may have changed during the asynchronous read-only probe.
+      assertJobReferences(root,job,decode);
       const refs=job.references.map(ref=>{
         const checked=validatedImage(root,ref.path,ref.sha256);
         return{data:'data:'+ref.mime+';base64,'+checked.bytes.toString('base64'),name:ref.name};
