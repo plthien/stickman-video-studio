@@ -2,8 +2,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {describe,expect,it,afterEach} from 'vitest';
-import {freezeTask,getPendingMedia,readNativeDraft,stageImport,confirmImport,fulfillMedia,importMediaFile} from '../../src/main/externalTasks';
-import {freezeLifecycleTask,stageLifecycleResult,confirmLifecycleResult,suggestedCorrectScope} from '../../src/main/externalLifecycle';
+import {freezeTask,getPendingMedia,readNativeDraft,confirmImport,fulfillMedia,importMediaFile} from '../../src/main/externalTasks';
+import {freezeLifecycleTask,stageLifecycleResult,confirmLifecycleResult} from '../../src/main/externalLifecycle';
 import {fixture,stageNative,nativePayload,importedSource,validator,cleanup,appPath} from './SixIssueFixtures';
 import {readState,sha} from '../../src/main/services';
 
@@ -146,7 +146,7 @@ describe('N01–N07: original Native Author plus pre-publication four-operation 
     }) as Task;
     const before=readNativeDraft(root)!.artifact;
     const corrected=structuredClone(before);
-    (corrected.manifest.shots[1].layers[0] as {text?:string}).text='Unauthorized';
+    ((corrected.manifest as {shots:Array<{layers:Array<{text?:string}>}>}).shots[1].layers[0]).text='Unauthorized';
     const envelope=delivery(root,task,'correct',{
       schema:'mode-b-correction-v1',artifact_sha256:task.artifactSha256,
       finding_ids:task.findingIds,editable_ids:task.editableIds,editable_paths:task.editablePaths,
@@ -162,7 +162,7 @@ describe('N01–N07: original Native Author plus pre-publication four-operation 
     const correct=freezeLifecycleTask(appPath,root,'native','correct',{targetContext:'DRAFT',editableIds:['shot-1'],findingIds:['N-001']}) as Task;
     const prior=readNativeDraft(root)!.artifact;
     const corrected=structuredClone(prior);
-    (corrected.manifest.shots[0].layers[0] as {path:string}).path='assets/images/replacement.png';
+    ((corrected.manifest as {shots:Array<{layers:Array<{path:string}>}>}).shots[0].layers[0]).path='assets/images/replacement.png';
     const reply=delivery(root,correct,'correct',{schema:'mode-b-correction-v1',
       artifact_sha256:correct.artifactSha256,finding_ids:correct.findingIds,
       editable_ids:correct.editableIds,editable_paths:correct.editablePaths,artifact:corrected});
