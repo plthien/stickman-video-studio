@@ -98,12 +98,24 @@ describe('N01–N07: original Native Author plus pre-publication four-operation 
   it('NA08 frozen Author bytes/identity remain immutable until an explicit rebuild',()=>{
     const {root}=fixture();
     const first=freezeTask(appPath,root,'native');
-    expect(freezeTask(appPath,root,'native').prompt).toBe(first.prompt);
-    expect(freezeTask(appPath,root,'native').id).toBe(first.id);
+    const frozenBytes=fs.readFileSync(path.join(root,first.promptPath));
+    expect(Buffer.from(first.prompt,'utf8')).toEqual(frozenBytes);
+    const reused=freezeTask(appPath,root,'native');
+    expect(reused.prompt).toBe(first.prompt);
+    expect(Buffer.from(reused.prompt,'utf8')).toEqual(frozenBytes);
+    expect(reused.id).toBe(first.id);
     expect(sha(fs.readFileSync(path.join(root,readState(root).tasks!.native!.promptPath)))).toBe(first.promptSha256);
     const newer=freezeTask(appPath,root,'native',true);
     expect(newer.id).not.toBe(first.id);
     expect(fs.existsSync(path.join(root,first.promptPath))).toBe(true);
+  });
+  it('NA08 rejects a tampered frozen prompt without rewriting the original task',()=>{
+    const {root}=fixture();
+    const first=freezeTask(appPath,root,'native');
+    fs.appendFileSync(path.join(root,first.promptPath),'\r\nUNAUTHORIZED_PROMPT_EDIT');
+    expect(()=>freezeTask(appPath,root,'native')).toThrow(/FROZEN_TASK_PROMPT_TAMPERED/);
+    expect(readState(root).tasks?.native?.id).toBe(first.id);
+    expect(readState(root).tasks?.native?.status).toBe('FROZEN');
   });
   it('NR01/02/05/06 freezes Review against staged Native draft without publishing project.json',()=>{
     const {root}=stageFixture(true),before=fs.readFileSync(path.join(root,'project.json'));
