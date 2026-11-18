@@ -425,18 +425,29 @@ function dedicatedLifecyclePrompt(
     'media-review':kindInstructions[mediaKind as 'voice'|'captions'|'preview'|'film']
   }[operation]:{
     review:[
-      'NATIVE REVIEW — independently review the CURRENT complete Native manifest, shot ledger, sound script and asset needs against the original B-style requirements.',
-      'Assess planned shot meaning, continuity, timing consistency, visual feasibility, media references and sound intentions from the manifest only. Do not claim recorded motion, heard audio or CLI verification without actual supplied media.'
+      'NATIVE REVIEW — INDEPENDENT CREATIVE & STRUCTURAL AUDIT of EVERY requested real Shot and the ENTIRE shot_ledger, sound_script, asset_needs against all source-exact applicable B1–B4 requirements. Use staged DRAFT evidence before paid generation when selected.',
+      'Assess approved narrative event coverage, causal progression, visually meaningful changes (not literal narration rewording), composition, silhouettes, visible actions, positions, contacts and important state changes for every Shot.',
+      'Assess feasible motion with documented Mode B layers/keyframes, timing and pacing against actual words/pauses, without enforcing one Shot per caption; assess readable typography and selected B style.',
+      'Assess character identity/clothes/poses, locations, props, geography, screen direction and physics across adjacent AND NON-ADJACENT Shots; consider continuing world and story constraints.',
+      'Assess every image layer versus real shot_id/layer_id/safe expected path in asset_needs, generated-image feasibility and continuity references. Differentiate proposed missing assets from actually verified local media.',
+      'Assess sound_script SFX/ambience tied to genuine events, rather than generic sound beds; check manifest structural feasibility, reference and timing consistency without claiming native CLI validation.',
+      'TEXT-ONLY COVERAGE: use coverage.modalities=["manifest"], ranges=[], media_sha256s=[]; findings target ONLY real frozen shot IDs, with precise violated requirement, manifest/ledger evidence and actionable recommendation. No minimum finding quota; REVIEWED_NO_FINDINGS is never a preset.',
+      'DO NOT claim actual image viewing, rendered motion, listened audio, caption synchronization or original CLI PASS from local paths and SHA alone. Return review findings, NOT a corrected manifest.'
     ],
     correct:[
-      'NATIVE CORRECT — repair the supported scoped findings through a COMPLETE corrected Native artifact containing manifest, shot_ledger, sound_script and asset_needs.',
-      'Preserve shot IDs/order, locked fields, approved narration, voice and caption timing, rights mappings and unrelated media. Change only the listed exact shot IDs or narrow existing field pointers.',
-      'Do not claim generated images/audio, original CLI validation, preview approval or rendering. Intentional no-op and durable publication/recovery remain possible in Native; do not invent verification to justify one.'
+      'NATIVE CORRECT — repair confirmed unresolved creative and technical findings using the SMALLEST effective scoped changes; return ONE COMPLETE corrected artifact (manifest, shot_ledger, sound_script, asset_needs).',
+      'Read exact CURRENT artifact and linked Review evidence, original requirements, frozen editable Shot IDs and exact JSON-pointer paths; preserve locked Shots/IDs/order, narration, voice timing, approved captions and existing rights/media.',
+      'An auxiliary-only finding can be fixed using an explicitly authorized narrow existing shot_ledger, sound_script or asset_needs field/path without changing an unrelated Shot. Do NOT infer authority over an entire collection from vague review prose.',
+      'Maintain distant and adjacent cross-shot continuity. Changed image target/path must stay consistent with asset_needs; prior fulfillment must not be silently repointed.',
+      'No Shot insertion/removal/reorder in ordinary Correct; request an explicit structural reissue if needed. Report insufficient authorized scope rather than change locked content. No invented CLI, image/audio or preview evidence.',
+      'Return the entire corrected artifact; NEVER a partial patch, new unscoped storyboard or new Author response.'
     ],
     recheck:[
-      'NATIVE RECHECK — assess the exact published current Native artifact against the confirmed correction and its original Review findings, including auxiliary-only creative metadata.',
-      'Account for EACH frozen finding ID with supported resolved/open/uncertain evidence. Verify manifest feasibility from supplied Native JSON, but do not claim actual movement, synchronized sound, rendered frames or original CLI PASS without observed media.',
-      'Select a review status only after independent evaluation. Do not authorize or auto-approve an encoded film.'
+      'NATIVE RECHECK — independently verify EXACT CURRENT corrected Native artifact against confirmed Review/Correct lineage and source authority; do not rewrite the artifact.',
+      'For EACH original required finding ID, compare the original requirement/evidence/recommendation with current corrected Shot/Layer/ledger and report resolved/open/uncertain with NEW concrete current-artifact evidence; never copy the prior verdict.',
+      'Inspect all requested Shots, locked adjacent AND distant Shots, all relevant shot_ledger/sound_script/asset_needs and new creative, motion, continuity, target-reference and timing regressions.',
+      'REVIEWED_NO_FINDINGS requires every historical finding resolved, complete current textual requested coverage and no new unresolved finding; findings[] may include RESOLVED historical entries. REVIEWED_WITH_FINDINGS means at least one supported open/uncertain issue. Use INSUFFICIENT_EVIDENCE/NOT_VERIFIED where appropriate.',
+      'For text-only recheck use manifest modality, never picture/motion/sound observation without actual transferred evidence. No claims of original CLI PASS or rendered film.'
     ],
     'media-review':kindInstructions[mediaKind as 'voice'|'captions'|'preview'|'film']
   }[operation];
@@ -505,7 +516,7 @@ Return the complete corrected artifact, not a partial patch.`
     '## A — OPERATION-SPECIFIC MISSION',...missions,
     '## B — PROJECT BRIEF',JSON.stringify(brief,null,2),
     '## C — ONE IMMUTABLE CURRENT TARGET',
-    'Only this artifact is current. Do not replace it with an earlier approved Script, a previous Native manifest or the Author appendix.',
+    stage==='native'?'Native context: '+artifact.context+'; draft revision '+(artifact.draftRevision??'not applicable')+'; original Author '+(artifact.authorTaskId??'published original')+'. DRAFT is NOT published to project.json; PUBLISHED is the confirmed manifest. Never switch targets silently.':'Only this artifact is current. Do not replace it with an earlier approved Script, a previous Native manifest or the Author appendix.',
     JSON.stringify({id:artifact.id,sha256:artifact.sha256,value:current},null,2),
     '## D — EXACT SCOPE AND CORRECTION LINEAGE',
     JSON.stringify({target_ids:targetIds,editable_ids:editableIds,editable_paths:editablePaths,
@@ -514,8 +525,9 @@ Return the complete corrected artifact, not a partial patch.`
     'Confirmed applicable prior evidence (exclude unrelated media reviews, old artifacts and stage history):',
     JSON.stringify(prior,null,2),
     '## E — ORIGINAL MODE B CREATIVE AUTHORITY',
-    'The original frozen Author appendix below contains the full applicable requirements. Its instructions to produce a new Author response are NOT executable for this task. SHA/provenance outside the appendix is informational; no extra independent rules are invented here.',
+    stage==='native'?'The exact applicable original Mode B source extracts are included ONCE below. Original Author task SHA and frozen identity are preserved; do not duplicate its output instructions or large timing appendix.':'The original frozen Author appendix below contains the full applicable requirements. Its instructions to produce a new Author response are NOT executable for this task. SHA/provenance outside the appendix is informational; no extra independent rules are invented here.',
     sourceTrace,
+    ...(stage==='native'?authority.sources.map(source=>'### ORIGINAL SOURCE '+source.path+' | SHA256 '+source.sha256+' | extraction '+source.extractionSha256+'\n'+source.text):[]),
     ...(stage==='script'&&operation==='media-review'?[
       'SCRIPT MEDIA REVIEW — ADDITIONAL ORIGINAL SOURCE-EXACT EVIDENCE RULES (not contained in the focused Script Author appendix).',
       ...authority.sources.map(source=>
@@ -614,10 +626,13 @@ Do not invent defects, media observations or verification results.
 Do not modify the Script during Recheck.`
     ]:[]),
     '## JSON FILE DELIVERY — REQUIRED',fileDelivery.replace(/^## JSON FILE DELIVERY — REQUIRED\n/,''),
-    '## H — ORIGINAL FROZEN AUTHOR TASK — IMMUTABLE REFERENCE APPENDIX',
-    'Original Author task SHA256: '+sha(originalTask),
-    'This appendix is a normative reference, NOT a new Author mission, result example, current target or response contract. Ignore any older JSON filename/output instruction inside it; Section G and the current JSON file delivery govern this task.',
-    originalTask
+    ...(stage==='native'?['## H — ORIGINAL FROZEN AUTHOR IDENTITY (NO DUPLICATE AUTHOR PROMPT)',
+      'Original Author task SHA256: '+sha(originalTask),
+      'Its immutable source bytes remain in project-owned frozen history. All original source-exact Mode B requirements are in Section E. Follow only the current operation-specific output contract.']:
+      ['## H — ORIGINAL FROZEN AUTHOR TASK — IMMUTABLE REFERENCE APPENDIX',
+      'Original Author task SHA256: '+sha(originalTask),
+      'This appendix is a normative reference, NOT a new Author mission, result example, current target or response contract. Ignore any older JSON filename/output instruction inside it; Section G and the current JSON file delivery govern this task.',
+      originalTask])
   ].join('\n\n')+'\n';
 }
 
