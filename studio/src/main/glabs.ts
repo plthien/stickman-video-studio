@@ -12,11 +12,20 @@ type JobStatus='QUEUED'|'SUBMITTED'|'RUNNING'|'DOWNLOADED'|'VALIDATED'|'APPROVED
 export interface GLabsSettings{endpoint:string;contract:'legacy';model:string;aspectRatio:string}
 export interface GLabsJob {
   schema:'r3-glabs-job-v1';id:string;projectId:string;nativeRevision:number;token:string;targetKey:string;shotId:string;layerId:string;targetPath:string;candidateSha256:string;
-  prompt:string;promptSha256:string;references:Array<{path:string;sha256:string;mime:string;name:string}>;model:string;aspectRatio:string;status:JobStatus;
+  prompt:string;promptSha256:string;references:Array<{path:string;sha256:string;mime:string;name:string;rightsSha256:string}>;model:string;aspectRatio:string;status:JobStatus;
   providerTaskId?:string;staged?:{path:string;sha256:string;mime:string;width:number;height:number};
   reason?:string;approved?:{rights:string;path:string;sha256:string};createdAt:string;updatedAt:string;
 }
 const MAX_RESPONSE=262_144,MAX_REQUEST=5_242_880,MAX_IMAGE=16*1024*1024;
+// At most 1% aspect-ratio error, further bounded by one output pixel of horizontal rounding.
+const ASPECT_TOLERANCE=0.01;
+function assertImageRatio(aspectRatio:string,width:number,height:number){
+  if(!(GLABS_RATIOS as readonly string[]).includes(aspectRatio)||!Number.isSafeInteger(width)||!Number.isSafeInteger(height)||width<1||height<1)
+    throw new Error('GLABS_IMAGE_ASPECT_RATIO_UNVERIFIED');
+  const [numerator,denominator]=aspectRatio.split(':').map(Number);
+  if(Math.abs(width/height-numerator/denominator)>Math.min(ASPECT_TOLERANCE,1/height))
+    throw new Error('GLABS_IMAGE_ASPECT_RATIO_MISMATCH');
+}
 const active=new Set<string>();
 const defaultSettings:GLabsSettings={endpoint:'http://127.0.0.1:8765',contract:'legacy',model:'nano_banana_2',aspectRatio:'9:16'};
 const settingsFile=(userData:string)=>path.join(userData,'glabs-config-r3.json');
@@ -107,12 +116,23 @@ async function requestJson(settings:GLabsSettings,userData:string,cipher:Credent
 }
 export async function glabsProbe(userData:string,cipher:CredentialCipher){
   const settings=glabsSettings(userData);
-  const health=await requestJson(settings,userData,cipher,'GET','api/health',undefined,false);
-  if(!pureObject(health))throw new Error('G-Labs health contract is invalid.');
-  const auth=await requestJson(settings,userData,cipher,'GET','api/tasks');
-  if(!pureObject(auth)&&!Array.isArray(auth))throw new Error('G-Labs read-only authentication contract is invalid.');
-  return{ready:true,contract:settings.contract,version:String(health.version??'not advertised'),endpoint:settings.endpoint,
-    supportedModels:[...GLABS_MODELS],supportedRatios:[...GLABS_RATIOS],authVerified:true};
+  // Legacy webhook has no documented read-only model capability endpoint.
+  // Health/Auth prove reachability and credential acceptance only, never generation readiness.
+  const base={ready:false,reachable:false,authVerified:false,modelCapability:'MODEL_CAPABILITY_UNVERIFIED' as const,
+    configuredModel:settings.model,configuredRatio:settings.aspectRatio,contract:settings.contract,
+    version:'not advertised',endpoint:settings.endpoint};
+  let health:unknown;
+  try{health=await requestJson(settings,userData,cipher,'GET','api/health',undefined,false);}
+  catch{return {...base,status:'UNREACHABLE' as const,diagnostic:'GLABS_HEALTH_CHECK_FAILED'};}
+  if(!pureObject(health))return {...base,status:'UNREACHABLE' as const,diagnostic:'GLABS_HEALTH_CONTRACT_INVALID'};
+  const reachable={...base,reachable:true,version:String(health.version??'not advertised')};
+  let auth:unknown;
+  try{auth=await requestJson(settings,userData,cipher,'GET','api/tasks');}
+  catch{return {...reachable,status:'REACHABLE' as const,diagnostic:'GLABS_AUTH_CHECK_FAILED'};}
+  if(!pureObject(auth)&&!Array.isArray(auth))
+    return {...reachable,status:'REACHABLE' as const,diagnostic:'GLABS_AUTH_CONTRACT_INVALID'};
+  return {...reachable,authVerified:true,status:'AUTH_VERIFIED' as const,
+    diagnostic:'MODEL_CAPABILITY_UNVERIFIED: no documented free capability proof'};
 }
 function imageMime(buffer:Buffer):string{
   if(buffer.length>=24&&buffer.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])))return'image/png';
@@ -194,10 +214,11 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
       verified.width>8192||verified.height>8192||imageMime(verified.png)!=='image/png')
       throw new Error('GLABS_REFERENCE_IMAGE_UNDECODABLE');
     const ext=checked.mime==='image/jpeg'?'jpg':checked.mime==='image/png'?'png':'webp';
-    return{path:relative,sha256:checked.sha256,mime:checked.mime,name:'ref_'+String(index+1).padStart(3,'0')+'.'+ext};
+    return{path:relative,sha256:checked.sha256,mime:checked.mime,name:'ref_'+String(index+1).padStart(3,'0')+'.'+ext,rightsSha256:sha(entry.rights.trim())};
   });
   // Only read-only probes before an explicitly authorized paid POST.
-  await glabsProbe(userData,cipher);
+  const probe=await glabsProbe(userData,cipher);
+  if(!probe.authVerified)throw new Error('GLABS_HEALTH_AUTH_UNVERIFIED: paid submission blocked before POST.');
   const job:GLabsJob={schema:'r3-glabs-job-v1',id:randomUUID(),projectId:state.project.id,
     nativeRevision:state.tasks?.native?.revision??0,token:pending.token,targetKey:match.key,shotId:match.shotId,layerId:match.layerId,
     targetPath:match.path,candidateSha256:sha(JSON.stringify(pending.after)),prompt:input.prompt.trim(),promptSha256:sha(input.prompt.trim()),
@@ -304,15 +325,51 @@ export async function pollGlabsImage(appPath:string,root:string,userData:string,
   if(fs.existsSync(file)&&sha(fs.readFileSync(file))!==sha(decoded.png))throw new Error('GLABS_STAGING_FILE_TAMPERED');
   if(!fs.existsSync(file)){const temporary=file+'.'+randomUUID()+'.tmp';try{fs.writeFileSync(temporary,decoded.png,{flag:'wx'});fs.renameSync(temporary,file);}finally{if(fs.existsSync(temporary))fs.unlinkSync(temporary);}}
   job.staged={path:relative,sha256:sha(decoded.png),mime:'image/png',width:decoded.width,height:decoded.height};
+  try{assertImageRatio(job.aspectRatio,decoded.width,decoded.height);}
+  catch(error){
+    // Keep the bounded, decoded local PNG for diagnosis, but never authorize binding.
+    job.status='FAILED';job.reason=error instanceof Error?error.message:'GLABS_IMAGE_ASPECT_RATIO_MISMATCH';
+    writeJob(root,job);return job;
+  }
   job.status='VALIDATED';writeJob(root,job);
   return job;
 }
-export function approveGlabsImage(appPath:string,root:string,id:string,rights:string){
+function assertJobReferences(root:string,job:GLabsJob,decode:GLabsDecoder){
+  if(!Array.isArray(job.references))throw new Error('GLABS_REFERENCE_EVIDENCE_MISSING');
+  const media=readState(root).media??[];
+  for(const ref of job.references){
+    if(!ref||typeof ref.path!=='string'||!/^assets\/images\/[^/]+\.(png|jpe?g)$/i.test(ref.path)||
+       typeof ref.sha256!=='string'||typeof ref.mime!=='string'||typeof ref.rightsSha256!=='string'||
+       !/^[a-f0-9]{64}$/.test(ref.rightsSha256))
+      throw new Error('GLABS_REFERENCE_RIGHTS_EVIDENCE_MISSING: inspect and explicitly regenerate if needed.');
+    const approved=media.some(item=>item.path===ref.path&&item.kind==='image'&&
+      item.sha256===ref.sha256&&Boolean(item.rights?.trim())&&sha(item.rights.trim())===ref.rightsSha256);
+    if(!approved)throw new Error('GLABS_REFERENCE_RIGHTS_CHANGED_OR_REVOKED');
+    const checked=validatedImage(root,ref.path,ref.sha256);
+    if(checked.mime!==ref.mime)throw new Error('GLABS_REFERENCE_MIME_CHANGED');
+    const verified=decode(checked.bytes);
+    if(!verified||!Buffer.isBuffer(verified.png)||imageMime(verified.png)!=='image/png'||
+      !Number.isSafeInteger(verified.width)||!Number.isSafeInteger(verified.height)||
+      verified.width<1||verified.height<1||verified.width>8192||verified.height>8192)
+      throw new Error('GLABS_REFERENCE_IMAGE_UNDECODABLE');
+  }
+}
+export function approveGlabsImage(appPath:string,root:string,id:string,rights:string,decode:GLabsDecoder){
   const job=readJob(root,id);
   if(job.status!=='VALIDATED'||!job.staged)throw new Error('GLABS_IMAGE_NOT_VALIDATED');
   if(typeof rights!=='string'||rights.trim().length<5)throw new Error('GLABS_RIGHTS_ATTESTATION_REQUIRED');
   assertJobTarget(appPath,root,job);
-  validatedImage(root,job.staged.path,job.staged.sha256);
+  const image=validatedImage(root,job.staged.path,job.staged.sha256);
+  if(image.mime!=='image/png'||job.staged.mime!=='image/png')throw new Error('GLABS_IMAGE_MIME_INVALID');
+  const decoded=decode(image.bytes);
+  if(!decoded||!Buffer.isBuffer(decoded.png)||imageMime(decoded.png)!=='image/png'||
+    !Number.isSafeInteger(decoded.width)||!Number.isSafeInteger(decoded.height)||
+    decoded.width!==job.staged.width||decoded.height!==job.staged.height||
+    decoded.width<1||decoded.height<1||decoded.width>8192||decoded.height>8192)
+    throw new Error('GLABS_IMAGE_APPROVAL_DECODE_MISMATCH');
+  assertImageRatio(job.aspectRatio,decoded.width,decoded.height);
+  assertJobReferences(root,job,decode);
+  // All output/reference checks precede importMediaFile and fulfillMedia mutation.
   const imported=importMediaFile(root,resolveProjectFile(root,job.staged.path),'image',rights.trim());
   const bound=fulfillMedia(appPath,root,job.token,job.targetKey,imported.path,rights.trim());
   job.approved={rights:rights.trim(),path:imported.path,sha256:imported.sha256};
