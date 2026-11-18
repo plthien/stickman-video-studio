@@ -130,6 +130,55 @@ describe('N01–N07: original Native Author plus pre-publication four-operation 
     expect(task.prompt).not.toContain('"characters":');
     expect(fs.readFileSync(path.join(root,'project.json'))).toEqual(before);
   });
+  it('NF01-01/02/04/05: Native Review includes exact approved sections, WAV, words, captions and offsets only once',()=>{
+    const {root}=stageFixture(),state=readState(root);
+    const task=freezeLifecycleTask(appPath,root,'native','review',{targetContext:'DRAFT'}) as Task;
+    const evidence=task.prompt.split('## B2 — NATIVE SOURCE EVIDENCE (VERIFIED, READ-ONLY)')[1]
+      ?.split('## C — ONE IMMUTABLE CURRENT TARGET')[0]??'';
+    expect(evidence).toContain('"text": "One two three"');
+    expect(evidence).toContain('"duration_seconds": 30');
+    expect(evidence).toContain('"word": "One"');
+    expect(evidence).toContain('"start": 0.1');
+    expect(evidence).toContain('"approved_caption_cues"');
+    expect(evidence).toContain('"lead": 0');
+    expect(evidence).toContain('"tail": 0');
+    expect(evidence).toContain('"trim_start": 0');
+    expect(evidence).toContain(state.voice!.sha256);
+    expect(evidence).toContain(state.alignment!.wordsSha256);
+    expect(evidence).not.toContain('"characters":');
+    expect(evidence).not.toContain('"loss":');
+    expect(task.prompt.match(/## B2 — NATIVE SOURCE EVIDENCE/g)).toHaveLength(1);
+    expect(task.prompt).not.toContain('## ACTUAL AUTHORING SOURCE (COMPACT PROJECTION');
+  });
+  it('NF01-03: Correct and Recheck see the same original authoritative Native evidence',()=>{
+    const {root}=stageFixture();
+    confirmReview(root);
+    const correct=freezeLifecycleTask(appPath,root,'native','correct',{
+      targetContext:'DRAFT',editablePaths:['/shot_ledger/0/meaning'],findingIds:['N-001']
+    }) as Task;
+    expect(correct.prompt).toContain('## B2 — NATIVE SOURCE EVIDENCE');
+    expect(correct.prompt).toContain('"duration_seconds": 30');
+    const artifact=structuredClone(readNativeDraft(root)!.artifact);
+    (artifact.shot_ledger as Array<{shot_id:string;meaning:string}>)[0].meaning='The object moves from danger to safety.';
+    const result=stageLifecycleResult(appPath,root,'native','correct',delivery(root,correct,'correct',{
+      schema:'mode-b-correction-v1',artifact_sha256:correct.artifactSha256,
+      finding_ids:correct.findingIds,editable_ids:correct.editableIds,
+      editable_paths:correct.editablePaths,artifact
+    }));
+    confirmLifecycleResult(appPath,root,result.token);
+    const recheck=freezeLifecycleTask(appPath,root,'native','recheck',{targetContext:'DRAFT'}) as Task;
+    expect(recheck.prompt).toContain('## B2 — NATIVE SOURCE EVIDENCE');
+    expect(recheck.prompt).toContain('"duration_seconds": 30');
+    expect(recheck.prompt).toContain('"word": "One"');
+  });
+  it('NF01-06: edited word-alignment bytes invalidate a frozen Native review even when decoded words look identical',()=>{
+    const {root}=stageFixture();
+    const task=freezeLifecycleTask(appPath,root,'native','review',{targetContext:'DRAFT'}) as Task;
+    fs.appendFileSync(path.join(root,readState(root).alignment!.path),' ');
+    expect(()=>stageLifecycleResult(appPath,root,'native','review',
+      delivery(root,task,'review',reviewPayload(task,'REVIEWED_NO_FINDINGS'))))
+      .toThrow(/NATIVE_LIFECYCLE_WORDS_SHA_MISMATCH/);
+  });
   it('NR03/04 rejects invented targets and falsely observed picture coverage in text-only Review',()=>{
     const {root}=stageFixture(),task=freezeLifecycleTask(appPath,root,'native','review',{targetContext:'DRAFT'}) as Task;
     const forged=reviewPayload(task,'REVIEWED_WITH_FINDINGS',[{...issue(),target_ids:['not-a-real-shot']}]);
@@ -150,7 +199,46 @@ describe('N01–N07: original Native Author plus pre-publication four-operation 
     confirmLifecycleResult(appPath,root,proposal.token);
     const suggested=suggestedCorrectScope(root,readState(root),'native','DRAFT');
     expect(suggested.editablePaths).toEqual(['/shot_ledger/0/meaning']);
-    expect(suggested.editableIds).toEqual(['shot-1']);
+    expect(suggested.editableIds).toEqual([]); // Auxiliary-only evidence never authorizes whole-Shot edits.
+  });
+  it('NF04-01/02/03: a verified auxiliary-only finding freezes no editable Shot and rejects Shot mutation',()=>{
+    const {root}=stageFixture();const review=freezeLifecycleTask(appPath,root,'native','review',{targetContext:'DRAFT'}) as Task;
+    const finding={...issue(),evidence:{kind:'manifest',detail:'Exact /shot_ledger/0/meaning omits the visible delta.'}};
+    const reported=stageLifecycleResult(appPath,root,'native','review',
+      delivery(root,review,'review',reviewPayload(review,'REVIEWED_WITH_FINDINGS',[finding])));
+    confirmLifecycleResult(appPath,root,reported.token);
+    const correct=freezeLifecycleTask(appPath,root,'native','correct',{targetContext:'DRAFT'}) as Task;
+    expect(correct.editableIds).toEqual([]);
+    expect(correct.editablePaths).toEqual(['/shot_ledger/0/meaning']);
+    const original=readNativeDraft(root)!.artifact;
+    const unauthorized=structuredClone(original);
+    ((unauthorized.manifest as {shots:Array<{layers:Array<{text:string}>}>}).shots[0].layers[0]).text='Unauthorized edit';
+    expect(()=>stageLifecycleResult(appPath,root,'native','correct',
+      delivery(root,correct,'correct',{schema:'mode-b-correction-v1',
+        artifact_sha256:correct.artifactSha256,finding_ids:correct.findingIds,
+        editable_ids:[],editable_paths:correct.editablePaths,artifact:unauthorized})))
+      .toThrow(/Locked native\/creative field/);
+    const corrected=structuredClone(original);
+    (corrected.shot_ledger as Array<{meaning:string}>)[0].meaning='The object visibly moves into safety.';
+    const staged=stageLifecycleResult(appPath,root,'native','correct',delivery(root,correct,'correct',{
+      schema:'mode-b-correction-v1',artifact_sha256:correct.artifactSha256,
+      finding_ids:correct.findingIds,editable_ids:[],editable_paths:correct.editablePaths,artifact:corrected
+    }));
+    confirmLifecycleResult(appPath,root,staged.token);
+    expect(readNativeDraft(root)!.artifact).toEqual(corrected);
+  });
+  it('NF05-01/02/03: WITH_FINDINGS rejects resolved-only, accepts supported open or uncertain',()=>{
+    for(const findingStatus of ['open','uncertain'] as const){
+      const {root}=stageFixture();
+      const task=freezeLifecycleTask(appPath,root,'native','review',{targetContext:'DRAFT'}) as Task;
+      expect(()=>stageLifecycleResult(appPath,root,'native','review',
+        delivery(root,task,'review',reviewPayload(task,'REVIEWED_WITH_FINDINGS',[issue('resolved')]))))
+        .toThrow(/REVIEW_WITH_FINDINGS_REQUIRES_UNRESOLVED_FINDING/);
+      const pending=stageLifecycleResult(appPath,root,'native','review',delivery(root,task,'review',
+        reviewPayload(task,'REVIEWED_WITH_FINDINGS',[{...issue(),status:findingStatus}])));
+      confirmLifecycleResult(appPath,root,pending.token);
+      expect(suggestedCorrectScope(root,readState(root),'native','DRAFT').findingIds).toEqual(['N-001']);
+    }
   });
   it('NC03/05/06 and NK01/02/05 keeps published manifest & Author response while correcting only auxiliary data',()=>{
     const {root}=stageFixture(),before=fs.readFileSync(path.join(root,'project.json'));
