@@ -49,7 +49,7 @@ function artifactFor(root:string,state:StudioState,stage:Stage,operation:Externa
  * The suggested scope is informational; frozen Correct tasks still lock it.
  */
 export function suggestedCorrectScope(root:string,state:StudioState,stage:Stage,targetContext?:'DRAFT'|'PUBLISHED'){
-  const empty={editableIds:[] as string[],findingIds:[] as string[],reviewTaskId:null as string|null};
+  const empty={editableIds:[] as string[],editablePaths:[] as string[],findingIds:[] as string[],reviewTaskId:null as string|null};
   let current:Artifact;
   try{current=artifactFor(root,state,stage,'correct',targetContext??(stage==='native'&&readNativeDraft(root,state)?'DRAFT':undefined));}catch{return empty;}
   const reports=Object.values(state.lifecycle?.artifacts??{})
