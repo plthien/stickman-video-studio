@@ -34,7 +34,7 @@ export async function projectSnapshot(root:string,appPath:string,verifier?:Nativ
   // A replaced Native Author task can leave an older, integrity-checked draft
   // pending on disk. Opening the project is read-only: report the stale lineage
   // without treating that draft as current or destroying its evidence.
-  let nativeDraft:ReturnType<typeof readNativeDraft>=null;
+  let nativeDraft: ReturnType<typeof readNativeDraft> = null;
   let nativeDraftRecovery:'NATIVE_DRAFT_STALE_AUTHOR_TASK'|null=null;
   try{nativeDraft=readNativeDraft(projectRoot,state);}
   catch(error){
