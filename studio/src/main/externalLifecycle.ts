@@ -856,6 +856,14 @@ function validateReview(payload:Record<string,unknown>,task:NonNullable<StudioSt
   }
   if(operation==='media-review'&&!task.mediaTransferAttested&&coverage.modalities.some(modality=>['picture','motion','sound','captions'].includes(String(modality))))
     throw new Error('NOT_VERIFIED: locally packaged media does not establish transferred or inspected audiovisual modalities.');
+  if(task.stage==='native'&&operation!=='media-review'){
+    // Author/Review/Correct/Recheck receive manifest/ledger text, not inspected media.
+    if(coverage.modalities.some(item=>item!=='manifest')||coverage.ranges.length||mediaSha256s.length)
+      throw new Error('NATIVE_TEXT_REVIEW_EVIDENCE_INVALID: only manifest text was provided.');
+    if(!['INSUFFICIENT_EVIDENCE','NOT_VERIFIED'].includes(String(payload.status))&&
+      !coverage.modalities.includes('manifest'))
+      throw new Error('NATIVE_REVIEW_MANIFEST_COVERAGE_REQUIRED');
+  }
 
   const findings=payload.findings as unknown[],ids=new Set<string>();
   for(const item of findings){
@@ -890,6 +898,9 @@ function validateReview(payload:Record<string,unknown>,task:NonNullable<StudioSt
   if(operation==='recheck'&&task.findingIds?.some(id=>!ids.has(id)))throw new Error('Recheck omitted a previously unresolved finding.');
   if(payload.status==='REVIEWED_WITH_FINDINGS'&&!findings.length)throw new Error('Review declares findings but supplies none.');
   if(payload.status==='REVIEWED_NO_FINDINGS'&&findings.some(item=>(item as {status:string}).status!=='resolved'))throw new Error('No-findings recheck contains unresolved findings.');
+  if(operation==='recheck'&&payload.status==='REVIEWED_WITH_FINDINGS'&&
+    !findings.some(item=>['open','uncertain'].includes((item as {status:string}).status)))
+    throw new Error('RECHECK_UNRESOLVED_FINDING_REQUIRED: only resolved findings were provided.');
   if(operation==='media-review'&&payload.status==='REVIEWED_NO_FINDINGS'&&
     (!task.mediaTransferAttested||!coverage.modalities.length||!mediaSha256s.length))
     throw new Error('INSUFFICIENT_EVIDENCE: no-findings media review needs user-attested actual attachments and explicit observed coverage.');
