@@ -101,10 +101,26 @@ function artifactFor(root:string,state:StudioState,stage:Stage,operation:Externa
  * CURRENT artifact. Never authorize edits based on old, unrelated review data.
  * The suggested scope is informational; frozen Correct tasks still lock it.
  */
-export function suggestedCorrectScope(root:string,state:StudioState,stage:Stage,targetContext?:'DRAFT'|'PUBLISHED'){
-  const empty={editableIds:[] as string[],editablePaths:[] as string[],findingIds:[] as string[],reviewTaskId:null as string|null};
+export function suggestedCorrectScope(
+  root:string,state:StudioState,stage:Stage,targetContext?:'DRAFT'|'PUBLISHED',
+  selectedFindingIds?:string[]
+){
+  const empty={editableIds:[] as string[],editablePaths:[] as string[],findingIds:[] as string[],
+    reviewTaskId:null as string|null,
+    findingScopes:{} as Record<string,{editableIds:string[];editablePaths:string[]}>};
+  const selected=selectedFindingIds===undefined?undefined:selectedFindingIds;
+  if(selected!==undefined&&(!Array.isArray(selected)||new Set(selected).size!==selected.length||
+    selected.some(id=>typeof id!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(id))))
+    throw new Error('CORRECT_FINDING_SCOPE_INVALID: selected finding IDs must be unique and valid.');
   let current:Artifact;
-  try{current=artifactFor(root,state,stage,'correct',targetContext??(stage==='native'&&readNativeDraft(root,state)?'DRAFT':undefined));}catch{return empty;}
+  try{current=artifactFor(root,state,stage,'correct',
+    targetContext??(stage==='native'&&readNativeDraft(root,state)?'DRAFT':undefined));}
+  catch(error){
+    if(selected?.length)throw new Error('CORRECT_FINDING_SCOPE_INVALID: current artifact cannot be verified.',{cause:error});
+    return empty;
+  }
+  // Only the most recent confirmed Review/Recheck for the exact artifact and
+  // DRAFT/PUBLISHED lineage may authorize inferred corrections.
   const reports=Object.values(state.lifecycle?.artifacts??{})
     .filter(item=>item.stage===stage&&(item.operation==='review'||item.operation==='recheck')&&
       (item.value as {artifact_sha256?:string})?.artifact_sha256===current.sha256&&
@@ -113,45 +129,55 @@ export function suggestedCorrectScope(root:string,state:StudioState,stage:Stage,
         (current.context==='PUBLISHED'&&!item.artifactContext)))
     .sort((a,b)=>b.createdAt.localeCompare(a.createdAt)||b.taskId.localeCompare(a.taskId));
   const latest=reports[0];
-  if(!latest||latest.status!=='REVIEWED_WITH_FINDINGS')return empty;
+  if(!latest||latest.status!=='REVIEWED_WITH_FINDINGS'){
+    if(selected?.length)throw new Error('CORRECT_FINDING_SCOPE_INVALID: selected finding is not unresolved in the current confirmed Review/Recheck.');
+    return empty;
+  }
   const findings=(latest.value as {findings?:Array<{id:string;status:string;target_ids:string[]}>}).findings??[];
   const unresolved=findings.filter(item=>(item.status==='open'||item.status==='uncertain')&&
     /^[A-Za-z0-9_-]{1,80}$/.test(item.id)&&Array.isArray(item.target_ids));
-  // Suggest auxiliary pointers only when the reviewer wrote ONE explicit, existing,
-  // concrete JSON pointer and that ledger entry names an actual finding target.
-  // Do not guess paths from prose or grant whole ledgers automatically.
-  const inferredPaths:string[]=[],auxiliaryOnlyFindingIds=new Set<string>();
-  if(stage==='native'){
-    for(const finding of unresolved){
-      const withEvidence=finding as typeof finding & {evidence?:{detail?:string};requirement?:string};
-      const evidence=[withEvidence.evidence?.detail,withEvidence.requirement].filter(Boolean).join(' ');
-      const paths=[...new Set(evidence.match(/\/(?:shot_ledger|sound_script|asset_needs)\/(?:0|[1-9]\d*)(?:\/[A-Za-z0-9_~\/-]+)+/g)??[])];
-      if(paths.length!==1)continue;
-      const pointer=paths[0],parts=pointer.slice(1).split('/'),collection=(current.value as Record<string,unknown>)[parts[0]];
-      if(!Array.isArray(collection))continue;
-      const row=collection[Number(parts[1])] as Record<string,unknown>|undefined;
-      if(!row||typeof row!=='object'||Array.isArray(row))continue;
-      const owner=row.shot_id??row.shotId??row.target_id??row.targetId;
-      if(typeof owner!=='string'||!finding.target_ids.includes(owner))continue;
-      try{
-        checkEditablePaths(stage,current.value,[pointer]);inferredPaths.push(pointer);
-        if(!/\/manifest\/shots\/(?:0|[1-9]\d*)\//.test(evidence))
-          auxiliaryOnlyFindingIds.add(finding.id);
-      }catch{/* Require owner selection. */}
+  const unresolvedIds=unresolved.map(item=>item.id);
+  if(selected?.some(id=>!unresolvedIds.includes(id)))
+    throw new Error('CORRECT_FINDING_SCOPE_INVALID: selected finding is not unresolved in the current confirmed Review/Recheck.');
+  const findingIds=selected??unresolvedIds;
+  const findingScopes:Record<string,{editableIds:string[];editablePaths:string[]}>={};
+  for(const finding of unresolved){
+    const withEvidence=finding as typeof finding & {evidence?:{detail?:string};requirement?:string};
+    const evidence=[withEvidence.evidence?.detail,withEvidence.requirement].filter(Boolean).join(' ');
+    const paths=stage==='native'?
+      [...new Set(evidence.match(/\/(?:shot_ledger|sound_script|asset_needs)\/(?:0|[1-9]\d*)(?:\/[A-Za-z0-9_~\/-]+)+/g)??[])]:[];
+    const inferredPaths:string[]=[];
+    if(paths.length===1){
+      const pointer=paths[0],parts=pointer.slice(1).split('/'),
+        collection=(current.value as Record<string,unknown>)[parts[0]];
+      if(Array.isArray(collection)){
+        const row=collection[Number(parts[1])] as Record<string,unknown>|undefined;
+        if(row&&typeof row==='object'&&!Array.isArray(row)){
+          const owner=row.shot_id??row.shotId??row.target_id??row.targetId;
+          if(typeof owner==='string'&&finding.target_ids.includes(owner)){
+            try{checkEditablePaths(stage,current.value,[pointer]);inferredPaths.push(pointer);}
+            catch{/* No exact pointer authority: fail closed on inferred auxiliary edits. */}
+          }
+        }
+      }
     }
+    // A concrete auxiliary-only finding never grants an entire Shot. A mixed
+    // finding may grant both scopes ONLY if it explicitly references a Shot
+    // field in the current manifest as well as an existing auxiliary pointer.
+    const explicitShotEvidence=/\/manifest\/shots\/(?:0|[1-9]\d*)\//.test(evidence);
+    const auxiliaryOnly=paths.length>0&&!explicitShotEvidence;
+    findingScopes[finding.id]={
+      editableIds:auxiliaryOnly?[]:[...new Set(finding.target_ids)],
+      editablePaths:inferredPaths
+    };
   }
-  return {
-    editableIds:[...new Set(unresolved.filter(item=>!auxiliaryOnlyFindingIds.has(item.id)).flatMap(item=>item.target_ids))],
-    editablePaths:[...new Set(inferredPaths)],
-    findingIds:[...new Set(unresolved.map(item=>item.id))],
-    reviewTaskId:latest.taskId
+  return{
+    editableIds:[...new Set(findingIds.flatMap(id=>findingScopes[id]?.editableIds??[]))],
+    editablePaths:[...new Set(findingIds.flatMap(id=>findingScopes[id]?.editablePaths??[]))],
+    findingIds,reviewTaskId:latest.taskId,findingScopes
   };
 }
 
-
-type Lineage={correctTaskId:string;reviewTaskId:string;findingIds:string[];prior:Array<{taskId:string;operation:ExternalOperation;value:unknown}>};
-/** Exact persisted correction-to-review ancestry. Stage-wide review history is
- * never an authorization to resolve a different or retired artifact. */
 function correctionLineage(state:StudioState,stage:Stage,current:Artifact):Lineage{
   const correct=state.lifecycle?.tasks[stage+':correct'];
   if(stage==='native'&&((correct?.artifactContext??'PUBLISHED')!==current.context||
@@ -761,16 +787,12 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
       evidencePack.status='OWNER_ATTESTED_FILE_TRANSFER_NOT_VERIFIED_BY_STUDIO';
     }else evidencePack.status='AVAILABLE_LOCALLY_NOT_TRANSFERRED';
   }
-  const suggested=operation==='correct'?suggestedCorrectScope(root,state,stage,artifact.context):null;
+  const suggested=operation==='correct'?
+    suggestedCorrectScope(root,state,stage,artifact.context,scope.findingIds):null;
   const editablePaths=[...new Set(scope.editablePaths??suggested?.editablePaths??[])];
-  const selectedFindings=scope.findingIds?.length?scope.findingIds:suggested?.findingIds??[];
-  const inferredTargets=suggested&&scope.findingIds?.length?
-    suggested.editableIds.filter(id=>Object.values(state.lifecycle?.artifacts??{}).some(item=>
-      item.taskId===suggested.reviewTaskId&&
-      (item.value as {findings?:Array<{id:string;target_ids:string[]}>}).findings?.some(f=>
-        selectedFindings.includes(f.id)&&f.target_ids.includes(id)))):suggested?.editableIds??[];
-  const editableIds=[...new Set(scope.editableIds!==undefined?scope.editableIds:
-    editablePaths.length?[]:inferredTargets)];
+  // Owner-provided empty arrays are explicit authorizations, never auto-filled.
+  // A verified auxiliary path does not suppress independent selected-Shot rights.
+  const editableIds=[...new Set(scope.editableIds??suggested?.editableIds??[])];
   if(operation==='correct'&&!editableIds.length&&!editablePaths.length)
     throw new Error('Correct requires unresolved findings from a confirmed current-artifact Review or an explicit editable section/shot scope.');
   if(editableIds.some(id=>typeof id!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(id)))throw new Error('Invalid editable ID.');
@@ -831,7 +853,7 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
       .sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).slice(0,1)
       .map(item=>({taskId:item.taskId,operation:item.operation,value:item.value})):[]);
   const findingIds=operation==='recheck'?lineage!.findingIds:
-    operation==='correct'?(scope.findingIds?.length?scope.findingIds:suggested?.findingIds??[]):[];
+    operation==='correct'?(suggested?.findingIds??[]):[];
   if(new Set(findingIds).size!==findingIds.length||findingIds.some(id=>typeof id!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(id)))
     throw new Error('Invalid finding scope.');
   if(operation==='correct'&&findingIds.some(id=>!suggested?.findingIds.includes(id)))
