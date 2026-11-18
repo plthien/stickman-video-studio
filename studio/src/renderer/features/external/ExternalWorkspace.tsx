@@ -13,13 +13,14 @@ interface TabValues {
   frozenScopeKey:string;frozenTaskId:string;
   history:History[];historySelectedId:string;historyLoading:boolean;
   suggestedScopeReviewTaskId?:string;scopeTouched?:boolean;
+  editableTouched?:boolean;editablePathsTouched?:boolean;
 }
 const emptyTab=():TabValues=>({json:'',result:'idle',prompt:'',pending:null,
   nativeMediaStatus:null,error:'',previewSeconds:20,draftConsent:false,
   reviewTargets:'',editable:'',editablePaths:'',findingScope:'',nativeTarget:'DRAFT',
   frozenScopeKey:'',frozenTaskId:'',
   history:[],historySelectedId:'',historyLoading:false,
-  scopeTouched:false});
+  scopeTouched:false,editableTouched:false,editablePathsTouched:false});
 interface ExternalSession {
   tab:PromptTab;setTab:Dispatch<SetStateAction<PromptTab>>;
   tabs:Record<string,TabValues>;
@@ -67,9 +68,30 @@ export function ExternalWorkspace(){
   const jsonFilePicker=useRef<HTMLInputElement|null>(null);
   const splitList=(value:string)=>value.split(',').map(x=>x.trim()).filter(Boolean);
   const effectiveNativeTarget=native?.nativeDraft?nativeTarget:'PUBLISHED';
+  // Unedited suggestions are display-only. The backend recomputes rights from
+  // the exact selected finding subset; only explicit owner edits are overrides.
   const lifecycleScope=()=>({targetContext:stage==='native'?effectiveNativeTarget:undefined,
+    targetIds:splitList(reviewTargets),
+    editableIds:operation==='Correct'&&!local.editableTouched?undefined:splitList(editable),
+    editablePaths:operation==='Correct'&&!local.editablePathsTouched?undefined:splitList(editablePaths),
+    findingIds:findingScope.trim()?splitList(findingScope):undefined});
+  // Frozen identity is keyed by the VISIBLE exact scope; it survives reopening
+  // even though pre-freeze automatic suggestions were not owner overrides.
+  const scopeKey=()=>JSON.stringify({targetContext:stage==='native'?effectiveNativeTarget:undefined,
     targetIds:splitList(reviewTargets),editableIds:splitList(editable),
     editablePaths:splitList(editablePaths),findingIds:findingScope.trim()?splitList(findingScope):undefined});
+  const autoFindingFields=(text:string)=>{
+    const map=suggested?.findingScopes;
+    const ids=text.trim()?splitList(text):suggested?.findingIds??[];
+    if(!map)return{
+      ...(!local.editableTouched?{editable:''}:{}),
+      ...(!local.editablePathsTouched?{editablePaths:''}:{})
+    };
+    return {
+      ...(!local.editableTouched?{editable:[...new Set(ids.flatMap(id=>map[id]?.editableIds??[]))].join(', ')}:{}),
+      ...(!local.editablePathsTouched?{editablePaths:[...new Set(ids.flatMap(id=>map[id]?.editablePaths??[]))].join(', ')}:{})
+    };
+  };
   const reviewFindings=visibleHistory?.findings??[];
   const lastReview=visibleHistory&&(visibleHistory.operation==='review'||visibleHistory.operation==='recheck')?visibleHistory:null;
   // Requests belong to a captured tab and project epoch; never publish late
@@ -84,11 +106,12 @@ export function ExternalWorkspace(){
     if(operation!=='Correct'||!suggested?.reviewTaskId||
       local.frozenTaskId||local.scopeTouched||
       local.suggestedScopeReviewTaskId===suggested.reviewTaskId)return;
-    patch(sessionKey,{editable:suggested.editableIds.join(', '),
-      findingScope:suggested.findingIds.join(', '),editablePaths:suggested.editablePaths?.join(', ')??'',
+    patch(sessionKey,{
+      ...(!local.editableTouched?{editable:suggested.editableIds.join(', ')}:{}),
+      ...(!local.editablePathsTouched?{editablePaths:suggested.editablePaths?.join(', ')??''}:{}),
+      findingScope:suggested.findingIds.join(', '),
       suggestedScopeReviewTaskId:suggested.reviewTaskId});
   },[sessionKey,suggested?.reviewTaskId,local.frozenTaskId,local.scopeTouched,effectiveNativeTarget]);
-  const scopeKey=()=>JSON.stringify(lifecycleScope());
   const scopeDirty=Boolean(frozenTaskId&&operation!=='Author'&&scopeKey()!==frozenScopeKey);
   const canImport=Boolean(frozenTaskId&&!scopeDirty&&
     !history.some(item=>item.id===frozenTaskId&&item.status!=='FROZEN')&&
@@ -149,7 +172,7 @@ export function ExternalWorkspace(){
     const session=captureProjectSession(),expectedStage=stage,expectedOperation=operation,sequence=++requests.current.freeze;
     requests.current.history+=1;
     if(!session)return;
-    const snapshot=lifecycleScope(),key=JSON.stringify(snapshot);
+    const snapshot=lifecycleScope(),key=scopeKey();
     if(!forceRebuild&&frozenTaskId&&scopeDirty){
       setError('Current FROZEN task has a different scope. Use Rebuild Task explicitly.');
       return;
@@ -208,7 +231,10 @@ export function ExternalWorkspace(){
       {effectiveNativeTarget==='DRAFT'&&native.nativeDraft?
         <div className="info">DRAFT revision {native.nativeDraft.revision} · SHA {native.nativeDraft.artifactSha256} · Review: {native.nativeDraft.reviewStatus} · Unresolved findings: {native.nativeDraft.unresolvedFindings} · Media fulfillment: {native.nativeDraft.readyForMedia?'REVIEWED — READY':'AVAILABLE AFTER REVIEW (recommended)'}. Original project.json remains unchanged until Native Confirm.</div>:
         <div className="info">PUBLISHED revision {native.external.native?.revision??'none'} · Existing confirmed Native artifact. Creative review does not replace original runtime validation.</div>}
-    </div>}{['Review','Recheck'].includes(operation)&&<Field label="Review target IDs (optional; blank covers every section/shot)"><Input value={reviewTargets} onChange={event=>setReviewTargets(event.target.value)} placeholder="shot-001, shot-002"/></Field>}{operation==='Correct'&&<>{suggested?.findingIds.length? <div className="info" data-testid="correct-review-scope">Auto-filled from confirmed Review: {suggested.findingIds.join(', ')}. Editable section/shot scope: {suggested.editableIds.join(', ')}. You may narrow the scope before Build Task.</div>:<div className="info">No unresolved findings from a confirmed review of the current artifact. Build Correct only with an explicit authorized edit scope.</div>}<Field label="Editable section/shot IDs (comma separated)"><Input value={editable} onChange={event=>patch(sessionKey,{editable:event.target.value,scopeTouched:true})} placeholder="S03, S04"/></Field><Field label="Expanded editable field paths (optional, comma separated)"><Input value={editablePaths} onChange={event=>patch(sessionKey,{editablePaths:event.target.value,scopeTouched:true})} placeholder="/manifest/opening, /sound_script/2"/></Field></>}{['Correct','Recheck'].includes(operation)&&<Field label="Finding IDs to resolve (optional; defaults to unresolved findings)"><Input value={findingScope} onChange={event=>patch(sessionKey,{findingScope:event.target.value,scopeTouched:true})} placeholder="F-001, F-002"/></Field>}<div className="external-task-toolbar" role="toolbar" aria-label="External task controls"><div className="actions external-task-build-actions"><Button disabled={!native} onClick={()=>void buildTask(false)}>Build Task</Button>{hasFrozenReservation&&<Button disabled={!native} onClick={()=>void buildTask(true)}>Rebuild Task</Button>}</div><div className="actions external-task-export-actions"><Button variant="primary" disabled={!native||!visiblePrompt||scopeDirty} onClick={copy}>Copy prompt</Button><Button disabled={!native||!canImport||!prompt||scopeDirty} onClick={exportFile}>Export .md</Button><Button onClick={()=>window.open('https://chatgpt.com/','_blank','noopener,noreferrer')}>Open ChatGPT</Button></div></div>{scopeDirty&&<div className="info error">Draft scope changed. {stage==='native'?'Native target or scope differs from the frozen task.':'Current Script scope differs from the frozen task.'} Copy, export, validate and confirm are blocked until you return to the frozen context or Rebuild Task. Task ID {frozenTaskId}. Rebuild Task invalidates that task and all responses based on it.</div>}{frozenTaskId&&!scopeDirty&&<div className="info">Rebuild Task replaces the frozen task ID and invalidates earlier ChatGPT responses, even if the scope is unchanged.</div>}<pre className="prompt external-task-prompt" data-active-prompt={tab} data-testid="external-task-prompt">{native?visiblePrompt:''}</pre>
+    </div>}{['Review','Recheck'].includes(operation)&&<Field label="Review target IDs (optional; blank covers every section/shot)"><Input value={reviewTargets} onChange={event=>setReviewTargets(event.target.value)} placeholder="shot-001, shot-002"/></Field>}{operation==='Correct'&&<>{suggested?.findingIds.length? <div className="info" data-testid="correct-review-scope">Auto-filled from confirmed Review: {suggested.findingIds.join(', ')}. Editable section/shot scope: {suggested.editableIds.join(', ')}. You may narrow the scope before Build Task.</div>:<div className="info">No unresolved findings from a confirmed review of the current artifact. Build Correct only with an explicit authorized edit scope.</div>}<Field label="Editable section/shot IDs (comma separated)"><Input value={editable} onChange={event=>patch(sessionKey,{editable:event.target.value,
+  editableTouched:true,scopeTouched:true})} placeholder="S03, S04"/></Field><Field label="Expanded editable field paths (optional, comma separated)"><Input value={editablePaths} onChange={event=>patch(sessionKey,{editablePaths:event.target.value,
+  editablePathsTouched:true,scopeTouched:true})} placeholder="/manifest/opening, /sound_script/2"/></Field></>}{['Correct','Recheck'].includes(operation)&&<Field label="Finding IDs to resolve (optional; defaults to unresolved findings)"><Input value={findingScope} onChange={event=>patch(sessionKey,{findingScope:event.target.value,
+  ...autoFindingFields(event.target.value),scopeTouched:true})} placeholder="F-001, F-002"/></Field>}<div className="external-task-toolbar" role="toolbar" aria-label="External task controls"><div className="actions external-task-build-actions"><Button disabled={!native} onClick={()=>void buildTask(false)}>Build Task</Button>{hasFrozenReservation&&<Button disabled={!native} onClick={()=>void buildTask(true)}>Rebuild Task</Button>}</div><div className="actions external-task-export-actions"><Button variant="primary" disabled={!native||!visiblePrompt||scopeDirty} onClick={copy}>Copy prompt</Button><Button disabled={!native||!canImport||!prompt||scopeDirty} onClick={exportFile}>Export .md</Button><Button onClick={()=>window.open('https://chatgpt.com/','_blank','noopener,noreferrer')}>Open ChatGPT</Button></div></div>{scopeDirty&&<div className="info error">Draft scope changed. {stage==='native'?'Native target or scope differs from the frozen task.':'Current Script scope differs from the frozen task.'} Copy, export, validate and confirm are blocked until you return to the frozen context or Rebuild Task. Task ID {frozenTaskId}. Rebuild Task invalidates that task and all responses based on it.</div>}{frozenTaskId&&!scopeDirty&&<div className="info">Rebuild Task replaces the frozen task ID and invalidates earlier ChatGPT responses, even if the scope is unchanged.</div>}<pre className="prompt external-task-prompt" data-active-prompt={tab} data-testid="external-task-prompt">{native?visiblePrompt:''}</pre>
     {historyLoading&&<div className="info">Reading saved task history…</div>}
     {historySelectedId&&!selectedHistory&&<div className="info error" role="alert">Selected history task is unavailable. No prompt or confirmed JSON can be displayed.</div>}
     {history.length>1&&<Field label="Saved task history"><select aria-label="Saved task history" value={selectedHistory?.id??''} onChange={event=>patch(sessionKey,{historySelectedId:event.target.value})}>{history.map(item=><option key={item.id} value={item.id}>revision {item.revision} · {item.status} · {item.id.slice(0,8)}</option>)}</select></Field>}
