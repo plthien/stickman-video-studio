@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, net, protocol, safeStorage, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, net, protocol, safeStorage, shell } from 'electron';
 import fs from 'node:fs';
 import path, { join } from 'node:path';
 import { alignWithElevenLabs,repairAlignmentTiming,eligibleAlignmentResponse } from './alignment.js';
@@ -8,6 +8,7 @@ import { reconcileScriptActivation, confirmImport, freezeTask, stageImport, getP
 import {confirmLifecycleResult,freezeLifecycleTask,readFrozenExternalTask,stageLifecycleResult} from './externalLifecycle.js';
 import {readExternalHistory} from './externalHistory.js';
 import { getCaptionReview, draftCaptionReview, approveCaptionReview,autoCaptionReview } from './captionReview.js';
+import {glabsSettings,saveGlabsSettings,glabsCredentialStatus,saveGlabsKey,clearGlabsKey,glabsProbe,listGlabsJobs,submitGlabsImage,pollGlabsImage,approveGlabsImage,type GLabsSettings,type ImageRequest} from './glabs.js';
 import { discoverNano, generateNano, nanoBase } from './nanoClient.js';
 import { cancelJob, nativeJob, reconcileJob } from './nativeJobs.js';
 import { importAlignedWords, importApprovedWav, longformStatus, runLongform, narrationAction } from './voiceMedia.js';
@@ -38,6 +39,20 @@ function registerIpc() {
   ipcMain.handle('project:open', (_event, root: string) => { const state = reconcileScriptActivation(root); registerRoot(root); saveRecent(state.project); reconcileJob(root); return projectSnapshot(root,app.getAppPath()); });
   ipcMain.handle('project:state', (_event, id: string) => { const root=rootFor(id); reconcileScriptActivation(root); return projectSnapshot(root,app.getAppPath()); });
   ipcMain.handle('project:saveBrief', (_event, id: string, brief: StudioState['brief'] & { title: string }) => { const root = rootFor(id), state = readState(root); state.project.title = brief.title.trim(); state.brief = { topic: brief.topic, language: brief.language, ratio: '9:16', targetDuration: brief.targetDuration, audience: brief.audience, purpose: brief.purpose }; state.project.updatedAt = new Date().toISOString(); writeState(root, state); saveRecent(state.project); return projectSnapshot(root,app.getAppPath()); });
+  ipcMain.handle('glabs:settings',()=>({config:glabsSettings(app.getPath('userData')),credential:glabsCredentialStatus(app.getPath('userData'),safeStorage)}));
+  ipcMain.handle('glabs:configure',(_event,value:GLabsSettings)=>saveGlabsSettings(app.getPath('userData'),value));
+  ipcMain.handle('glabs:saveKey',(_event,key:string)=>saveGlabsKey(app.getPath('userData'),safeStorage,key));
+  ipcMain.handle('glabs:clearKey',()=>clearGlabsKey(app.getPath('userData'),safeStorage));
+  ipcMain.handle('glabs:probe',()=>glabsProbe(app.getPath('userData'),safeStorage));
+  ipcMain.handle('glabs:jobs',(_event,id:string)=>listGlabsJobs(rootFor(id)));
+  ipcMain.handle('glabs:generate',(_event,id:string,input:ImageRequest)=>submitGlabsImage(app.getAppPath(),rootFor(id),app.getPath('userData'),safeStorage,input));
+  ipcMain.handle('glabs:poll',(_event,id:string,jobId:string)=>pollGlabsImage(app.getAppPath(),rootFor(id),app.getPath('userData'),safeStorage,jobId,bytes=>{
+    const decoded=nativeImage.createFromBuffer(bytes);
+    if(decoded.isEmpty())throw new Error('GLABS_IMAGE_DECODE_FAILED');
+    const size=decoded.getSize();
+    return{png:decoded.toPNG(),width:size.width,height:size.height};
+  }));
+  ipcMain.handle('glabs:approve',(_event,id:string,jobId:string,rights:string)=>approveGlabsImage(app.getAppPath(),rootFor(id),jobId,rights));
   ipcMain.handle('settings:elevenlabsStatus', () => elevenLabsStatus(app.getPath('userData'),safeStorage));
   ipcMain.handle('settings:elevenlabsSave', (_event,key:string) => saveElevenLabsKey(app.getPath('userData'),safeStorage,key));
   ipcMain.handle('settings:elevenlabsClear', () => clearElevenLabsKey(app.getPath('userData'),safeStorage));
