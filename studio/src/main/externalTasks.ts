@@ -356,6 +356,13 @@ const readPending=(root:string):PendingImport=>{
   if(pending.payloadSha256!==sha(JSON.stringify(pending.payload)))throw new Error('Pending imported payload was modified.');
   if(pending.stage==='native'&&pending.draftHistory){
     if(!Array.isArray(pending.draftHistory))throw new Error('NATIVE_DRAFT_HISTORY_INVALID');
+    if(pending.draftHistory.length){
+      const author=strictJson(readUtf8(frozenResponse)) as {payload?:Record<string,unknown>};
+      const p=author.payload;
+      if(!p||pending.draftHistory[0].previousSha256!==sha(JSON.stringify({
+        manifest:p.manifest,shot_ledger:p.shot_ledger,sound_script:p.sound_script,asset_needs:p.asset_needs
+      })))throw new Error('NATIVE_DRAFT_AUTHOR_LINEAGE_INVALID');
+    }
     let previous:string|undefined;
     for(const [index,item] of pending.draftHistory.entries()){
       if(!item||item.schema!=='mode-b-native-draft-revision-v1'||item.revision!==index+2||
@@ -368,6 +375,8 @@ const readPending=(root:string):PendingImport=>{
         artifactSha256?:string;previousSha256?:string;artifact?:unknown};
       if(stored.schema!==item.schema||stored.revision!==item.revision||
         stored.artifactSha256!==item.artifactSha256||stored.previousSha256!==item.previousSha256||
+        (stored as {correctTaskId?:string}).correctTaskId!==item.correctTaskId||
+        (stored as {reviewTaskId?:string}).reviewTaskId!==item.reviewTaskId||
         sha(JSON.stringify(stored.artifact))!==item.artifactSha256||
         (previous!==undefined&&item.previousSha256!==previous))
         throw new Error('NATIVE_DRAFT_REVISION_IDENTITY_INVALID');
