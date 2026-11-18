@@ -209,7 +209,7 @@ describe('R3 final repairs F01/F03/F06 — strict output, references and truthfu
         const jobRecord=JSON.parse(fs.readFileSync(file,'utf8')) as {references:Array<{rightsSha256?:string}>};
         delete jobRecord.references[0].rightsSha256;fs.writeFileSync(file,JSON.stringify(jobRecord));
       }
-      expect(()=>approveGlabsImage(appPath,root,job.id,'Generated art licensed',decode)).toThrow(/REFERENCE/);
+      expect(()=>approveGlabsImage(appPath,root,job.id,'Generated art licensed',decode)).toThrow(/reference/i);
       expect(getPendingMedia(appPath,root)).toEqual(before);
       if(failure!=='rights-changed'&&failure!=='rights-removed')expect(readState(root).media).toEqual(mediaBefore);
       expect(calls.filter(x=>x.method==='POST')).toHaveLength(1);
