@@ -94,7 +94,9 @@ function correctionLineage(state:StudioState,stage:Stage,current:Artifact):Linea
   }
   const sources=Object.values(state.lifecycle?.artifacts??{}).filter(row=>row.stage===stage&&
     (row.operation==='review'||row.operation==='recheck')&&row.createdAt<=correct.createdAt&&
-    (row.value as {artifact_sha256?:string})?.artifact_sha256===correct.artifactSha256)
+    (row.value as {artifact_sha256?:string})?.artifact_sha256===correct.artifactSha256&&
+    (stage!=='native'||row.artifactContext===correct.artifactContext||
+      (correct.artifactContext==='PUBLISHED'&&!row.artifactContext)))
     .filter(row=>{
       const items=(row.value as {findings?:Array<{id:string;status:string}>}).findings??[];
       return payload.finding_ids!.every(id=>items.some(f=>f.id===id&&(f.status==='open'||f.status==='uncertain')));
@@ -257,7 +259,7 @@ export function readFrozenExternalTask(appPath:string,root:string,stage:Stage,op
   if(operation!=='author'){
     const life=task as NonNullable<StudioState['lifecycle']>['tasks'][string];
     assertLifecycleFresh(appPath,root,state,life);
-    if(artifactFor(root,state,stage,operation).sha256!==life.artifactSha256)
+    if(artifactFor(root,state,stage,operation,life.artifactContext).sha256!==life.artifactSha256)
       throw new Error('STALE: saved lifecycle task targets an older creative artifact.');
   }
   return {...task,prompt:fs.readFileSync(target,'utf8')};
@@ -625,7 +627,7 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   if(operation==='media-review'&&!(stage==='script'&&(scope.media==='voice'||scope.media==='captions')||
     stage==='native'&&(scope.media==='preview'||scope.media==='film')))
     throw new Error('INVALID_MEDIA_KIND: Script only supports voice/captions; Native only supports preview/film.');
-  const state=readState(root),artifact=artifactFor(root,state,stage,operation),authority=compileAuthority(appPath,state.project.style,stage,operation);
+  const state=readState(root),artifact=artifactFor(root,state,stage,operation,scope.targetContext),authority=compileAuthority(appPath,state.project.style,stage,operation);
   const ownerTask=state.tasks?.[stage];
   if(!ownerTask||!fs.existsSync(resolveProjectFile(root,ownerTask.promptPath)))
     throw new Error('REBUILD_REQUIRED: original frozen author task is unavailable for independent review/correction.');
@@ -646,7 +648,7 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
     }else evidencePack.status='AVAILABLE_LOCALLY_NOT_TRANSFERRED';
   }
   const editablePaths=[...new Set(scope.editablePaths??[])];
-  const suggested=operation==='correct'?suggestedCorrectScope(root,state,stage):null;
+  const suggested=operation==='correct'?suggestedCorrectScope(root,state,stage,artifact.context):null;
   const selectedFindings=scope.findingIds?.length?scope.findingIds:suggested?.findingIds??[];
   const inferredTargets=suggested&&scope.findingIds?.length?
     suggested.editableIds.filter(id=>Object.values(state.lifecycle?.artifacts??{}).some(item=>
@@ -698,11 +700,15 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   const sources=Object.values(state.lifecycle?.artifacts??{});
   const reviewSource=operation==='correct'&&suggested?.reviewTaskId?
     sources.find(item=>item.taskId===suggested.reviewTaskId&&item.stage===stage&&
+      (stage!=='native'||item.artifactContext===artifact.context||
+        (artifact.context==='PUBLISHED'&&!item.artifactContext))&&
       (item.operation==='review'||item.operation==='recheck')&&
       (item.value as {artifact_sha256?:string}).artifact_sha256===artifact.sha256):undefined;
   const relevantPrior=lineage?.prior??(reviewSource?
     [{taskId:reviewSource.taskId,operation:reviewSource.operation,value:reviewSource.value}]:
     operation==='review'?sources.filter(item=>item.stage===stage&&item.operation==='review'&&
+      (stage!=='native'||item.artifactContext===artifact.context||
+        (artifact.context==='PUBLISHED'&&!item.artifactContext))&&
       (item.value as {artifact_sha256?:string}).artifact_sha256===artifact.sha256)
       .sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).slice(0,1)
       .map(item=>({taskId:item.taskId,operation:item.operation,value:item.value})):[]);
@@ -717,7 +723,8 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
     throw new Error('RECHECK_LINEAGE_REQUIRED: requested findings must match the exact current correction.');
   const key=stage+':'+operation,prior=state.lifecycle?.tasks[key];
   const snapshot={projectId:state.project.id,stage,operation,artifactSha256:artifact.sha256,authorityHashes:authority.sources.map(item=>[item.path,item.sha256,item.extractionSha256]),
-    originalTaskSha256:sha(originalTask),evidencePack,mediaTransferAttested,mediaSha256s,mediaDuration,editableIds,editablePaths,findingIds,targetIds,relevantPrior,
+    originalTaskSha256:sha(originalTask),artifactContext:artifact.context??null,draftToken:artifact.draftToken??null,draftRevision:artifact.draftRevision??null,
+    evidencePack,mediaTransferAttested,mediaSha256s,mediaDuration,editableIds,editablePaths,findingIds,targetIds,relevantPrior,
     correctionLineage:lineage?{correctTaskId:lineage.correctTaskId,reviewTaskId:lineage.reviewTaskId}:null};
   const sourceContextSha256=lifecycleSourceContext(state,stage,operation),authorityFingerprint=authorityIdentity(authority);
   const inputSha256=sha(JSON.stringify({...snapshot,sourceContextSha256,authorityFingerprint}));
@@ -744,7 +751,8 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   const relative='.studio/external/lifecycle/tasks/'+stage+'-'+operation+'-'+revision+'-'+id+'.md',target=resolveProjectFile(root,relative);
   fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,prompt,{encoding:'utf8',flag:'wx'});
   state.lifecycle??={tasks:{},artifacts:{}};
-  state.lifecycle.tasks[key]={id,stage,operation,revision,inputSha256,artifactSha256:artifact.sha256,promptPath:relative,promptSha256:sha(prompt),status:'FROZEN',createdAt:new Date().toISOString(),editableIds,editablePaths,targetIds,findingIds,sourceReviewTaskId:operation==='correct'?reviewSource?.taskId:undefined,originalTaskSha256:sha(originalTask),sourceContextSha256,authorityFingerprint,mediaTransferAttested,mediaKind:scope.media,mediaSha256s,mediaDuration,mediaBaseline:structuredClone(state.media??[])};
+  state.lifecycle.tasks[key]={id,stage,operation,revision,inputSha256,artifactSha256:artifact.sha256,
+    artifactContext:artifact.context,draftToken:artifact.draftToken,draftAuthorTaskId:artifact.authorTaskId,draftRevision:artifact.draftRevision,promptPath:relative,promptSha256:sha(prompt),status:'FROZEN',createdAt:new Date().toISOString(),editableIds,editablePaths,targetIds,findingIds,sourceReviewTaskId:operation==='correct'?reviewSource?.taskId:undefined,originalTaskSha256:sha(originalTask),sourceContextSha256,authorityFingerprint,mediaTransferAttested,mediaKind:scope.media,mediaSha256s,mediaDuration,mediaBaseline:structuredClone(state.media??[])};
   writeState(root,state);
   return{...state.lifecycle.tasks[key],prompt};
 }
@@ -981,7 +989,7 @@ function recoverDisabledMediaReviewPending(root:string,state:StudioState):void{
 export function stageLifecycleResult(appPath:string,root:string,stage:Stage,operation:Exclude<ExternalOperation,'author'>,text:string){
   requireActiveLifecycleOperation(operation);
   const state=readState(root),task=state.lifecycle?.tasks[`${stage}:${operation}`];if(!task||task.status!=='FROZEN')throw new Error('No current frozen lifecycle task exists.');
-  const current=artifactFor(root,state,stage,operation);if(current.sha256!==task.artifactSha256)throw new Error('Lifecycle artifact is stale.');assertLifecycleFresh(appPath,root,state,task);
+  const current=artifactFor(root,state,stage,operation,task.artifactContext);if(current.sha256!==task.artifactSha256)throw new Error('Lifecycle artifact is stale.');assertLifecycleFresh(appPath,root,state,task);
   const value=strictJson(text) as Record<string,unknown>;exact(value,['schema','project_id','task_id','revision','input_sha256','stage','operation','payload']);
   if(value.schema!=='mode-b-lifecycle-result-v1'||value.project_id!==state.project.id||value.task_id!==task.id||value.revision!==task.revision||value.input_sha256!==task.inputSha256||value.stage!==stage||value.operation!==operation)throw new Error('Lifecycle project/task/revision binding mismatch.');
   const payload=value.payload as Record<string,unknown>;if(!payload||typeof payload!=='object'||Array.isArray(payload))throw new Error('Invalid lifecycle payload.');
@@ -1041,6 +1049,7 @@ function finalizeLifecycle(root:string,pending:Record<string,unknown>,task:NonNu
     !['FROZEN','IMPORTED'].includes(state.lifecycle.tasks[key].status))throw new Error('Lifecycle finalization is stale.');
   const payload=pending.payload as Record<string,unknown>;
   state.lifecycle.artifacts[task.id]={taskId:task.id,stage:task.stage,operation:task.operation,
+    artifactContext:task.artifactContext,
     artifactSha256:sha(JSON.stringify(payload)),value:payload,status:String(payload.status??'CORRECTION_STAGED'),
     createdAt:new Date().toISOString()};
   state.lifecycle.tasks[key].status='IMPORTED';
@@ -1196,7 +1205,7 @@ export function confirmLifecycleResult(appPathOrRoot:string,rootOrToken:string,m
     throw new Error('Frozen lifecycle response bytes changed before publication.');
   const frozen=strictJson(fs.readFileSync(frozenFile,'utf8')) as Record<string,unknown>;
   if(canonical(frozen.payload)!==canonical(pending.payload))throw new Error('Lifecycle pending response is corrupt.');
-  const original=artifactFor(root,state,task.stage,task.operation);
+  const original=artifactFor(root,state,task.stage,task.operation,task.artifactContext);
   if(original.sha256!==task.artifactSha256) {
     const journal=nativeCorrectionJournal(root);
     const saved=fs.existsSync(journal)?strictJson(fs.readFileSync(journal,'utf8')) as Record<string,unknown>:null;
