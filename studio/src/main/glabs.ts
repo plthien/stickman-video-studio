@@ -293,8 +293,16 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
       if(!pureObject(result)||typeof result.task_id!=='string'||!/^[0-9a-f]{8}$/i.test(result.task_id)||
          !['pending','running'].includes(String(result.status)))
         throw new Error('GLABS_SUBMISSION_CONTRACT_UNVERIFIED');
-      job.providerTaskId=result.task_id.toLowerCase();job.status='RUNNING';writeJob(root,job);
+      job.providerTaskId=result.task_id.toLowerCase();
+      // A correction may complete while the paid POST is awaiting its response.
+      // Preserve the real provider ID but never resurrect a now-stale attempt.
+      if(!currentJobTarget(appPath,root,job))return job;
+      job.status='RUNNING';writeJob(root,job);
     }catch{
+      if(!currentJobTarget(appPath,root,job)){
+        job.reason+=' Paid submission outcome may be chargeable; no automatic replay.';
+        writeJob(root,job);return job;
+      }
       job.status='UNKNOWN';job.reason='Paid submission outcome unconfirmed. No automatic replay; reconcile or explicitly authorize another attempt.';
       writeJob(root,job);
     }
