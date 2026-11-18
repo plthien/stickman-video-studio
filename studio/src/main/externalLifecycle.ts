@@ -5,6 +5,7 @@ import {atomicJson,readState,resolveProjectFile,sha,strictJson,writeState,type E
 import {compileAuthority} from './externalAuthority.js';
 import {getCaptionReview,nativeVoiceTiming} from './captionReview.js';
 import {alignmentText} from './alignment.js';
+import {invalidateGlabsJobsAfterNativeCorrection} from './glabs.js';
 import {rejectNativeUnsafePaths,validateAuthoring} from './sourceCitations.js';
 import {activateScriptCandidate,scriptCorrectionRechecked,freezeTask,sourceFingerprint,stageImport,confirmImport,validateScript,validateManifest,externalJsonFileDelivery,readNativeDraft,publishNativeDraftCorrection,type ConfirmOptions} from './externalTasks.js';
 
@@ -1364,6 +1365,9 @@ export function confirmLifecycleResult(appPathOrRoot:string,rootOrToken:string,m
       editableIds:task.editableIds??[],editablePaths:task.editablePaths??[],
       findingIds:task.findingIds??[]
     });
+    // After a durable correction, only jobs whose effective creative target
+    // changed become STALE. Unrelated jobs and approved bindings remain intact.
+    invalidateGlabsJobsAfterNativeCorrection(appPath,root);
     return finalizeLifecycle(root,pending,task);
   }
   if(pending.operation==='correct'&&pending.stage==='native')
