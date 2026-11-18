@@ -408,14 +408,13 @@ export function readNativeDraft(root:string,state=readState(root)){
     revision:1+(pending.draftHistory?.length??0),artifact,sha256:sha(JSON.stringify(artifact)),
     history:pending.draftHistory??[]};
 }
-/** Target-specific creative identity for a G-Labs image attempt. The draft
- * revision number is reported as provenance, but unrelated Shot corrections do
- * not change this hash. Unscoped auxiliary requirements are conservatively
- * treated as global instructions rather than silently ignored. */
-export function nativeImageTargetIdentity(root:string,targetKey:string){
-  const state=readState(root),draft=readNativeDraft(root,state);
-  if(!draft)throw new Error('GLABS_NATIVE_DRAFT_REQUIRED');
-  const manifest=draft.artifact.manifest as Record<string,unknown>;
+/** Fingerprint only the target's effective visual instructions and global
+ * visual dependencies, never the entire draft or unrelated Shot revisions. */
+function imageTargetIdentity(
+  state:StudioState,authorTaskId:string,token:string,draftRevision:number,
+  artifact:{manifest:unknown;shot_ledger:unknown;asset_needs:unknown},targetKey:string
+){
+  const manifest=artifact.manifest as Record<string,unknown>;
   const reference=nativeRefs(manifest).find(item=>item.kind==='image'&&item.key===targetKey);
   if(!reference||!reference.shotId||!reference.layerId||reference.shotIndex===undefined)
     throw new Error('GLABS_TARGET_NOT_FROZEN');
@@ -430,20 +429,25 @@ export function nativeImageTargetIdentity(root:string,targetKey:string){
     if(typeof shotId==='string')return shotId===reference.shotId;
     if(typeof layerId==='string')return layerId===reference.layerId;
     if(typeof expectedPath==='string')return expectedPath===reference.path;
-    return true; // Unscoped global creative instruction, potentially relevant to all images.
+    return true; // Unscoped global visual instructions affect all image targets.
   }):[];
   const fingerprint=sha(JSON.stringify({
-    project_id:state.project.id,author_task_id:draft.authorTaskId,
-    author_task_revision:state.tasks?.native?.revision,draft_token:draft.token,
+    project_id:state.project.id,author_task_id:authorTaskId,
+    author_task_revision:state.tasks?.native?.revision,draft_token:token,
     style:manifest.style,width:manifest.width,height:manifest.height,fps:manifest.fps,
     opening:reference.shotIndex===0?manifest.opening??null:null,
     shot_index:reference.shotIndex,shot_id:reference.shotId,
     layer_id:reference.layerId,expected_path:reference.path,
-    shot,shot_ledger:aux(draft.artifact.shot_ledger),
-    asset_needs:aux(draft.artifact.asset_needs)
+    shot,shot_ledger:aux(artifact.shot_ledger),asset_needs:aux(artifact.asset_needs)
   }));
-  return {fingerprint,authorTaskId:draft.authorTaskId,draftRevision:draft.revision,
-    targetKey,shotId:reference.shotId,layerId:reference.layerId,path:reference.path};
+  return {fingerprint,authorTaskId,draftRevision,targetKey,
+    shotId:reference.shotId,layerId:reference.layerId,path:reference.path};
+}
+/** Current project-owned draft identity, including immutable Author provenance. */
+export function nativeImageTargetIdentity(root:string,targetKey:string){
+  const state=readState(root),draft=readNativeDraft(root,state);
+  if(!draft)throw new Error('GLABS_NATIVE_DRAFT_REQUIRED');
+  return imageTargetIdentity(state,draft.authorTaskId,draft.token,draft.revision,draft.artifact,targetKey);
 }
 /** Publish an immutable corrected draft revision without touching original Author
  * response, published project.json or unrelated accepted media. */
@@ -470,6 +474,15 @@ export function publishNativeDraftCorrection(appPath:string,root:string,original
     const previous=pending.references.find(ref=>ref.key===key);
     const next=normalized.missing.find(ref=>ref.key===key);
     if(!previous||!next||JSON.stringify(previous)!==JSON.stringify(next))return false;
+    if(previous.kind==='image'){
+      // Even unchanged IDs/paths cannot reuse a paid image when its creative
+      // Shot, relevant ledger or image requirement changed in the new draft.
+      const oldIdentity=imageTargetIdentity(state,draft.authorTaskId,draft.token,
+        draft.revision,nativeDraftValue(pending),key);
+      const newIdentity=imageTargetIdentity(state,draft.authorTaskId,draft.token,
+        draft.revision+1,newArtifact,key);
+      if(oldIdentity.fingerprint!==newIdentity.fingerprint)return false;
+    }
     const saved=state.media?.find(row=>row.path===binding.relative&&row.kind===binding.kind&&
       row.sha256===binding.sha256&&row.rights===binding.rights);
     const file=resolveProjectFile(root,binding.relative);
