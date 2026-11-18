@@ -73,8 +73,8 @@ export function StoryboardWorkspace(){
     if(!imagePrompt.trim()){setGlabsError('Confirm the exact native/creative image prompt before submitting.');return;}
     const sameTarget=glabsJobs.filter(item=>item.targetKey===target.key&&item.token===pending?.token);
     const unknown=sameTarget.some(item=>item.status==='UNKNOWN');
-    if(!window.confirm('Submit one potentially paid G-Labs image request for '+target.shotId+'/'+target.layerId+' using '+glabsConfig.model+'?'))return;
-    if(unknown&&!window.confirm('A previous paid request has UNKNOWN outcome. Authorize a separate new paid attempt anyway?'))return;
+    // Electron main owns the mandatory paid-request confirmation, including UNKNOWN billing warnings.
+    // No renderer-only boolean can bypass that native dialog.
     setGlabsBusy(true);setGlabsError('');
     try{
       await window.studio.glabsGenerate(scope.projectId,{targetKey:target.key,prompt:imagePrompt.trim(),
