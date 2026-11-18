@@ -86,6 +86,7 @@ async function requestJson(settings:GLabsSettings,userData:string,cipher:Credent
   try{res=await fetch(url,{method,headers,body:payload?JSON.stringify(payload):undefined,redirect:'error',signal:AbortSignal.timeout(30000)});}
   catch{throw new Error('GLABS_TRANSPORT_UNKNOWN: request failed or timed out.');}
   if(!res.ok)throw new Error('GLABS_HTTP_'+res.status);
+  if(method==='POST'&&res.status!==202)throw new Error('GLABS_SUBMISSION_STATUS_UNVERIFIED');
   if(Number(res.headers.get('content-length')??0)>MAX_RESPONSE)throw new Error('GLABS_RESPONSE_OVERSIZE');
   const value=await res.text();
   if(Buffer.byteLength(value,'utf8')>MAX_RESPONSE)throw new Error('GLABS_RESPONSE_OVERSIZE');
@@ -143,11 +144,12 @@ function assertJobTarget(appPath:string,root:string,job:GLabsJob){
     throw new Error('GLABS_JOB_STALE_TARGET: review the current Native candidate.');
   return current;
 }
+export type GLabsDecoder=(bytes:Buffer)=>{png:Buffer;width:number;height:number};
 export interface ImageRequest{
   targetKey:string;prompt:string;model:string;aspectRatio:string;
   references:string[];authorized:boolean;acknowledgeUnknown?:boolean;regenerate?:boolean;
 }
-export async function submitGlabsImage(appPath:string,root:string,userData:string,cipher:CredentialCipher,input:ImageRequest){
+export async function submitGlabsImage(appPath:string,root:string,userData:string,cipher:CredentialCipher,input:ImageRequest,decode:GLabsDecoder){
   if(input.authorized!==true)throw new Error('GLABS_PAID_SUBMISSION_REQUIRES_EXPLICIT_OWNER_AUTHORIZATION');
   if(typeof input.prompt!=='string'||input.prompt.trim().length<12||input.prompt.length>18000)
     throw new Error('GLABS_PROMPT_REQUIRED: owner must confirm an actual image requirement.');
@@ -156,6 +158,10 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
     throw new Error('GLABS_MODEL_CONFIG_MISMATCH: save exact chosen model/ratio in Settings.');
   const {pending,match}=pendingTarget(appPath,root,input.targetKey);
   const state=readState(root),old=listGlabsJobs(root).filter(j=>j.token===pending.token&&j.targetKey===input.targetKey);
+  const shots=(pending.after as Record<string,unknown>).shots;
+  if(!['B1','B2','B3','B4'].includes(state.project.style)||state.brief.ratio!=='9:16'||
+    !Array.isArray(shots)||shots.some(item=>!pureObject(item)||typeof item.end!=='number'||item.end>=300))
+    throw new Error('GLABS_R3_SCOPE_INVALID: only verified B1–B4 portrait Native candidates below 300 seconds.');
   if(old.some(j=>['QUEUED','SUBMITTED','RUNNING','DOWNLOADED'].includes(j.status)))
     throw new Error('GLABS_EXISTING_ACTIVE_ATTEMPT');
   if(old.some(j=>j.status==='UNKNOWN')&&!input.acknowledgeUnknown)
@@ -170,6 +176,10 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
     const entry=(state.media??[]).find(m=>m.path===relative&&m.kind==='image'&&Boolean(m.rights?.trim()));
     if(!entry)throw new Error('GLABS_REFERENCE_UNAPPROVED');
     const checked=validatedImage(root,relative,entry.sha256);
+    const verified=decode(checked.bytes);
+    if(!verified||!Buffer.isBuffer(verified.png)||verified.width<1||verified.height<1||
+      verified.width>8192||verified.height>8192||imageMime(verified.png)!=='image/png')
+      throw new Error('GLABS_REFERENCE_IMAGE_UNDECODABLE');
     const ext=checked.mime==='image/jpeg'?'jpg':checked.mime==='image/png'?'png':'webp';
     return{path:relative,sha256:checked.sha256,mime:checked.mime,name:'ref_'+String(index+1).padStart(3,'0')+'.'+ext};
   });
@@ -223,11 +233,11 @@ async function downloadImage(settings:GLabsSettings,urlText:string,userData:stri
   if(!total)throw new Error('GLABS_DOWNLOAD_EMPTY');
   const data=Buffer.concat(parts.map(x=>Buffer.from(x))),mime=imageMime(data);
   const ct=res.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
-  if(ct&&ct!==mime)throw new Error('GLABS_MIME_SIGNATURE_MISMATCH');
+  if(!ct||ct!==mime)throw new Error('GLABS_MIME_SIGNATURE_MISMATCH');
   return{data,mime};
 }
 export async function pollGlabsImage(appPath:string,root:string,userData:string,cipher:CredentialCipher,id:string,
-  decode:(buffer:Buffer)=>{png:Buffer;width:number;height:number}){
+  decode:GLabsDecoder){
   const job=readJob(root,id);
   if(job.status==='VALIDATED'||job.status==='APPROVED'||job.status==='FAILED'||job.status==='CANCELLED')return job;
   try{assertJobTarget(appPath,root,job);}catch{job.status='STALE';writeJob(root,job);return job;}
@@ -272,4 +282,12 @@ export function approveGlabsImage(appPath:string,root:string,id:string,rights:st
   job.approved={rights:rights.trim(),path:imported.path,sha256:imported.sha256};
   job.status='APPROVED';writeJob(root,job);
   return{job,pending:bound};
+}
+
+/** Local cancellation is possible only before a provider POST has been submitted. */
+export function cancelQueuedGlabsImage(root:string,id:string){
+  const job=readJob(root,id);
+  if(job.status!=='QUEUED')throw new Error('GLABS_CANNOT_CANCEL_SUBMITTED: reconcile provider task before changing state.');
+  job.status='CANCELLED';job.reason='Owner cancelled before provider submission.';
+  writeJob(root,job);return job;
 }
