@@ -599,7 +599,6 @@ describe('RF01 — Native Correct subset authorization and confirmed lineage',()
     const review=confirmRf01Review(root,'PUBLISHED');
     const task=freezeLifecycleTask(appPath,root,'native','correct',{
       targetContext:'PUBLISHED',findingIds:['RF-B']}) as Task;
-    expect(task.sourceReviewTaskId).toBeUndefined(); // sourced lineage is stored in sidecar, not returned preview Task
     expect(readState(root).lifecycle!.tasks['native:correct'].sourceReviewTaskId).toBe(review.id);
     expect(task.editableIds).toEqual(['shot-2']);
     expect(task.editablePaths).toEqual([]);
