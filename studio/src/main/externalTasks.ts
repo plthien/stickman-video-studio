@@ -54,6 +54,38 @@ const projectContext = (state: StudioState, root: string, stage:Stage) => {
   if(stage==='script')return{...common,approved_script:state.approvedScript??null};
   return { ...common, approved_script: state.approvedScript ?? null, voice: state.voice ? { path: state.voice.path, sha256: state.voice.sha256, duration: state.voice.duration, stale: state.voice.stale, origin: state.voice.origin, profile_id: state.voice.profileId, profile_version: state.voice.profileVersion } : null, alignment: state.alignment ? { provenance: state.alignment.origin, audio_sha256: state.alignment.audioSha256, script_sha256: state.alignment.scriptSha256, words_sha256: state.alignment.wordsSha256, cues_sha256: state.alignment.cuesSha256, words, caption_cues: captionCues, approved_caption_cues: approvedCues, caption_review: state.alignment.captionReview ?? null } : null, media_ledger: state.media ?? [], assets, native_manifest: manifest };
 };
+/** Native prompt projection v1: keep sourceFingerprint() on full frozen evidence.
+ * This is an output-size change only; never rewrite the accepted alignment file. */
+function nativePromptProjection(context:ReturnType<typeof projectContext>){
+  const source=context as ReturnType<typeof projectContext> & {
+    alignment?:{words?:unknown;caption_cues?:unknown;approved_caption_cues?:unknown;
+      provenance?:unknown;words_sha256?:unknown;cues_sha256?:unknown;
+      audio_sha256?:unknown;script_sha256?:unknown};
+    native_manifest?:Record<string,unknown>;
+    media_ledger?:Array<{path:string;sha256:string;rights:string;kind:string}>;
+  };
+  const raw=source.alignment?.words;
+  const ordered=raw&&typeof raw==='object'&&!Array.isArray(raw)?
+    (raw as {words?:unknown}).words:null;
+  if(!Array.isArray(ordered)||!ordered.length||
+    ordered.some(row=>!row||typeof row.word!=='string'||typeof row.start!=='number'||typeof row.end!=='number'))
+    throw new Error('NATIVE_AUTHOR_WORD_PROJECTION_INVALID: source word evidence is missing.');
+  const words=ordered.map(row=>({word:row.word as string,start:row.start as number,end:row.end as number}));
+  const {assets:unusedAssets,media_ledger:unusedLedger,...common}=source;
+  void unusedAssets;void unusedLedger;
+  return {...common,
+    prompt_projection_version:'native-author-word-only-v1',
+    alignment:{
+      provenance:source.alignment?.provenance,
+      audio_sha256:source.alignment?.audio_sha256,script_sha256:source.alignment?.script_sha256,
+      words_sha256:source.alignment?.words_sha256,cues_sha256:source.alignment?.cues_sha256,
+      ordered_words:words,approved_caption_cues:source.alignment?.approved_caption_cues
+    },
+    media_ledger:(source.media_ledger??[]).map(row=>({path:row.path,sha256:row.sha256,
+      rights:row.rights,kind:row.kind})),
+    native_manifest:source.native_manifest
+  };
+}
 const sourceBundle=(appPath:string,style:string,stage:Stage)=>{
   const authority=compileAuthority(appPath,style,stage,'author');
   return authority.sources.map(source=>({
@@ -151,8 +183,23 @@ export function freezeTask(appPath: string, root: string, stage: Stage, rebuild 
   const revision = (prior?.revision ?? 0) + 1; const id = randomUUID();
   const response = stage === 'script'
     ? { schema: 'mode-b-external-result-v1', project_id: state.project.id, task_id: id, revision, input_sha256: inputSha256, stage, payload: { schema: 'mode-b-script-v1', sections: [{id:'opening',text:'At sunrise, a red kite escaped into the wind.'},{id:'resolution',text:'By evening, the kite returned carrying a small ribbon.'}], authoring: {creative_direction:{premise:'A lost kite becomes a small adventure.'},characters:[{id:'child',description:'One child follows the kite through the same town.'}],continuity:{rules:['The kite stays red throughout the story.']},style_decisions:{visual_intent:'Make the flight and return causally readable.'},voice_intentions:{tone:'Curious and warm.'},sound_intentions:{intent:'Wind rises with the kite, then settles.'},source_references:[]} } }
-    : { schema: 'mode-b-external-result-v1', project_id: state.project.id, task_id: id, revision, input_sha256: inputSha256, stage, payload: { manifest: {...(context as {native_manifest:Record<string,unknown>}).native_manifest,shots:[],captions:(context as {alignment:{approved_caption_cues:unknown}}).alignment.approved_caption_cues,voice:(context as {native_manifest:Record<string,unknown>}).native_manifest.voice}, shot_ledger: [{shot_id:'actual-shot-id',narrative_purpose:'actual purpose'}], sound_script: [{target_id:'actual-shot-id',intent:'actual story-led sound intent'}], asset_needs: [] } };
-  const prompt = stage==='native'?`# ORIGINAL MODE B MANUAL CHATGPT HANDOFF — VISUAL / SHOT / SOUND / NATIVE MANIFEST\n\nThis is a manual transport boundary in the original Mode B workflow. Do not invent a parallel engine. Do not call tools, return Markdown, executable code or local absolute paths. Public HTTP(S) research citation URLs are permitted ONLY inside script payload.authoring.source_references as inert metadata; never use remote URLs as native assets or executable paths. Return exactly one JSON object matching the frozen envelope below.\n\n## ACTUAL PROJECT CONTEXT\n${JSON.stringify(context, null, 2)}\n\n## REQUIRED RESPONSE ENVELOPE\n${JSON.stringify(response, null, 2)}\n\nThe RESPONSE ENVELOPE is a structural starting point, NOT a valid finished film. Fill every required shot, ledger and actual field with project-specific verified data; no placeholder values, invented media, or fabricated timing. The outer identity fields must be returned byte-for-value. For native authoring, payload.manifest is the original B1–B4 project.json v1 and must contain no Studio/task metadata. Ground every shot in the approved script and actual word/caption timing. List missing media honestly; never fabricate an existing asset path.\n\n## AUTHORITATIVE INSTALLED MODE B SOURCES (SOURCE-EXACT VERIFIED STAGE EXTRACTIONS)\n${sources.map(item => `\n--- BEGIN ${item.relative} [full SHA256 ${item.sha256}; extraction SHA256 ${item.extractionSha256}; revision ${item.extractionRevision}; sections ${item.headings.join(' | ') || 'complete original'}] ---\n${item.text}\n--- END ${item.relative} ---`).join('\n')}\n`:'';
+    : { schema: 'mode-b-external-result-v1', project_id: state.project.id, task_id: id, revision, input_sha256: inputSha256, stage, payload: { manifest: {...(context as {native_manifest:Record<string,unknown>}).native_manifest,shots:[],captions:(context as {alignment:{approved_caption_cues:unknown}}).alignment.approved_caption_cues,voice:(context as {native_manifest:Record<string,unknown>}).native_manifest.voice}, shot_ledger: [], sound_script: [], asset_needs: [] } };
+  const prompt = stage==='native'?`# ORIGINAL MODE B MANUAL CHATGPT HANDOFF — VISUAL / SHOT / SOUND / NATIVE MANIFEST\n\nThis is a manual transport boundary in the original Mode B workflow. Do not invent a parallel engine. Do not call tools, return Markdown, executable code or local absolute paths. Public HTTP(S) research citation URLs are permitted ONLY inside script payload.authoring.source_references as inert metadata; never use remote URLs as native assets or executable paths. Return exactly one JSON object matching the frozen envelope below.\n\n## NATIVE AUTHOR MISSION — VISUAL DIRECTION, NOT NARRATION TRANSCRIPTION
+- Read the COMPLETE approved script and the exact source-extracted Mode B authority below. Preserve established world, character identities, causal events and visual priorities.
+- Design a chronological sequence of meaningful Native Shots grounded in real ordered word start/end times and the accepted WAV duration; the accepted WAV, not the brief's aspirational duration, governs timing.
+- Each Shot must tell the viewer something through a visibly readable action/state and a meaningful change, not simply restate a narration sentence. Use actual B1–B4 supported layer types, keyframes/motion and compositions from the supplied source authority; never invent renderer capabilities.
+- Build deliberate camera/composition, object contacts, motion feasibility, continuity of identity, geography, pose, prop and screen direction across adjacent and NON-adjacent Shots.
+- Preserve native voice settings and the EXACT current approved caption cue array. Caption boundaries need not coincide with Shot boundaries. No fixed shot count, duration or one-Shot-per-caption rule.
+- In shot_ledger explain each real shot_id's meaning, visible state, important delta, composition, continuity, motion and constraints using the existing auxiliary ledger format; do not place unsupported extra metadata in manifest.shots.
+- In sound_script place only justified real SFX/ambience intentions tied to actual targets/events; distinguish proposed sounds from existing assets.
+- For EVERY generated image, declare a real manifest.shots[] image layer with an immutable id and safe missing project-relative path. The corresponding asset_needs must name the SAME real Shot ID, layer ID and expected path using the accepted auxiliary format. Describe actual content, orientation and continuity references. Never claim the image exists or fabricate an asset SHA.
+- Cross-check complete story coverage, temporal order, shot/layer ids, motion feasibility, character/object continuity and every G-Labs-compatible frozen image target. Only actual imported assets with rights and matching SHA may be described as present.
+- Return ONE COMPLETE Native candidate with manifest, shot_ledger, sound_script and asset_needs. Do not return Review/Correct/Recheck verdicts, a published project, fake CLI validation, media observations or a rendered film.
+
+## ACTUAL AUTHORING SOURCE (COMPACT PROJECTION v1; SOURCE EVIDENCE UNCHANGED)
+${JSON.stringify(nativePromptProjection(context), null, 2)}
+
+## REQUIRED RESPONSE ENVELOPE\n${JSON.stringify(response, null, 2)}\n\nThe RESPONSE ENVELOPE is a structural starting point, NOT a valid finished film. Fill every required shot, ledger and actual field with project-specific verified data; no placeholder values, invented media, or fabricated timing. The outer identity fields must be returned byte-for-value. For native authoring, payload.manifest is the original B1–B4 project.json v1 and must contain no Studio/task metadata. Ground every shot in the approved script and actual word/caption timing. List missing media honestly; never fabricate an existing asset path.\n\n## AUTHORITATIVE INSTALLED MODE B SOURCES (SOURCE-EXACT VERIFIED STAGE EXTRACTIONS)\n${sources.map(item => `\n--- BEGIN ${item.relative} [full SHA256 ${item.sha256}; extraction SHA256 ${item.extractionSha256}; revision ${item.extractionRevision}; sections ${item.headings.join(' | ') || 'complete original'}] ---\n${item.text}\n--- END ${item.relative} ---`).join('\n')}\n`:'';
   const corePrompt=stage==='script'?scriptAuthorPrompt(context,response,sources):prompt.replace('Do not call tools, return Markdown, executable code or local absolute paths.','Do not claim or use local CLI, local media, paid providers, or file inspection without actual access. Return no Markdown, executable code, secrets, or local absolute paths. Public research is permitted when demanded and evidence is cited.');
   const finalPrompt=corePrompt+'\n'+externalJsonFileDelivery(stage,'author',revision,id);
   const relative = `.studio/external/tasks/${stage}-${revision}-${id}.md`; const target = resolveProjectFile(root, relative); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, finalPrompt, { encoding: 'utf8', flag: 'wx' });
