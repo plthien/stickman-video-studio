@@ -30,7 +30,7 @@ export function currentNativeEvidence(root:string,state=readState(root),options:
   const wordsFile=resolveProjectFile(root,state.alignment.path),coreCuesFile=resolveProjectFile(root,state.alignment.captionsPath);
   if(!fs.existsSync(wordsFile)||hashFile(wordsFile)!==state.alignment.wordsSha256)throw new Error('BLOCKED: WORDS evidence is missing or changed.');
   if(!fs.existsSync(coreCuesFile)||hashFile(coreCuesFile)!==state.alignment.cuesSha256)throw new Error('BLOCKED: original caption evidence is missing or changed.');
-  const approved=approvedCaptionCues(root),review=state.alignment.captionReview;if(!review)throw new Error('REVIEW_REQUIRED: approved caption revision is missing.');
+  const approved=approvedCaptionCues(root),review=state.alignment.captionReview;if(!review)throw new Error('REVIEW_REQUIRED: verified caption revision (auto or manual) is missing.');
   const approvedFile=resolveProjectFile(root,review.path);if(!fs.existsSync(approvedFile)||hashFile(approvedFile)!==review.sha256)throw new Error('BLOCKED: approved caption revision bytes changed.');
   if(JSON.stringify(manifest.captions)!==JSON.stringify(approved))throw new Error('BLOCKED: native manifest captions do not match the approved caption revision.');
   const timing=nativeVoiceTiming(root,state),effectiveDuration=timing.timelineDuration,scopeSeconds=options.seconds===undefined?null:Math.min(effectiveDuration,options.seconds);
