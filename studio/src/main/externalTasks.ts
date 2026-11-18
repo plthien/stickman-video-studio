@@ -298,6 +298,21 @@ export function validateManifest(state: StudioState, root: string, payload: Reco
   const duration=timing.timelineDuration;let captionEnd=0;
   for(const item of manifest.captions as unknown[]){const cue=item as Record<string,unknown>,start=Number(cue.start),end=Number(cue.end);if(!Number.isFinite(start)||!Number.isFinite(end)||start<captionEnd||end<=start||end>duration+.05||typeof cue.text!=='string'||!cue.text.trim())throw new Error('Native captions must be finite, monotone and within accepted narration.');captionEnd=end}
   let shotEnd=0;for(const item of manifest.shots as unknown[]){const shot=item as Record<string,unknown>,start=Number(shot.start),end=Number(shot.end);if(!Number.isFinite(start)||!Number.isFinite(end)||start<shotEnd||end<=start||end>duration+.05)throw new Error('Native shots must be finite, non-overlapping and within accepted narration.');shotEnd=end}
+  // Structural identity check only: preserve the existing freeform asset_needs
+  // format, but entries that explicitly name Shot+Layer must refer to a REAL
+  // Native image target with the SAME stated expected path (when supplied).
+  const imageTargets=nativeRefs(manifest).filter(item=>item.kind==='image');
+  for(const value of payload.asset_needs as unknown[]){
+    if(!value||typeof value!=='object'||Array.isArray(value))continue;
+    const row=value as Record<string,unknown>;
+    const shotId=row.shot_id??row.shotId,layerId=row.layer_id??row.layerId;
+    if(typeof shotId!=='string'||typeof layerId!=='string')continue;
+    const existing=imageTargets.filter(item=>item.shotId===shotId&&item.layerId===layerId);
+    if(existing.length!==1)throw new Error('NATIVE_ASSET_NEED_TARGET_INVALID: referenced Shot/image layer does not exist.');
+    const expected=row.path??row.expected_path??row.asset_path;
+    if(expected!==undefined&&(typeof expected!=='string'||expected!==existing[0].path))
+      throw new Error('NATIVE_ASSET_NEED_PATH_MISMATCH: expected asset path differs from actual image layer.');
+  }
   return {manifest,shotLedger:payload.shot_ledger??[],soundScript:payload.sound_script??[],assetNeeds:payload.asset_needs??[],missing:collectMissing(root,state,manifest)};
 }
 interface PendingImport {
