@@ -428,17 +428,37 @@ function imageTargetIdentity(
     throw new Error('GLABS_TARGET_NOT_FROZEN');
   const shot=(manifest.shots as Array<Record<string,unknown>>)[reference.shotIndex];
   if(!shot||shot.id!==reference.shotId)throw new Error('GLABS_TARGET_SHOT_IDENTITY_INVALID');
+  // Scope documented freeform legacy rows by explicit Shot/Layer/path. Editing
+  // another legacy asset_need must never invalidate this image's job.
   const aux=(rows:unknown)=>Array.isArray(rows)?rows.filter(value=>{
-    if(!value||typeof value!=='object'||Array.isArray(value))return true;
-    const row=value as Record<string,unknown>;
+    let row:Record<string,unknown>;
+    if(typeof value==='string'){
+      const pick=(key:string)=>new RegExp('(?:^|\\|)\\s*'+key+'=([^|]+)').exec(value)?.[1]?.trim();
+      row={shot_id:pick('shot_id'),layer_id:pick('layer_id'),
+        expected_path:pick('expected_path')??pick('asset_path')??pick('path')};
+    }else if(value&&typeof value==='object'&&!Array.isArray(value))row=value as Record<string,unknown>;
+    else return true;
     const shotId=row.shot_id??row.shotId??row.target_shot_id??row.targetShotId;
     const layerId=row.layer_id??row.layerId??row.target_layer_id??row.targetLayerId;
     const expectedPath=row.path??row.expected_path??row.asset_path;
-    if(typeof shotId==='string')return shotId===reference.shotId;
-    if(typeof layerId==='string')return layerId===reference.layerId;
-    if(typeof expectedPath==='string')return expectedPath===reference.path;
-    return true; // Unscoped global visual instructions affect all image targets.
+    if(typeof shotId==='string'&&shotId!==reference.shotId)return false;
+    if(typeof layerId==='string'&&layerId!==reference.layerId)return false;
+    if(typeof expectedPath==='string'&&expectedPath!==reference.path)return false;
+    return true; // Truly unscoped instruction can affect every image.
   }):[];
+  const findLayer=(layers:unknown[]):Record<string,unknown>|null=>{
+    for(const value of layers){
+      if(!value||typeof value!=='object'||Array.isArray(value))continue;
+      const row=value as Record<string,unknown>;
+      if(row.type==='image'&&row.id===reference.layerId&&row.path===reference.path)return row;
+      if(Array.isArray(row.children)){const found=findLayer(row.children);if(found)return found;}
+    }
+    return null;
+  };
+  const targetLayer=findLayer(Array.isArray(shot.layers)?shot.layers:[]);
+  if(!targetLayer)throw new Error('GLABS_TARGET_LAYER_IDENTITY_INVALID');
+  const {layers:_otherLayers,...shotContext}=shot;
+  void _otherLayers; // Other layers are not this target's creative instructions.
   const fingerprint=sha(JSON.stringify({
     project_id:state.project.id,author_task_id:authorTaskId,
     author_task_revision:state.tasks?.native?.revision,draft_token:token,
@@ -446,7 +466,8 @@ function imageTargetIdentity(
     opening:reference.shotIndex===0?manifest.opening??null:null,
     shot_index:reference.shotIndex,shot_id:reference.shotId,
     layer_id:reference.layerId,expected_path:reference.path,
-    shot,shot_ledger:aux(artifact.shot_ledger),asset_needs:aux(artifact.asset_needs)
+    shot_context:shotContext,target_layer:targetLayer,
+    shot_ledger:aux(artifact.shot_ledger),asset_needs:aux(artifact.asset_needs)
   }));
   return {fingerprint,authorTaskId,draftRevision,targetKey,
     shotId:reference.shotId,layerId:reference.layerId,path:reference.path};
