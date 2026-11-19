@@ -36,7 +36,7 @@ export function StoryboardWorkspace(){
   });
   const active=candidateShots.length?candidateShots:(native?.projection?.shots??[]);
   const index=Math.min(selected,Math.max(0,active.length-1)),shot=active[index];
-  useEffect(()=>{const scope=captureProjectSession();let mounted=true;setPending(null);setTargetKey('');setRights('');setError('');setGlabsJobs([]);setImageUrls({});setPreviewReady({});setPreviewErrors({});setPreviewAttempts({});setImagePrompt('');setReferencePaths('');setGlabsError('');if(!id||!scope||!window.studio)return()=>{mounted=false};void window.studio.pendingMedia(id).then(value=>{if(mounted&&isCurrentProjectSession(scope))setPending(value as PendingTargets|null)}).catch(reason=>{if(mounted&&isCurrentProjectSession(scope)){setPending(null);setError('Pending media ERROR: '+(reason instanceof Error?reason.message:String(reason)))}});return()=>{mounted=false};},[id,native?.external?.native?.revision]);
+  useEffect(()=>{const scope=captureProjectSession();let mounted=true;setPending(null);setTargetKey('');setRights('');setError('');setGlabsJobs([]);setImageUrls({});setPreviewReady({});setPreviewErrors({});setPreviewAttempts({});setImagePrompt('');setReferencePaths('');setGlabsError('');if(!id||!scope||!window.studio)return()=>{mounted=false};void window.studio.pendingMedia(id).then(value=>{if(mounted&&isCurrentProjectSession(scope))setPending(value as PendingTargets|null)}).catch(reason=>{if(mounted&&isCurrentProjectSession(scope)){setPending(null);setError('Pending media ERROR: '+(reason instanceof Error?reason.message:String(reason)))}});return()=>{mounted=false};},[id,native?.nativeDraft?.token,native?.nativeDraft?.revision,native?.external?.native?.revision]);
   const refreshImages=async(scope=captureProjectSession())=>{
     if(!scope||!window.studio?.glabsJobs)return;
     const jobs=await window.studio.glabsJobs(scope.projectId);
@@ -56,7 +56,7 @@ export function StoryboardWorkspace(){
     void window.studio.glabsSettings().then(value=>{if(isCurrentProjectSession(scope))setGlabsConfig(value.config);})
       .catch(e=>{if(isCurrentProjectSession(scope))setGlabsError(String(e));});
     void refreshImages(scope).catch(e=>{if(isCurrentProjectSession(scope))setGlabsError(String(e));});
-  },[id,native?.external?.native?.revision]);
+  },[id,native?.nativeDraft?.token,native?.nativeDraft?.revision,native?.external?.native?.revision]);
   const available=pending?.missing??[];
   const visibleTargets=available.filter(item=>!shot||item.kind!=='image'||item.shotId===shot.id);
   const target=available.find(item=>item.key===targetKey);
