@@ -124,7 +124,7 @@ export function compileImageJobSpecs(input:{
 }):ImageJobSpec[]{
   const {projectId,style,authorTaskId,draftRevision,token,pending,profile,fingerprints}=input;
   const rows=pending.assetNeeds??[],ledgers=pending.shotLedger??[];
-  const targets=pending.missing.filter(item=>item.kind==='image'&&item.shotId&&item.layerId);
+  const targets=pending.missing.filter(item=>item.kind==='image');
   const paths=new Map<string,number>();
   for(const item of targets)paths.set(item.path,(paths.get(item.path)??0)+1);
   const shots=Array.isArray(pending.after?.shots)?pending.after!.shots!:[];
@@ -134,6 +134,13 @@ export function compileImageJobSpecs(input:{
     const layerExists=object(shot)&&Array.isArray(shot.layers)&&
       findExactLayer(shot.layers,target.layerId!,target.path);
     const matching=rows.filter(row=>{const fields=needFields(row);return fields?targetMatch(fields,target,paths):false;});
+    const conflictingPath=rows.some(value=>{
+      const row=needFields(value);if(!row)return false;
+      const shotId=idOf(row,['shot_id','shotId','target_shot_id','targetShotId']);
+      const layerId=idOf(row,['layer_id','layerId','target_layer_id','targetLayerId']);
+      const expected=idOf(row,['expected_path','expectedPath','asset_path','assetPath','path']);
+      return shotId===target.shotId&&layerId===target.layerId&&Boolean(expected)&&expected!==target.path;
+    });
     const parsed=matching.map(needFields).filter((value):value is Row=>Boolean(value));
     const descriptions=[...new Set(parsed.map(row=>field(row,['content','image_description','imageDescription','asset_description','assetDescription','description'])).filter(Boolean))];
     const dimensions=[...new Set(parsed.map(row=>field(row,['orientation','framing','canvas'])).filter(Boolean))];
@@ -142,13 +149,15 @@ export function compileImageJobSpecs(input:{
     const composition=object(ledger)?field(ledger,['composition']):'';
     const sourceDescription=descriptions.length===1?descriptions[0]:'';
     let state:PreparedState='READY',reason='';
-    if(!layerExists||!fingerprint){state='BLOCKED';reason='Exact current Shot/Layer/path or creative fingerprint is invalid.';}
+    if(!layerExists||!fingerprint||!target.shotId||!target.layerId){state='BLOCKED';reason='Exact current Shot/Layer/path or creative fingerprint is invalid.';}
+    else if(conflictingPath){state='BLOCKED';reason='Conflicting Native expected_path for the exact Shot/Layer; targeted Native Correct required.';}
     else if(matching.length===0){state='NEEDS_OWNER_REVIEW';reason='No exact matching image description in asset_needs.';}
     else if(descriptions.length===0){state='NEEDS_OWNER_REVIEW';reason='Matching asset_needs has no explicit image content/description.';}
     else if(descriptions.length!==1||dimensions.length>1||continuity.length>1){
       state='NEEDS_OWNER_REVIEW';reason='Conflicting descriptions/orientations/continuity for this exact target.';
     }
     const sourceLedger=composition;
+    const declaredKind=parsed.map(row=>field(row,['asset_kind','assetKind'])).find(value=>['background','character','pose','prop','object','other'].includes(value))??'other';
     const sections=[
       'APPROVED MODE B STYLE '+style+' ['+profile.path+'; SHA256 '+profile.sha256+']',
       profile.guidance,
@@ -173,7 +182,7 @@ export function compileImageJobSpecs(input:{
     }
     return{
       assetKey:target.key,targetKeys:[target.key],expectedPaths:[target.path],
-      targetKey:target.key,shotId:target.shotId!,layerId:target.layerId!,path:target.path,assetKind:'other',
+      targetKey:target.key,shotId:target.shotId??'',layerId:target.layerId??'',path:target.path,assetKind:declaredKind,
       state,reason,prompt,promptSha256:prompt?sha(prompt):'',
       sourceDescription,sourceLedger,sourceRows:matching,
       styleProfileRef:{id:style,path:profile.path,sha256:profile.sha256},
@@ -192,7 +201,7 @@ function findExactLayer(layers:unknown[],layerId:string,pathValue:string):boolea
   }
   return false;
 }
-export function prepareNativeImages(appPath:string,root:string){
+export function prepareNativeImages(appPath:string,root:string,persist=false){
   const state=readState(root),draft=readNativeDraft(root,state),pending=getPendingMedia(appPath,root);
   if(!draft||!pending||draft.token!==pending.token)
     return{status:'NO_NATIVE_DRAFT' as const,style:state.project.style,revision:0,token:'',jobs:[] as ImageJobSpec[],shotCount:0,imageOccurrences:0,uniquePaths:0};
@@ -206,9 +215,15 @@ export function prepareNativeImages(appPath:string,root:string){
   const profile=loadImageStyleProfile(appPath,style);
   const jobs=compileImageJobSpecs({projectId:state.project.id,style,authorTaskId:draft.authorTaskId,draftRevision:draft.revision,
     token:draft.token,pending,profile,fingerprints,overrides:overrides.items});
-  return{status:'PRE_MEDIA_PROJECTION' as const,style,revision:draft.revision,token:draft.token,
+  const result={status:'PRE_MEDIA_PROJECTION' as const,style,revision:draft.revision,token:draft.token,
     jobs,shotCount:Array.isArray(pending.after?.shots)?pending.after!.shots!.length:0,imageOccurrences:image.length,
     uniquePaths:new Set(image.map(target=>target.path)).size};
+  if(persist)atomicJson(resolveProjectFile(root,'.studio/storyboard/prepared-image-jobs-v1.json'),{
+    schema:'storyboard-prepared-image-jobs-v1',projectId:state.project.id,authorTaskId:draft.authorTaskId,
+    draftToken:draft.token,revision:draft.revision,artifactSha256:draft.sha256,
+    preparedAt:new Date().toISOString(),...result
+  });
+  return result;
 }
 export function saveNativeImagePrompt(appPath:string,root:string,input:{
   targetKey:string;fingerprint:string;prompt:string;references:string[]
@@ -223,5 +238,5 @@ export function saveNativeImagePrompt(appPath:string,root:string,input:{
   const state=readState(root),file=readOverrides(root,state.project.id);
   file.items[input.targetKey]={creativeFingerprint:identity.fingerprint,prompt:input.prompt.trim(),references:[...input.references]};
   atomicJson(overridesFile(root),file);
-  return prepareNativeImages(appPath,root);
+  return prepareNativeImages(appPath,root,true);
 }
