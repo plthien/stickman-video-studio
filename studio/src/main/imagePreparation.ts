@@ -166,7 +166,7 @@ export function compileImageJobSpecs(input:{
     // structural blocker or a missing/integrity-failed style authority.
     if(validOwner&&state==='NEEDS_OWNER_REVIEW'){state='READY';reason='Owner reviewed and supplied this exact target prompt.';}
     if(style==='B4'&&state==='READY'){
-      const references=validOwner&&Array.isArray(owner.references)?owner.references:[];
+      const references=validOwner&&Array.isArray(owner?.references)?owner.references:[];
       if(!references.some(value=>profile.anchors.some(anchor=>value==='@modeb/b4/'+anchor.id))){
         state='NEEDS_OWNER_REVIEW';reason='B4 requires an explicit approved style-lock reference. Select a verified installed B4 anchor.';
       }
@@ -177,7 +177,7 @@ export function compileImageJobSpecs(input:{
       state,reason,prompt,promptSha256:prompt?sha(prompt):'',
       sourceDescription,sourceLedger,sourceRows:matching,
       styleProfileRef:{id:style,path:profile.path,sha256:profile.sha256},
-      references:validOwner&&Array.isArray(owner.references)?owner.references:[],
+      references:validOwner&&Array.isArray(owner?.references)?owner.references:[],
       styleAnchors:profile.anchors,
       draftIdentity:{projectId,authorTaskId,token,revision:draftRevision,creativeFingerprint:fingerprint},
       occurrencesAtPath:paths.get(target.path)??1,ownerEdited:Boolean(validOwner)
