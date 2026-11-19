@@ -70,6 +70,11 @@ export function StoryboardWorkspace(){
   const dirty=(draftPrompts[identity]!==undefined&&draftPrompts[identity]!==spec?.prompt)||
     (draftReferences[identity]!==undefined&&draftReferences[identity]!==spec?.references.join(','));
   const ready=spec?.state==='READY'&&!dirty;
+  const selectedAttempts=jobs.filter(job=>job.targetKey===target?.key&&job.token===pending?.token);
+  const hasUncertainAttempt=selectedAttempts.some(job=>job.status==='UNKNOWN');
+  const hasActiveAttempt=selectedAttempts.some(job=>['SUBMITTED','RUNNING','DOWNLOADED','QUEUED'].includes(job.status));
+  const hasPreviousAttempt=selectedAttempts.length>0;
+  const canSubmit=Boolean(ready&&!hasUncertainAttempt&&!hasActiveAttempt);
   const shotJobs=jobs.filter(job=>job.shotId===shotId);
   const previewIdentity=(job:ImageJob)=>[id,job.id,job.token,job.staged?.sha256??'-',urls[job.id]??'-',previewAttempts[job.id]??0].join('|');
   const prepare=async()=>{
@@ -99,16 +104,20 @@ export function StoryboardWorkspace(){
       setError(spec?.reason||'Exact source-backed image requirement is not ready.');return;
     }
     const attempts=jobs.filter(job=>job.targetKey===target.key&&job.token===pending?.token);
+    if(attempts.some(job=>job.status==='UNKNOWN')){
+      setError('GLABS_UNKNOWN_MAY_HAVE_CHARGED: reconcile the existing attempt before requesting another paid image. No automatic retry is authorized.');return;
+    }
     if(attempts.some(job=>['SUBMITTED','RUNNING','DOWNLOADED','QUEUED'].includes(job.status))){
       setError('An image job is already active for this exact target. Resume or inspect it.');return;
     }
+    if(attempts.length&&!window.confirm('Regenerate this exact image target? This starts a NEW potentially paid request; the previous attempt will not be reused.'))return;
     setBusy(true);setError('');
     try{
       // One click = at most ONE paid submission. Main owns Electron paid dialog,
       // rights/SHA validation, draft fingerprint, UNKNOWN and no-retry semantics.
       await window.studio.glabsGenerate(scope.projectId,{targetKey:target.key,prompt:ownerPrompt.trim(),
         model:config.model,aspectRatio:config.aspectRatio,references:refs(ownerRefs),authorized:true,
-        regenerate:attempts.length>0,acknowledgeUnknown:attempts.some(job=>job.status==='UNKNOWN'),
+        regenerate:attempts.length>0,acknowledgeUnknown:false,
         preparedFingerprint:spec.draftIdentity.creativeFingerprint});
       if(isCurrentProjectSession(scope))await refresh(scope);
     }catch(e){if(isCurrentProjectSession(scope))setError(message(e));}
@@ -181,7 +190,9 @@ export function StoryboardWorkspace(){
         </Select></Field>}
         <div className="info">G-Labs model: {config?.model??'Configure Settings first'} · Output ratio: {config?.aspectRatio??'unknown'} · Price: unavailable · Paid submissions authorized: maximum 1 per click.</div>
         {dirty&&<div className="info">Save this target's edit before paid generation. Other Shot/Layer prompts remain unchanged.</div>}
-        <div className="actions"><Button variant="primary" disabled={busy||!config||!ready||!ownerPrompt.trim()} onClick={()=>void generate()}>Generate Selected (1 paid request)</Button></div>
+        {hasUncertainAttempt&&<div className="info error" role="alert">Prior G-Labs job has UNKNOWN billing status. Check/reconcile that attempt; this screen will not authorize a new paid request automatically.</div>}
+        {hasActiveAttempt&&<div className="info">An image job is already active. Check its status or inspect the result instead of resubmitting.</div>}
+        <div className="actions"><Button variant="primary" disabled={busy||!config||!canSubmit||!ownerPrompt.trim()} onClick={()=>void generate()}>{hasPreviousAttempt?'Regenerate Selected (1 NEW paid request)':'Generate Selected (1 paid request)'}</Button></div>
       </div>}
       {shotJobs.some(job=>job.status==='VALIDATED')&&<Field label="Owner-confirmed rights/source"><Input value={rights} onChange={event=>setRights(event.target.value)} placeholder="Owned/licensed provider image and source"/></Field>}
       {shotJobs.length>0&&<div className="info">Actual generated-image previews (never automatically approved)</div>}
