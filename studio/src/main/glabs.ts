@@ -252,6 +252,11 @@ export function invalidateGlabsJobsAfterNativeCorrection(appPath:string,root:str
     }
   }
 }
+/** Show current job eligibility on Storyboard refresh, without new POSTs or auto-retries. */
+export function reconcileGlabsJobs(appPath:string,root:string):GLabsJob[]{
+  invalidateGlabsJobsAfterNativeCorrection(appPath,root);
+  return listGlabsJobs(root);
+}
 export type GLabsDecoder=(bytes:Buffer)=>{png:Buffer;width:number;height:number};
 export interface ImageRequest{
   targetKey:string;prompt:string;model:string;aspectRatio:string;
