@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import type {CredentialCipher} from './elevenlabsCredentials.js';
-import {getPendingMedia,importMediaFile,fulfillMedia,nativeImageTargetIdentity} from './externalTasks.js';
+import {getPendingMedia,importMediaFile,fulfillMedia,nativeImageTargetIdentity,readNativeDraft} from './externalTasks.js';
 import {prepareNativeImages,loadImageStyleProfile} from './imagePreparation.js';
 import {atomicJson,nativeSkillRoot,readState,resolveProjectFile,sha,strictJson} from './services.js';
 
@@ -254,6 +254,8 @@ export function invalidateGlabsJobsAfterNativeCorrection(appPath:string,root:str
 }
 /** Show current job eligibility on Storyboard refresh, without new POSTs or auto-retries. */
 export function reconcileGlabsJobs(appPath:string,root:string):GLabsJob[]{
+  // Published projects have no active DRAFT; preserve their historical approvals.
+  if(!readNativeDraft(root))return listGlabsJobs(root);
   invalidateGlabsJobsAfterNativeCorrection(appPath,root);
   return listGlabsJobs(root);
 }
