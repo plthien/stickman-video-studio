@@ -92,6 +92,7 @@ export function StoryboardWorkspace(){
     try{
       const next=await window.studio.saveImagePrompt(scope.projectId,{
         targetKey:spec.targetKey,fingerprint:spec.draftIdentity.creativeFingerprint,
+        styleSha256:spec.styleProfileRef.sha256,
         prompt:ownerPrompt.trim(),references:refs(ownerRefs)
       });
       if(isCurrentProjectSession(scope))setPrepared(next);
