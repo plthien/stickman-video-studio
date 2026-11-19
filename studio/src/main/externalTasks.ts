@@ -5,6 +5,7 @@ import { atomicJson, nativeSkillRoot, readState, resolveProjectFile, runProcess,
 import { approvedCaptionCues, nativeVoiceTiming } from './captionReview.js';
 import { rejectNativeUnsafePaths, validateAuthoring } from './sourceCitations.js';
 import { compileAuthority } from './externalAuthority.js';
+import {imageRequirementFingerprintSources} from './imageRequirements.js';
 
 export function externalOutputFilename(
   stage:Stage,operation:'author'|'review'|'correct'|'recheck'|'media-review',
@@ -467,7 +468,9 @@ function imageTargetIdentity(
     shot_index:reference.shotIndex,shot_id:reference.shotId,
     layer_id:reference.layerId,expected_path:reference.path,
     shot_context:shotContext,target_layer:targetLayer,
-    shot_ledger:aux(artifact.shot_ledger),asset_needs:aux(artifact.asset_needs)
+    shot_ledger:aux(artifact.shot_ledger),
+    asset_needs:imageRequirementFingerprintSources(Array.isArray(artifact.asset_needs)?artifact.asset_needs:[],
+      {shotId:reference.shotId,layerId:reference.layerId,path:reference.path})
   }));
   return {fingerprint,authorTaskId,draftRevision,targetKey,
     shotId:reference.shotId,layerId:reference.layerId,path:reference.path};
