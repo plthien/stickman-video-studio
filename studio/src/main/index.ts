@@ -40,7 +40,7 @@ function registerIpc() {
   ipcMain.handle('project:open', (_event, root: string) => { const state = reconcileScriptActivation(root); registerRoot(root); saveRecent(state.project); reconcileJob(root); return projectSnapshot(root,app.getAppPath()); });
   ipcMain.handle('project:state', (_event, id: string) => { const root=rootFor(id); reconcileScriptActivation(root); return projectSnapshot(root,app.getAppPath()); });
   ipcMain.handle('project:saveBrief', (_event, id: string, brief: StudioState['brief'] & { title: string }) => { const root = rootFor(id), state = readState(root); state.project.title = brief.title.trim(); state.brief = { topic: brief.topic, language: brief.language, ratio: '9:16', targetDuration: brief.targetDuration, audience: brief.audience, purpose: brief.purpose }; state.project.updatedAt = new Date().toISOString(); writeState(root, state); saveRecent(state.project); return projectSnapshot(root,app.getAppPath()); });
-  ipcMain.handle('storyboard:prepareImages',(_event,id:string)=>prepareNativeImages(app.getAppPath(),rootFor(id)));
+  ipcMain.handle('storyboard:prepareImages',(_event,id:string,persist=false)=>prepareNativeImages(app.getAppPath(),rootFor(id),persist===true));
   ipcMain.handle('storyboard:saveImagePrompt',(_event,id:string,input:Parameters<typeof saveNativeImagePrompt>[2])=>saveNativeImagePrompt(app.getAppPath(),rootFor(id),input));
   ipcMain.handle('glabs:settings',()=>({config:glabsSettings(app.getPath('userData')),credential:glabsCredentialStatus(app.getPath('userData'),safeStorage)}));
   ipcMain.handle('glabs:configure',(_event,value:GLabsSettings)=>saveGlabsSettings(app.getPath('userData'),value));
