@@ -154,6 +154,123 @@ describe('StoryBoard Phase-1 source-grounded compiler and exact Native media que
       fingerprint:job.draftIdentity.creativeFingerprint,prompt:job.prompt,references:[selected]});
     expect(after.jobs[0]).toMatchObject({state:'READY',references:[selected]});
   });
+  it('F02-01 actual Native positional image brief compiles exact content, not availability',()=>{
+    const {root,payload}=staged();
+    const positional='MISSING_REQUIRED_VISUAL | assets/images/missing.png | Hand-drawn red city bus, front facing screen left, muted accents, isolated transparent raster | Planned asset; no media is present';
+    payload.asset_needs=[positional];
+    const draft=readNativeDraft(root)!;
+    publishNativeDraftCorrection(appPath,root,draft.sha256,payload,{
+      correctTaskId:'positional-single',reviewTaskId:'review',editableIds:['shot-1'],editablePaths:[],findingIds:['P1']
+    });
+    const job=prepareNativeImages(appPath,root).jobs[0];
+    expect(job.state).toBe('READY');
+    expect(job.sourceDescription).toBe('Hand-drawn red city bus, front facing screen left, muted accents, isolated transparent raster');
+    expect(job.prompt).toContain(job.sourceDescription);
+    expect(job.prompt).not.toContain('Planned asset; no media is present');
+    expect(job.sourceRows).toEqual([positional]);
+  });
+  it('F02-02 one positional path requirement safely serves two real occurrences without deduplicating paid jobs',()=>{
+    const {root,payload}=staged('B1',true,false,true);
+    const source='MISSING_REQUIRED_VISUAL | assets/images/missing.png | Same exact owner-approved red kite identity, no text, isolated transparent shape | Planned asset; no media is present';
+    payload.asset_needs=[source];
+    const draft=readNativeDraft(root)!;
+    publishNativeDraftCorrection(appPath,root,draft.sha256,payload,{
+      correctTaskId:'positional-shared',reviewTaskId:'review',editableIds:['shot-1','shot-2'],editablePaths:[],findingIds:['P1']
+    });
+    const result=prepareNativeImages(appPath,root);
+    expect(result.imageOccurrences).toBe(2);
+    expect(result.uniquePaths).toBe(1);
+    expect(result.jobs.map(job=>job.targetKey)).toEqual(['image:0:image-1','image:1:image-2']);
+    expect(result.jobs.map(job=>job.state)).toEqual(['READY','READY']);
+    expect(result.jobs.every(job=>job.sourceRows.length===1&&job.sourceRows[0]===source)).toBe(true);
+    expect(new Set(result.jobs.map(job=>job.targetKey)).size).toBe(2);
+  });
+  it('F02-03 contradictory positional briefs for same path require owner review, never first-match',()=>{
+    const {root,payload}=staged();
+    const first='MISSING_REQUIRED_VISUAL | assets/images/missing.png | Red kite with a visible thin string | Planned asset; no media is present';
+    const other='MISSING_REQUIRED_VISUAL | assets/images/missing.png | Blue bus with windows, not a kite | Planned asset; no media is present';
+    payload.asset_needs=[first,other];
+    const draft=readNativeDraft(root)!;
+    publishNativeDraftCorrection(appPath,root,draft.sha256,payload,{
+      correctTaskId:'positional-conflict',reviewTaskId:'review',editableIds:['shot-1'],editablePaths:[],findingIds:['P1']
+    });
+    const job=prepareNativeImages(appPath,root).jobs[0];
+    expect(job.state).toBe('NEEDS_OWNER_REVIEW');
+    expect(job.prompt).toBe('');
+    expect(job.reason).toMatch(/Conflicting/);
+    expect(job.sourceRows).toEqual([first,other]);
+  });
+  it('F03-01 changing positional Shot B requirement preserves Shot A fingerprint and owner override',()=>{
+    const {root,payload}=staged('B1',true);
+    payload.asset_needs=[
+      'MISSING_REQUIRED_VISUAL | assets/images/missing.png | Red kite exact owner identity | Planned asset; no media is present',
+      'MISSING_REQUIRED_VISUAL | assets/images/late.png | Navy backpack with attached strap | Planned asset; no media is present'
+    ];
+    const firstDraft=readNativeDraft(root)!;
+    publishNativeDraftCorrection(appPath,root,firstDraft.sha256,payload,{
+      correctTaskId:'positional-initial',reviewTaskId:'review',editableIds:['shot-1','shot-2'],editablePaths:[],findingIds:['P1']
+    });
+    const before=prepareNativeImages(appPath,root);
+    const a=before.jobs[0],b=before.jobs[1];
+    saveNativeImagePrompt(appPath,root,{targetKey:a.targetKey,
+      fingerprint:a.draftIdentity.creativeFingerprint,styleSha256:a.styleProfileRef.sha256,
+      prompt:'Owner-approved red kite with a thin string',references:[]});
+    const current=readNativeDraft(root)!;
+    const corrected=structuredClone(current.artifact);
+    corrected.asset_needs[1]='MISSING_REQUIRED_VISUAL | assets/images/late.png | Navy satchel replacing the old backpack | Planned asset; no media is present';
+    publishNativeDraftCorrection(appPath,root,current.sha256,corrected,{
+      correctTaskId:'positional-only-b',reviewTaskId:'review',editableIds:['shot-2'],editablePaths:[],findingIds:['P1']
+    });
+    const after=prepareNativeImages(appPath,root);
+    expect(after.jobs[0].draftIdentity.creativeFingerprint).toBe(a.draftIdentity.creativeFingerprint);
+    expect(after.jobs[1].draftIdentity.creativeFingerprint).not.toBe(b.draftIdentity.creativeFingerprint);
+    expect(after.jobs[0].ownerEdited).toBe(true);
+    expect(after.jobs[1].prompt).toContain('Navy satchel replacing');
+  });
+  it('F03-02 change to shared positional asset invalidates every dependent target, not just the first',()=>{
+    const {root,payload}=staged('B1',true,false,true);
+    payload.asset_needs=[
+      'MISSING_REQUIRED_VISUAL | assets/images/missing.png | Same shared red kite pose | Planned asset; no media is present'
+    ];
+    const draft=readNativeDraft(root)!;
+    publishNativeDraftCorrection(appPath,root,draft.sha256,payload,{
+      correctTaskId:'shared-original',reviewTaskId:'review',editableIds:['shot-1','shot-2'],editablePaths:[],findingIds:['P1']
+    });
+    const before=prepareNativeImages(appPath,root);
+    const current=readNativeDraft(root)!;
+    const changed=structuredClone(current.artifact);
+    changed.asset_needs[0]='MISSING_REQUIRED_VISUAL | assets/images/missing.png | Same shared kite revised to yellow color | Planned asset; no media is present';
+    publishNativeDraftCorrection(appPath,root,current.sha256,changed,{
+      correctTaskId:'shared-change',reviewTaskId:'review',editableIds:['shot-1','shot-2'],editablePaths:[],findingIds:['P1']
+    });
+    const after=prepareNativeImages(appPath,root);
+    expect(after.jobs.every((job,index)=>
+      job.draftIdentity.creativeFingerprint!==before.jobs[index].draftIdentity.creativeFingerprint)).toBe(true);
+    expect(after.jobs.every(job=>job.prompt.includes('revised to yellow color'))).toBe(true);
+  });
+  it('F04-01 revised installed B1 authority invalidates override but never mutates Native DRAFT',()=>{
+    const {root}=staged();
+    const before=prepareNativeImages(appPath,root).jobs[0];
+    const draftSha=readNativeDraft(root)!.sha256;
+    saveNativeImagePrompt(appPath,root,{targetKey:before.targetKey,
+      fingerprint:before.draftIdentity.creativeFingerprint,
+      styleSha256:before.styleProfileRef.sha256,prompt:'Owner verified exact red kite isolated on transparency',references:[]});
+    expect(prepareNativeImages(appPath,root).jobs[0].ownerEdited).toBe(true);
+    const actualRead=fs.readFileSync;
+    vi.spyOn(fs,'readFileSync').mockImplementation(((...args:unknown[])=>{
+      const value=Reflect.apply(actualRead,fs,args) as string|Buffer;
+      return String(args[0]).endsWith('b1-minimal-handdrawn.md')&&typeof value==='string'?
+        value+'\\n<!-- newly verified style authority revision -->':value;
+    }) as typeof fs.readFileSync);
+    const after=prepareNativeImages(appPath,root).jobs[0];
+    expect(after.styleProfileRef.sha256).not.toBe(before.styleProfileRef.sha256);
+    expect(after.ownerEdited).toBe(false);
+    expect(after.prompt).not.toBe('Owner verified exact red kite isolated on transparency');
+    expect(()=>saveNativeImagePrompt(appPath,root,{targetKey:before.targetKey,
+      fingerprint:before.draftIdentity.creativeFingerprint,styleSha256:before.styleProfileRef.sha256,
+      prompt:'Stale style owner prompt',references:[]})).toThrow(/STALE_STYLE_AUTHORITY/);
+    expect(readNativeDraft(root)!.sha256).toBe(draftSha);
+  });
   it('P1-13 stale owner fingerprints cannot resurrect previously approved generation briefs',()=>{
     const {root}=staged();
     const current=prepareNativeImages(appPath,root).jobs[0];
