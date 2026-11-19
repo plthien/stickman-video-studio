@@ -301,6 +301,32 @@ describe('Storyboard — visible G-Labs image generation for current Native Shot
     expect(screen.getByLabelText('Image prompt (owner-confirmed, not invented)')).toHaveValue('');
     expect(screen.getByRole('button',{name:'Generate / Regenerate image (paid confirmation)'})).toBeDisabled();
   });
+
+  it('SB-IMG-04 reloads missing targets when a corrected Native DRAFT replaces the previous revision',async()=>{
+    const oldDraft={...storyboardCandidate,token:'draft-old',missing:[storyboardCandidate.missing[0]]};
+    const nextDraft={...storyboardCandidate,token:'draft-new',missing:[storyboardCandidate.missing[1]]};
+    const pendingMedia=vi.fn().mockResolvedValueOnce(oldDraft).mockResolvedValueOnce(nextDraft);
+    installStoryboard();
+    Object.defineProperty(window,'studio',{configurable:true,value:{
+      ...window.studio,pendingMedia
+    }});
+    function RecheckHarness(){
+      const {setNative}=useAppState();
+      const snapshot=(rev:number):NativeStudioState=>{
+        const base=project('A');
+        return {...base,nativeDraft:{...base.nativeDraft!,revision:rev,token:'draft-'+rev}};
+      };
+      useEffect(()=>{setNative(snapshot(2));},[]);
+      return <><button onClick={()=>setNative(snapshot(3))}>Commit current corrected DRAFT</button>
+        <StoryboardWorkspace/></>;
+    }
+    render(<AppStateProvider><RecheckHarness/></AppStateProvider>);
+    await waitFor(()=>expect(screen.getByLabelText('Image layer to generate')).toHaveValue('image:0:layer-1'));
+    fireEvent.click(screen.getByRole('button',{name:'Commit current corrected DRAFT'}));
+    await waitFor(()=>expect(pendingMedia).toHaveBeenCalledTimes(2));
+    await waitFor(()=>expect(screen.getByLabelText('Image layer to generate')).toHaveValue('image:0:layer-2'));
+    expect(screen.queryByRole('option',{name:/one.png/})).not.toBeInTheDocument();
+  });
   it('SB-IMG-03 shows the image action but blocks submission when no Native candidate exists',async()=>{
     const {glabsGenerate}=installStoryboard(null);
     render(<AppStateProvider><StoryboardHarness/></AppStateProvider>);
