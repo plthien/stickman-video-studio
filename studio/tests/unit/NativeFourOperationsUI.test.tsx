@@ -4,6 +4,7 @@ import {cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react';
 import {afterEach,describe,expect,it,vi} from 'vitest';
 import {AppStateProvider,useAppState} from '../../src/renderer/app/AppState';
 import {ExternalSessionProvider,ExternalWorkspace} from '../../src/renderer/features/external/ExternalWorkspace';
+import {StoryboardWorkspace} from '../../src/renderer/features/storyboard/StoryboardWorkspace';
 import type {NativeStudioState} from '../../src/renderer/types/app';
 
 const project=(id:string,withDraft=true):NativeStudioState=>({
@@ -233,5 +234,80 @@ describe('Native four-operation UI — explicit draft/published target and sessi
     expect(screen.getByText(/DRAFT revision 2/)).not.toHaveTextContent('a'.repeat(64));
     expect(screen.getByTestId('external-task-prompt')).toHaveTextContent('');
     expect(screen.getByRole('button',{name:'Validate import'})).toBeDisabled();
+  });
+});
+
+const storyboardCandidate={
+  token:'native-pending-A',status:'WAITING_FOR_MEDIA',
+  after:{shots:[
+    {id:'shot-1',title:'First shot',start:0,end:5,layers:[
+      {id:'layer-1',type:'image',path:'assets/images/one.png'},
+      {id:'layer-2',type:'image',path:'assets/images/two.png'}]},
+    {id:'shot-2',title:'Second shot',start:5,end:10,layers:[
+      {id:'layer-3',type:'image',path:'assets/images/three.png'}]}
+  ],captions:[]},
+  missing:[
+    {key:'image:0:layer-1',kind:'image',shotId:'shot-1',layerId:'layer-1',path:'assets/images/one.png'},
+    {key:'image:0:layer-2',kind:'image',shotId:'shot-1',layerId:'layer-2',path:'assets/images/two.png'},
+    {key:'image:1:layer-3',kind:'image',shotId:'shot-2',layerId:'layer-3',path:'assets/images/three.png'}
+  ],
+  fulfillments:{}
+};
+function StoryboardHarness(){
+  const {setNative}=useAppState();
+  useEffect(()=>{setNative(project('A'));},[]);
+  return <StoryboardWorkspace/>;
+}
+function installStoryboard(pending:unknown=storyboardCandidate){
+  const glabsGenerate=vi.fn(async()=>({id:'new-image-job'}));
+  Object.defineProperty(window,'studio',{configurable:true,value:{
+    pendingMedia:vi.fn(async()=>pending),
+    glabsSettings:vi.fn(async()=>({config:{model:'gpt-image-2',aspectRatio:'9:16'}})),
+    glabsJobs:vi.fn(async()=>[]),
+    glabsGenerate,
+    mediaUrl:vi.fn(async()=>''),projectState:vi.fn(async()=>project('A'))
+  }});
+  return{glabsGenerate};
+}
+describe('Storyboard — visible G-Labs image generation for current Native Shot',()=>{
+  it('SB-IMG-01 shows Generate without hidden import-dropdown selection, defaults to first image and keeps paid authorization explicit',async()=>{
+    const {glabsGenerate}=installStoryboard();
+    render(<AppStateProvider><StoryboardHarness/></AppStateProvider>);
+    const generate=screen.getByRole('button',{name:'Generate / Regenerate image (paid confirmation)'});
+    expect(generate).toBeInTheDocument();
+    await waitFor(()=>expect(screen.getByLabelText('Image layer to generate')).toHaveValue('image:0:layer-1'));
+    expect(generate).toBeDisabled();
+    await waitFor(()=>expect(screen.getByText(/Model: gpt-image-2/)).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText('Image prompt (owner-confirmed, not invented)'),{
+      target:{value:'A verified owner-authored image prompt for this layer'}});
+    expect(generate).toBeEnabled();
+    fireEvent.click(generate);
+    await waitFor(()=>expect(glabsGenerate).toHaveBeenCalledWith('A',expect.objectContaining({
+      targetKey:'image:0:layer-1',model:'gpt-image-2',aspectRatio:'9:16',
+      prompt:'A verified owner-authored image prompt for this layer',authorized:true
+    })));
+  });
+  it('SB-IMG-02 switching layer or Shot clears the old prompt and cannot send it to a different image target',async()=>{
+    installStoryboard();render(<AppStateProvider><StoryboardHarness/></AppStateProvider>);
+    const select=await screen.findByLabelText('Image layer to generate');
+    const prompt=screen.getByLabelText('Image prompt (owner-confirmed, not invented)');
+    fireEvent.change(prompt,{target:{value:'First image prompt is not reusable'}});
+    fireEvent.change(select,{target:{value:'image:0:layer-2'}});
+    expect(prompt).toHaveValue('');
+    expect(select).toHaveValue('image:0:layer-2');
+    fireEvent.change(prompt,{target:{value:'Second image must be different'}});
+    fireEvent.click(screen.getByRole('button',{name:/shot-2.*Second shot/}));
+    await waitFor(()=>expect(screen.getByLabelText('Image layer to generate')).toHaveValue('image:1:layer-3'));
+    expect(screen.getByLabelText('Image prompt (owner-confirmed, not invented)')).toHaveValue('');
+    expect(screen.getByRole('button',{name:'Generate / Regenerate image (paid confirmation)'})).toBeDisabled();
+  });
+  it('SB-IMG-03 shows the image action but blocks submission when no Native candidate exists',async()=>{
+    const {glabsGenerate}=installStoryboard(null);
+    render(<AppStateProvider><StoryboardHarness/></AppStateProvider>);
+    await waitFor(()=>expect(screen.getByTestId('glabs-image-unavailable')).toHaveTextContent(
+      'No current Native Author candidate is staged'));
+    const generate=screen.getByRole('button',{name:'Generate / Regenerate image (paid confirmation)'});
+    expect(generate).toBeDisabled();
+    expect(glabsGenerate).not.toHaveBeenCalled();
   });
 });
