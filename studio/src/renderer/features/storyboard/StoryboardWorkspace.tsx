@@ -108,7 +108,8 @@ export function StoryboardWorkspace(){
       // rights/SHA validation, draft fingerprint, UNKNOWN and no-retry semantics.
       await window.studio.glabsGenerate(scope.projectId,{targetKey:target.key,prompt:ownerPrompt.trim(),
         model:config.model,aspectRatio:config.aspectRatio,references:refs(ownerRefs),authorized:true,
-        regenerate:attempts.length>0,acknowledgeUnknown:attempts.some(job=>job.status==='UNKNOWN')});
+        regenerate:attempts.length>0,acknowledgeUnknown:attempts.some(job=>job.status==='UNKNOWN'),
+        preparedFingerprint:spec.draftIdentity.creativeFingerprint});
       if(isCurrentProjectSession(scope))await refresh(scope);
     }catch(e){if(isCurrentProjectSession(scope))setError(message(e));}
     finally{if(isCurrentProjectSession(scope))setBusy(false);}
