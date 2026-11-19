@@ -216,7 +216,7 @@ describe('StoryBoard Phase-1 source-grounded compiler and exact Native media que
       fingerprint:a.draftIdentity.creativeFingerprint,styleSha256:a.styleProfileRef.sha256,
       prompt:'Owner-approved red kite with a thin string',references:[]});
     const current=readNativeDraft(root)!;
-    const corrected=structuredClone(current.artifact);
+    const corrected=structuredClone(current.artifact) as typeof payload;
     corrected.asset_needs[1]='MISSING_REQUIRED_VISUAL | assets/images/late.png | Navy satchel replacing the old backpack | Planned asset; no media is present';
     publishNativeDraftCorrection(appPath,root,current.sha256,corrected,{
       correctTaskId:'positional-only-b',reviewTaskId:'review',editableIds:['shot-2'],editablePaths:[],findingIds:['P1']
@@ -238,7 +238,7 @@ describe('StoryBoard Phase-1 source-grounded compiler and exact Native media que
     });
     const before=prepareNativeImages(appPath,root);
     const current=readNativeDraft(root)!;
-    const changed=structuredClone(current.artifact);
+    const changed=structuredClone(current.artifact) as typeof payload;
     changed.asset_needs[0]='MISSING_REQUIRED_VISUAL | assets/images/missing.png | Same shared kite revised to yellow color | Planned asset; no media is present';
     publishNativeDraftCorrection(appPath,root,current.sha256,changed,{
       correctTaskId:'shared-change',reviewTaskId:'review',editableIds:['shot-1','shot-2'],editablePaths:[],findingIds:['P1']
