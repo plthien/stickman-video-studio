@@ -4,6 +4,7 @@ import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import type {CredentialCipher} from './elevenlabsCredentials.js';
 import {getPendingMedia,importMediaFile,fulfillMedia,nativeImageTargetIdentity} from './externalTasks.js';
+import {prepareNativeImages} from './imagePreparation.js';
 import {atomicJson,nativeSkillRoot,readState,resolveProjectFile,sha,strictJson} from './services.js';
 
 export const GLABS_MODELS=['nano_banana_2','nano_banana_pro'] as const;
@@ -239,12 +240,26 @@ export function invalidateGlabsJobsAfterNativeCorrection(appPath:string,root:str
 export type GLabsDecoder=(bytes:Buffer)=>{png:Buffer;width:number;height:number};
 export interface ImageRequest{
   targetKey:string;prompt:string;model:string;aspectRatio:string;
-  references:string[];authorized:boolean;acknowledgeUnknown?:boolean;regenerate?:boolean;
+  references:string[];authorized:boolean;acknowledgeUnknown?:boolean;regenerate?:boolean;preparedFingerprint?:string;
+}
+function assertPreparedImageRequest(appPath:string,root:string,input:ImageRequest){
+  // Existing explicit manual owner-authored workflow remains supported.
+  // Automatic Storyboard submissions carry a frozen creative fingerprint
+  // and cannot bypass source readiness or reuse a stale saved prompt.
+  if(input.preparedFingerprint===undefined)return;
+  if(typeof input.preparedFingerprint!=='string'||!/^[a-f0-9]{64}$/.test(input.preparedFingerprint))
+    throw new Error('GLABS_PREPARED_FINGERPRINT_INVALID');
+  const ready=prepareNativeImages(appPath,root).jobs.find(job=>job.targetKey===input.targetKey&&
+    job.draftIdentity.creativeFingerprint===input.preparedFingerprint);
+  if(!ready||ready.state!=='READY'||ready.prompt.trim()!==input.prompt.trim()||
+    JSON.stringify(ready.references)!==JSON.stringify(input.references))
+    throw new Error('GLABS_PREPARED_TARGET_NOT_READY_OR_STALE');
 }
 export async function submitGlabsImage(appPath:string,root:string,userData:string,cipher:CredentialCipher,input:ImageRequest,decode:GLabsDecoder){
   if(input.authorized!==true)throw new Error('GLABS_PAID_SUBMISSION_REQUIRES_EXPLICIT_OWNER_AUTHORIZATION');
   if(typeof input.prompt!=='string'||input.prompt.trim().length<12||input.prompt.length>18000)
     throw new Error('GLABS_PROMPT_REQUIRED: owner must confirm an actual image requirement.');
+  assertPreparedImageRequest(appPath,root,input);
   const config=glabsSettings(userData);
   if(input.model!==config.model||input.aspectRatio!==config.aspectRatio)
     throw new Error('GLABS_MODEL_CONFIG_MISMATCH: save exact chosen model/ratio in Settings.');
@@ -302,6 +317,7 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
     // The initial read occurred before the asynchronous health/auth probe.
     // Re-check inside the local job lock so concurrent callers cannot send two paid POSTs.
     assertJobTarget(appPath,root,job);
+    assertPreparedImageRequest(appPath,root,input);
     const latest=listGlabsJobs(root).filter(j=>j.token===job.token&&j.targetKey===job.targetKey);
     if(latest.some(j=>['QUEUED','SUBMITTED','RUNNING','DOWNLOADED'].includes(j.status)))
       throw new Error('GLABS_EXISTING_ACTIVE_ATTEMPT');
@@ -319,6 +335,7 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
     try{
       // Creative draft or source rights may have changed during the async probe.
       assertJobTarget(appPath,root,job);
+      assertPreparedImageRequest(appPath,root,input);
       assertJobReferences(appPath,root,job,decode);
       const refs=job.references.map(ref=>{
         const checked=ref.path.startsWith('@modeb/b4/')?verifiedB4Reference(appPath,root,ref.path):validatedImage(root,ref.path,ref.sha256);
