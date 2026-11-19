@@ -60,8 +60,13 @@ export function StoryboardWorkspace(){
   const available=pending?.missing??[];
   const visibleTargets=available.filter(item=>!shot||item.kind!=='image'||item.shotId===shot.id);
   const target=available.find(item=>item.key===targetKey);
+  // A Shot's first outstanding image is actionable without making the owner
+  // discover a second, unrelated media-import dropdown. Selection stays
+  // scoped to the visible Shot and is never a paid submission by itself.
+  const shotImageTargets=available.filter(item=>item.kind==='image'&&Boolean(shot)&&item.shotId===shot.id);
+  const imageTarget=shotImageTargets.find(item=>item.key===targetKey)??shotImageTargets[0]??null;
   const shotJobs=glabsJobs.filter(item=>item.shotId===shot?.id);
-  const latestTargetJob=glabsJobs.find(item=>item.targetKey===targetKey&&item.token===pending?.token);
+  const latestTargetJob=glabsJobs.find(item=>item.targetKey===imageTarget?.key&&item.token===pending?.token);
   // A load belongs only to this project, immutable job, image SHA, URL and preview attempt.
   const previewIdentity=(job:ImageJob)=>[id,job.id,job.token,job.staged?.sha256??'-',imageUrls[job.id]??'-',previewAttempts[job.id]??0].join('|');
   const matchingLedger=(pending?.shotLedger??[]).filter(item=>{
@@ -76,15 +81,17 @@ export function StoryboardWorkspace(){
   });
   const generateImage=async()=>{
     const scope=captureProjectSession();
-    if(!scope||!target||target.kind!=='image'||!window.studio||!glabsConfig)return;
+    if(!scope||!window.studio)return;
+    if(!imageTarget){setGlabsError('Choose a Shot with a missing Native IMAGE layer before generating.');return;}
+    if(!glabsConfig){setGlabsError('Configure the G-Labs image model and aspect ratio in Settings first.');return;}
     if(!imagePrompt.trim()){setGlabsError('Confirm the exact native/creative image prompt before submitting.');return;}
-    const sameTarget=glabsJobs.filter(item=>item.targetKey===target.key&&item.token===pending?.token);
+    const sameTarget=glabsJobs.filter(item=>item.targetKey===imageTarget.key&&item.token===pending?.token);
     const unknown=sameTarget.some(item=>item.status==='UNKNOWN');
     // Electron main owns the mandatory paid-request confirmation, including UNKNOWN billing warnings.
     // No renderer-only boolean can bypass that native dialog.
     setGlabsBusy(true);setGlabsError('');
     try{
-      await window.studio.glabsGenerate(scope.projectId,{targetKey:target.key,prompt:imagePrompt.trim(),
+      await window.studio.glabsGenerate(scope.projectId,{targetKey:imageTarget.key,prompt:imagePrompt.trim(),
         model:glabsConfig.model,aspectRatio:glabsConfig.aspectRatio,
         references:referencePaths.split(',').map(value=>value.trim()).filter(Boolean),authorized:true,
         regenerate:sameTarget.length>0,acknowledgeUnknown:unknown});
@@ -151,6 +158,17 @@ export function StoryboardWorkspace(){
     {active.length?<div className="shot-grid">{active.map((item,i)=><button key={item.id} className={index===i?'selected':''} onClick={()=>{setSelected(i);setTargetKey('');setImagePrompt('');}}><div className="scene-thumb"><strong>{item.id}</strong></div><div><strong>{item.id} · {item.title}</strong><small>{item.duration.toFixed(2)}s · {item.status}</small></div></button>)}</div>:<div className="info">EMPTY — No native shots. Import a reviewed Native Manifest from External ChatGPT. Pending media can still be bound below before promotion.</div>}
   </Card><Card><CardHeader title={shot?shot.id+' · '+shot.title:'Native media fulfillment'} hint="No synthetic image or default layer"/>
     {shot?<dl className="kvs"><dt>Duration</dt><dd>{shot.duration.toFixed(2)} seconds</dd><dt>Caption overlaps</dt><dd>{shot.captions?.map(item=>item.text+' ('+item.start+'–'+item.end+')').join(' | ')??shot.caption}</dd><dt>Committed native media</dt><dd>{mapping.map(item=>item.path).join(', ')||'None'}</dd><dt>Source</dt><dd>{candidateShots.length?'FROZEN NATIVE CANDIDATE':'project.json'}</dd></dl>:<div className="info">No selected native shot. This view does not create or display fixture artwork.</div>}
+    {native&&<Card><CardHeader title="Generate G-Labs image" hint="Choose a missing image layer for this Shot. Submissions are paid and require explicit confirmation."/>
+      <div className="info">Missing image targets in selected Shot: {shotImageTargets.length} · Total unresolved media references: {available.length}.</div>
+      {shotImageTargets.length>0?<Field label="Image layer to generate"><Select value={imageTarget?.key??''} onChange={event=>{setTargetKey(event.target.value);setImagePrompt('');setGlabsError('');}}>
+        {shotImageTargets.map(item=><option key={item.key} value={item.key}>{item.layerId} · {item.path}</option>)}
+      </Select></Field>:<div className="info" data-testid="glabs-image-unavailable">{!pending?'No current Native Author candidate is staged. Import/validate Native Author JSON first.':available.some(item=>item.kind==='image')?'No missing IMAGE layer in this Shot. Select another Shot on the left.':'No unfulfilled IMAGE layer remains in the current Native candidate.'}</div>}
+      {imageTarget&&<div className="info">{imageTarget.shotId} / {imageTarget.layerId} · {imageTarget.path}</div>}
+      <Field label="Image prompt (owner-confirmed, not invented)"><Textarea value={imagePrompt} onChange={event=>setImagePrompt(event.target.value)} placeholder="Paste/confirm the actual image requirement from Native asset_needs or shot ledger"/></Field>
+      <Field label="Ordered image references (comma-separated approved assets/images paths)"><Input value={referencePaths} onChange={event=>setReferencePaths(event.target.value)} placeholder="assets/images/reference1.png, assets/images/reference2.png"/></Field>
+      <div className="info">Model: {glabsConfig?.model??'Configure Settings first'} · Ratio: {glabsConfig?.aspectRatio??'unconfigured'} · Existing attempt: {latestTargetJob?.status??'None'}</div>
+      <Button variant="primary" disabled={glabsBusy||!imageTarget||!glabsConfig||!imagePrompt.trim()} onClick={generateImage}>Generate / Regenerate image (paid confirmation)</Button>
+    </Card>}
     {shot&&<><div className="info">Image layers: {nativeImageLayers(shot.layers??[]).join(', ')||'No image layers'}</div>
       {matchingLedger.length>0&&<pre className="prompt">Shot creative ledger (read only): {JSON.stringify(matchingLedger,null,2)}</pre>}
       {relevantNeeds.length>0&&<pre className="prompt">Asset needs (read only): {JSON.stringify(relevantNeeds,null,2)}</pre>}
@@ -161,13 +179,7 @@ export function StoryboardWorkspace(){
     </Field><Field label="Owner-confirmed rights/source"><Input value={rights} onChange={event=>setRights(event.target.value)} placeholder="Owned or licensed source and rights"/></Field>
     <div className="actions"><Button variant="primary" disabled={!target||!rights.trim()} onClick={importAndBind}>Import and bind target</Button><Button onClick={async()=>{if(!window.studio||!id)return;const scope=captureProjectSession();if(!scope)return;try{const value=await window.studio.pendingMedia(id) as PendingTargets|null;if(!isCurrentProjectSession(scope))return;setPending(value);setError('')}catch(e){if(!isCurrentProjectSession(scope))return;setPending(null);setError('Pending media ERROR: '+String(e))}}}>Refresh missing references</Button></div>
     {pending&&<div className="info">Pending candidate: {pending.status}. A file is not committed until the reviewed native candidate is confirmed in External ChatGPT.</div>}
-    {target?.kind==='image'&&<Card><CardHeader title="G-Labs image · selected Native layer" hint="Exact confirmed prompt + provider model. Paid submissions require explicit authorization."/>
-      <div className="info">{target.shotId} / {target.layerId} · {target.path}</div>
-      <Field label="Image prompt (owner-confirmed, not invented)"><Textarea value={imagePrompt} onChange={event=>setImagePrompt(event.target.value)} placeholder="Paste/confirm the actual image requirement from External ChatGPT"/></Field>
-      <Field label="Ordered image references (comma-separated approved assets/images paths)"><Input value={referencePaths} onChange={event=>setReferencePaths(event.target.value)} placeholder="assets/images/reference1.png, assets/images/reference2.png"/></Field>
-      <div className="info">Model: {glabsConfig?.model??'Configure Settings first'} · Ratio: {glabsConfig?.aspectRatio??'unconfigured'} · Existing attempt: {latestTargetJob?.status??'None'}</div>
-      <Button variant="primary" disabled={glabsBusy||!glabsConfig||!imagePrompt.trim()} onClick={generateImage}>Generate / Regenerate image (paid confirmation)</Button>
-    </Card>}
+
     {shotJobs.length>0&&<div className="stack" aria-label="G-Labs image attempts">{shotJobs.map(job=><Card key={job.id}>
       <CardHeader title={job.layerId+' · '+job.status} hint={job.model+' / '+job.aspectRatio}/>
       <div className="info">Target: {job.targetPath} · Task: {job.providerTaskId??'Unconfirmed'} · {job.reason??''}</div>
