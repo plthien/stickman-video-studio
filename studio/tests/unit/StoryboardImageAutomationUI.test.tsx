@@ -102,6 +102,41 @@ describe('Storyboard P1: real renderer queue and paid-action isolation',()=>{
     await waitFor(()=>expect(generate).toHaveBeenCalled());
     expect(generate).toHaveBeenLastCalledWith('B',expect.objectContaining({targetKey:'image:0:layer-a'}));
   });
+  it('UI-06 UNKNOWN outcome never auto-acknowledges billing or starts another paid POST',async()=>{
+    const {generate}=install();
+    const current=window.studio!;
+    Object.defineProperty(window,'studio',{configurable:true,value:{
+      ...current,glabsJobs:async()=>[{
+        id:'unknown-attempt',token:'token-A',targetKey:'image:0:layer-a',
+        shotId:'sh-a',layerId:'layer-a',targetPath:'assets/images/a.png',
+        status:'UNKNOWN',model:'nano_banana_2',aspectRatio:'9:16',
+        reason:'Provider response uncertain'
+      }]
+    }});
+    render(<AppStateProvider><Harness/></AppStateProvider>);
+    await waitFor(()=>expect(screen.getByText(/Prior G-Labs job has UNKNOWN billing status/)).toBeInTheDocument());
+    expect(screen.getByRole('button',{name:'Regenerate Selected (1 NEW paid request)'})).toBeDisabled();
+    expect(generate).not.toHaveBeenCalled();
+  });
+  it('UI-07 regenerate asks explicit owner permission before another paid POST',async()=>{
+    const {generate}=install();
+    const current=window.studio!;
+    Object.defineProperty(window,'studio',{configurable:true,value:{
+      ...current,glabsJobs:async()=>[{
+        id:'failed-attempt',token:'token-A',targetKey:'image:0:layer-a',
+        shotId:'sh-a',layerId:'layer-a',targetPath:'assets/images/a.png',
+        status:'FAILED',model:'nano_banana_2',aspectRatio:'9:16'
+      }]
+    }});
+    const confirm=vi.fn(()=>false);
+    vi.stubGlobal('confirm',confirm);
+    render(<AppStateProvider><Harness/></AppStateProvider>);
+    const button=await screen.findByRole('button',{name:'Regenerate Selected (1 NEW paid request)'});
+    await waitFor(()=>expect(button).toBeEnabled());
+    fireEvent.click(button);
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(generate).not.toHaveBeenCalled();
+  });
   it('UI-05 original manual Import & Bind remains available only on demand',async()=>{
     install();render(<AppStateProvider><Harness/></AppStateProvider>);
     await waitFor(()=>expect(screen.getByTestId('image-queue-counts')).toHaveTextContent('READY 2'));
