@@ -29,6 +29,10 @@ interface StyleProfile {
   anchors:Array<{id:string;label:string;sha256:string}>;
 }
 const object=(v:unknown):v is Row=>v!==null&&typeof v==='object'&&!Array.isArray(v);
+const field=(row:Row,names:string[]):string=>{
+  for(const name of names){const value=row[name];if(typeof value==='string'&&value.trim())return value.trim();}
+  return '';
+};
 const extract=(text:string,from:string,to:string):string=>{
   const start=text.indexOf(from);if(start<0)throw new Error('STYLE_AUTHORITY_SECTION_MISSING: '+from);
   const end=to?text.indexOf(to,start+from.length):-1;
