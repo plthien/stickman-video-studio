@@ -315,6 +315,19 @@ describe('F04 — immutable approved style source binding in the paid image life
     expect(readState(root).media!.filter(item=>item.shotId===targets[0].shotId)).toHaveLength(0);
     expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
   });
+  it('F04-GL04 changing style cannot downgrade UNKNOWN billing into a retryable stale job',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport({postError:true});
+    const job=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    expect(job.status).toBe('UNKNOWN');
+    reviseApprovedB1StyleForTest();
+    const checked=await pollGlabsImage(appPath,root,dir,cipher,job.id,decode);
+    expect(checked.status).toBe('UNKNOWN');
+    expect(checked.reason).toMatch(/GLABS_UNKNOWN_MAY_HAVE_CHARGED/);
+    await expect(submitGlabsImage(appPath,root,dir,cipher,{
+      ...request(targets[0].key),regenerate:true
+    },decode)).rejects.toThrow(/UNKNOWN/);
+    expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
+  });
   it('F04-GL03 a persisted job with missing pinned style evidence cannot be newly approved',async()=>{
     const dir=credential(),{root,targets}=nativeTarget();transport();
     const job=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
