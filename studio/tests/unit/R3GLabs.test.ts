@@ -52,6 +52,15 @@ function transport(opts:{postError?:boolean;maliciousFile?:boolean;image?:Buffer
 }
 const decode=(data:Buffer)=>({png:data,width:data.readUInt32BE(16),height:data.readUInt32BE(20)});
 const request=(targetKey:string)=>({targetKey,prompt:'Actual shot image prompt confirmed by the owner.',model:'nano_banana_2',aspectRatio:'9:16',references:[],authorized:true});
+function reviseApprovedB1StyleForTest(){
+  // Simulate a changed installed authority without mutating packaged style files.
+  const original=fs.readFileSync;
+  vi.spyOn(fs,'readFileSync').mockImplementation(((...args:unknown[])=>{
+    const output=Reflect.apply(original,fs,args) as string|Buffer;
+    return String(args[0]).endsWith('b1-minimal-handdrawn.md')&&typeof output==='string'?
+      output+'\\n<!-- revised installed B1 authority -->':output;
+  }) as typeof fs.readFileSync);
+}
 describe('R3 G-Labs security and lifecycle GL01–GL12',()=>{
   it('GL01 read-only health and auth never create paid image jobs',async()=>{
     const dir=credential(),{calls}=transport();
@@ -274,6 +283,51 @@ describe('R3 final repairs F01/F03/F06 — strict output, references and truthfu
 });
 
 
+describe('F04 — immutable approved style source binding in the paid image lifecycle',()=>{
+  it('F04-GL01 catches style authority changing during auth probe before a paid POST',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls,stub}=transport();
+    let revised=false;
+    vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL,options?:RequestInit)=>{
+      if(!revised&&new URL(String(input)).pathname==='/api/tasks'){
+        revised=true;
+        reviseApprovedB1StyleForTest();
+      }
+      return stub(input,options);
+    }));
+    await expect(submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode))
+      .rejects.toThrow(/STALE_STYLE_AUTHORITY/);
+    expect(revised).toBe(true);
+    expect(calls.filter(call=>call.method==='POST')).toHaveLength(0);
+    expect(readState(root).media!.filter(item=>item.shotId===targets[0].shotId)).toHaveLength(0);
+  });
+  it('F04-GL02 newly validated image cannot be approved after relevant style SHA changes',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport();
+    const job=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    expect(job.styleProfileId).toBe('B1');
+    expect(job.styleProfileSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect((await pollGlabsImage(appPath,root,dir,cipher,job.id,decode)).status).toBe('VALIDATED');
+    reviseApprovedB1StyleForTest();
+    expect(()=>approveGlabsImage(appPath,root,job.id,'Licensed image inspected by owner',decode))
+      .toThrow(/STALE_CREATIVE_TARGET/);
+    const persisted=listGlabsJobs(root).find(item=>item.id===job.id)!;
+    expect(persisted.status).toBe('STALE');
+    expect(persisted.reason).toMatch(/STALE_STYLE_AUTHORITY/);
+    expect(readState(root).media!.filter(item=>item.shotId===targets[0].shotId)).toHaveLength(0);
+    expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
+  });
+  it('F04-GL03 a persisted job with missing pinned style evidence cannot be newly approved',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget();transport();
+    const job=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    await pollGlabsImage(appPath,root,dir,cipher,job.id,decode);
+    const file=path.join(root,'.studio','glabs','jobs',job.id+'.json');
+    const stored=JSON.parse(fs.readFileSync(file,'utf8')) as {styleProfileSha256?:string};
+    delete stored.styleProfileSha256;
+    fs.writeFileSync(file,JSON.stringify(stored));
+    expect(()=>approveGlabsImage(appPath,root,job.id,'Licensed inspected image',decode))
+      .toThrow(/STALE_CREATIVE_TARGET/);
+    expect(listGlabsJobs(root).find(item=>item.id===job.id)?.reason).toMatch(/STYLE_AUTHORITY_MISSING/);
+  });
+});
 describe('NF02 — effective per-target Native image identity across corrections and restart',()=>{
   it('NF02-01/03/08 changing Shot A image properties stales only its old validated job, never re-POSTs',async()=>{
     const dir=credential(),{root,targets}=nativeTarget(true),{calls}=transport();
