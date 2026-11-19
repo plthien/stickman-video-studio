@@ -63,7 +63,7 @@ export function StoryboardWorkspace(){
   // A Shot's first outstanding image is actionable without making the owner
   // discover a second, unrelated media-import dropdown. Selection stays
   // scoped to the visible Shot and is never a paid submission by itself.
-  const shotImageTargets=available.filter(item=>item.kind==='image'&&Boolean(shot)&&item.shotId===shot.id);
+  const shotImageTargets=available.filter(item=>item.kind==='image'&&shot!==undefined&&item.shotId===shot.id);
   const imageTarget=shotImageTargets.find(item=>item.key===targetKey)??shotImageTargets[0]??null;
   const shotJobs=glabsJobs.filter(item=>item.shotId===shot?.id);
   const latestTargetJob=glabsJobs.find(item=>item.targetKey===imageTarget?.key&&item.token===pending?.token);
