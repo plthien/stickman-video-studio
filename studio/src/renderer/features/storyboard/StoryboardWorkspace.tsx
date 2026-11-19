@@ -1,226 +1,234 @@
-/* eslint-disable react-hooks/exhaustive-deps -- session scopes are ref-backed; project/revision scalars define invalidation */
 import {useEffect,useState} from 'react';
 import {useAppState} from '../../app/AppState';
 import {Badge,Button,Card,CardHeader,Field,Input,Select,Textarea} from '../../components/ui';
-import type {Shot} from '../../types/app';
-interface MissingTarget {key:string;kind:'image'|'sfx';path:string;shotId?:string;layerId?:string;track?:string;trackIndex?:number}
-interface PendingTargets {token:string;status:string;missing:MissingTarget[];fulfillments:Record<string,unknown>;after?:{shots?:unknown[];captions?:unknown[]};shotLedger?:unknown[];assetNeeds?:unknown[]}
-const nativeImageLayers=(layers:unknown[]):string[]=>{
-  const result:string[]=[];
-  for(const item of layers){
-    if(!item||typeof item!=='object'||Array.isArray(item))continue;
-    const layer=item as Record<string,unknown>;
-    if(layer.type==='image'&&typeof layer.id==='string')result.push(layer.id);
-    if(Array.isArray(layer.children))result.push(...nativeImageLayers(layer.children));
-  }
-  return result;
-};
-const layerPath=(layers:unknown[],id:string):string|null=>{
-  for(const value of layers){const layer=value as Record<string,unknown>;if(layer.id===id&&layer.type==='image')return typeof layer.path==='string'?layer.path:null;if(Array.isArray(layer.children)){const found=layerPath(layer.children,id);if(found!==null)return found;}}
-  return null;
-};
+import type {ImageJobSpec} from '../../../main/imagePreparation.js';
+import {LegacyStoryboardWorkspace} from './LegacyStoryboardWorkspace';
+
+type Studio=NonNullable<Window['studio']>;
+type Pending=Awaited<ReturnType<Studio['pendingMedia']>>;
+type Prepared=Awaited<ReturnType<Studio['prepareImages']>>;
+type ImageJob=Awaited<ReturnType<Studio['glabsJobs']>>[number];
+const message=(error:unknown)=>error instanceof Error?error.message:String(error);
+const refs=(raw:string)=>raw.split(',').map(v=>v.trim()).filter(Boolean);
+
+/** Owner-friendly single-target queue; the unchanged manual workflow is available in Advanced. */
 export function StoryboardWorkspace(){
-  const [selected,setSelected]=useState(0),[targetKey,setTargetKey]=useState(''),[rights,setRights]=useState(''),[pending,setPending]=useState<PendingTargets|null>(null),[error,setError]=useState('');
-  type ImageJob=Awaited<ReturnType<NonNullable<Window['studio']>['glabsJobs']>>[number];
-  const [glabsJobs,setGlabsJobs]=useState<ImageJob[]>([]),[imageUrls,setImageUrls]=useState<Record<string,string>>({});
-  const [previewReady,setPreviewReady]=useState<Record<string,string>>({}),[previewErrors,setPreviewErrors]=useState<Record<string,string>>({}),[previewAttempts,setPreviewAttempts]=useState<Record<string,number>>({});
-  const [glabsConfig,setGlabsConfig]=useState<{model:string;aspectRatio:string}|null>(null);
-  const [imagePrompt,setImagePrompt]=useState(''),[referencePaths,setReferencePaths]=useState(''),[glabsBusy,setGlabsBusy]=useState(false),[glabsError,setGlabsError]=useState('');
-  const {native,captureProjectSession,isCurrentProjectSession,setNativeIfSessionCurrent,showNotice}=useAppState(),id=native?.project.id;
-  const candidateRaw=Array.isArray(pending?.after?.shots)?pending.after.shots as Array<Record<string,unknown>>:[];
-  const candidateCaptions=Array.isArray(pending?.after?.captions)?pending.after.captions as Array<Record<string,unknown>>:[];
-  const candidateShots:Shot[]=candidateRaw.filter(item=>typeof item.id==='string'&&typeof item.start==='number'&&typeof item.end==='number').map(item=>{
-    const start=item.start as number,end=item.end as number;
-    const captions=candidateCaptions.filter(cue=>typeof cue.start==='number'&&typeof cue.end==='number'&&cue.start<end&&cue.end>start).map(cue=>({start:cue.start as number,end:cue.end as number,text:String(cue.text??'')}));
-    return{id:item.id as string,title:typeof item.title==='string'?item.title:'',start,end,duration:end-start,caption:captions[0]?.text??'',captions,status:'PENDING_NATIVE_CANDIDATE',color:'#79dfc6',layers:Array.isArray(item.layers)?item.layers:[]};
-  });
-  const active=candidateShots.length?candidateShots:(native?.projection?.shots??[]);
-  const index=Math.min(selected,Math.max(0,active.length-1)),shot=active[index];
-  useEffect(()=>{const scope=captureProjectSession();let mounted=true;setPending(null);setTargetKey('');setRights('');setError('');setGlabsJobs([]);setImageUrls({});setPreviewReady({});setPreviewErrors({});setPreviewAttempts({});setImagePrompt('');setReferencePaths('');setGlabsError('');if(!id||!scope||!window.studio)return()=>{mounted=false};void window.studio.pendingMedia(id).then(value=>{if(mounted&&isCurrentProjectSession(scope))setPending(value as PendingTargets|null)}).catch(reason=>{if(mounted&&isCurrentProjectSession(scope)){setPending(null);setError('Pending media ERROR: '+(reason instanceof Error?reason.message:String(reason)))}});return()=>{mounted=false};},[id,native?.nativeDraft?.token,native?.nativeDraft?.revision,native?.external?.native?.revision]);
-  const refreshImages=async(scope=captureProjectSession())=>{
-    if(!scope||!window.studio?.glabsJobs)return;
-    const jobs=await window.studio.glabsJobs(scope.projectId);
-    if(!isCurrentProjectSession(scope))return;
-    setGlabsJobs(jobs);
-    const urls:Record<string,string>={},errors:Record<string,string>={};
-    await Promise.all(jobs.filter(item=>item.staged).map(async item=>{
-      try{urls[item.id]=await window.studio!.mediaUrl(scope.projectId,item.staged!.path);}
-      catch{errors[item.id]='Generated image preview URL is unavailable. Retry preview after checking the project asset.';}
-    }));
-    if(isCurrentProjectSession(scope)){
-      setImageUrls(urls);
-      if(Object.keys(errors).length)setPreviewErrors(previous=>({...previous,...errors}));
-    }
-  };
-  useEffect(()=>{const scope=captureProjectSession();if(!scope||!window.studio?.glabsSettings)return;
-    void window.studio.glabsSettings().then(value=>{if(isCurrentProjectSession(scope))setGlabsConfig(value.config);})
-      .catch(e=>{if(isCurrentProjectSession(scope))setGlabsError(String(e));});
-    void refreshImages(scope).catch(e=>{if(isCurrentProjectSession(scope))setGlabsError(String(e));});
-  },[id,native?.nativeDraft?.token,native?.nativeDraft?.revision,native?.external?.native?.revision]);
-  const available=pending?.missing??[];
-  const visibleTargets=available.filter(item=>!shot||item.kind!=='image'||item.shotId===shot.id);
-  const target=available.find(item=>item.key===targetKey);
-  // A Shot's first outstanding image is actionable without making the owner
-  // discover a second, unrelated media-import dropdown. Selection stays
-  // scoped to the visible Shot and is never a paid submission by itself.
-  const shotImageTargets=available.filter(item=>item.kind==='image'&&shot!==undefined&&item.shotId===shot.id);
-  const imageTarget=shotImageTargets.find(item=>item.key===targetKey)??shotImageTargets[0]??null;
-  const shotJobs=glabsJobs.filter(item=>item.shotId===shot?.id);
-  const latestTargetJob=glabsJobs.find(item=>item.targetKey===imageTarget?.key&&item.token===pending?.token);
-  // A load belongs only to this project, immutable job, image SHA, URL and preview attempt.
-  const previewIdentity=(job:ImageJob)=>[id,job.id,job.token,job.staged?.sha256??'-',imageUrls[job.id]??'-',previewAttempts[job.id]??0].join('|');
-  const matchingLedger=(pending?.shotLedger??[]).filter(item=>{
-    if(!shot||!item||typeof item!=='object')return false;
-    const row=item as Record<string,unknown>;
-    return row.shot_id===shot.id||row.shotId===shot.id||row.id===shot.id;
-  });
-  const relevantNeeds=(pending?.assetNeeds??[]).filter(item=>{
-    if(!shot||!item||typeof item!=='object')return false;
-    const row=item as Record<string,unknown>;
-    return row.shot_id===shot.id||row.shotId===shot.id||row.id===shot.id;
-  });
-  const generateImage=async()=>{
-    const scope=captureProjectSession();
+  const {native,captureProjectSession,isCurrentProjectSession,setNativeIfSessionCurrent,showNotice}=useAppState();
+  const id=native?.project.id;
+  const [pending,setPending]=useState<Pending|null>(null);
+  const [prepared,setPrepared]=useState<Prepared|null>(null);
+  const [jobs,setJobs]=useState<ImageJob[]>([]);
+  const [config,setConfig]=useState<{model:string;aspectRatio:string}|null>(null);
+  const [selectedShot,setSelectedShot]=useState(''),[selectedKey,setSelectedKey]=useState('');
+  const [draftPrompts,setDraftPrompts]=useState<Record<string,string>>({});
+  const [draftReferences,setDraftReferences]=useState<Record<string,string>>({});
+  const [urls,setUrls]=useState<Record<string,string>>({});
+  const [previewReady,setPreviewReady]=useState<Record<string,string>>({});
+  const [previewErrors,setPreviewErrors]=useState<Record<string,string>>({});
+  const [previewAttempts,setPreviewAttempts]=useState<Record<string,number>>({});
+  const [rights,setRights]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('');
+  const [advanced,setAdvanced]=useState(false);
+  const refresh=async(scope=captureProjectSession())=>{
     if(!scope||!window.studio)return;
-    if(!imageTarget){setGlabsError('Choose a Shot with a missing Native IMAGE layer before generating.');return;}
-    if(!glabsConfig){setGlabsError('Configure the G-Labs image model and aspect ratio in Settings first.');return;}
-    if(!imagePrompt.trim()){setGlabsError('Confirm the exact native/creative image prompt before submitting.');return;}
-    const sameTarget=glabsJobs.filter(item=>item.targetKey===imageTarget.key&&item.token===pending?.token);
-    const unknown=sameTarget.some(item=>item.status==='UNKNOWN');
-    // Electron main owns the mandatory paid-request confirmation, including UNKNOWN billing warnings.
-    // No renderer-only boolean can bypass that native dialog.
-    setGlabsBusy(true);setGlabsError('');
+    const studio=window.studio;
+    const [nextPending,nextJobs,nextConfig,nextPrepared]=await Promise.all([
+      studio.pendingMedia(scope.projectId),
+      studio.glabsJobs(scope.projectId),
+      studio.glabsSettings(),
+      studio.prepareImages?.(scope.projectId)??Promise.resolve(null)
+    ]);
+    const nextUrls:Record<string,string>={},nextErrors:Record<string,string>={};
+    await Promise.all(nextJobs.filter(job=>job.staged).map(async job=>{
+      try{nextUrls[job.id]=await studio.mediaUrl(scope.projectId,job.staged!.path);}
+      catch{nextErrors[job.id]='Generated image preview URL is unavailable.';}
+    }));
+    if(!isCurrentProjectSession(scope))return;
+    setPending(nextPending);setJobs(nextJobs);setConfig(nextConfig.config);
+    setPrepared(nextPrepared);setUrls(nextUrls);
+    setPreviewErrors(previous=>({...previous,...nextErrors}));
+  };
+  useEffect(()=>{
+    const scope=captureProjectSession();
+    setPending(null);setPrepared(null);setJobs([]);setConfig(null);setUrls({});
+    setPreviewReady({});setPreviewErrors({});setPreviewAttempts({});setError('');setRights('');
+    if(scope&&window.studio)void refresh(scope).catch(e=>{if(isCurrentProjectSession(scope))setError(message(e));});
+    // The session guard prevents async responses from being applied to another project.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[id,native?.nativeDraft?.token,native?.nativeDraft?.revision,native?.external?.native?.revision]);
+  useEffect(()=>{setDraftPrompts({});setDraftReferences({});setSelectedShot('');setSelectedKey('');setAdvanced(false);},[id]);
+  const shots=Array.isArray(pending?.after?.shots)?pending.after.shots as Array<Record<string,unknown>>:[];
+  const shotIds=shots.filter(row=>typeof row.id==='string').map(row=>row.id as string);
+  const shotId=shotIds.includes(selectedShot)?selectedShot:shotIds[0]??'';
+  const imageTargets=pending?.missing.filter(row=>row.kind==='image')??[];
+  const shotTargets=imageTargets.filter(row=>row.shotId===shotId);
+  const target=shotTargets.find(row=>row.key===selectedKey)??shotTargets[0]??null;
+  const spec=prepared?.jobs.find(row=>row.targetKey===target?.key)??null;
+  const identity=[id??'',pending?.token??'',spec?.draftIdentity.creativeFingerprint??'',target?.key??''].join('|');
+  const ownerPrompt=draftPrompts[identity]??spec?.prompt??'';
+  const ownerRefs=draftReferences[identity]??spec?.references.join(',')??'';
+  const dirty=(draftPrompts[identity]!==undefined&&draftPrompts[identity]!==spec?.prompt)||
+    (draftReferences[identity]!==undefined&&draftReferences[identity]!==spec?.references.join(','));
+  const ready=spec?.state==='READY'&&!dirty;
+  const shotJobs=jobs.filter(job=>job.shotId===shotId);
+  const previewIdentity=(job:ImageJob)=>[id,job.id,job.token,job.staged?.sha256??'-',urls[job.id]??'-',previewAttempts[job.id]??0].join('|');
+  const prepare=async()=>{
+    const scope=captureProjectSession();if(!scope||!window.studio?.prepareImages)return;
+    setBusy(true);setError('');
     try{
-      await window.studio.glabsGenerate(scope.projectId,{targetKey:imageTarget.key,prompt:imagePrompt.trim(),
-        model:glabsConfig.model,aspectRatio:glabsConfig.aspectRatio,
-        references:referencePaths.split(',').map(value=>value.trim()).filter(Boolean),authorized:true,
-        regenerate:sameTarget.length>0,acknowledgeUnknown:unknown});
-      if(isCurrentProjectSession(scope))await refreshImages(scope);
-    }catch(e){if(isCurrentProjectSession(scope))setGlabsError(String(e));}
-    finally{if(isCurrentProjectSession(scope))setGlabsBusy(false);}
+      const next=await window.studio.prepareImages(scope.projectId);
+      if(isCurrentProjectSession(scope))setPrepared(next);
+    }catch(e){if(isCurrentProjectSession(scope))setError(message(e));}
+    finally{if(isCurrentProjectSession(scope))setBusy(false);}
   };
-  const pollImage=async(jobId:string)=>{
-    const scope=captureProjectSession();if(!scope||!window.studio)return;
-    setGlabsBusy(true);setGlabsError('');
-    try{await window.studio.glabsPoll(scope.projectId,jobId);if(isCurrentProjectSession(scope))await refreshImages(scope);}
-    catch(e){if(isCurrentProjectSession(scope))setGlabsError(String(e));}
-    finally{if(isCurrentProjectSession(scope))setGlabsBusy(false);}
+  const saveOverride=async()=>{
+    const scope=captureProjectSession();if(!scope||!spec||!window.studio?.saveImagePrompt)return;
+    setBusy(true);setError('');
+    try{
+      const next=await window.studio.saveImagePrompt(scope.projectId,{
+        targetKey:spec.targetKey,fingerprint:spec.draftIdentity.creativeFingerprint,
+        prompt:ownerPrompt.trim(),references:refs(ownerRefs)
+      });
+      if(isCurrentProjectSession(scope))setPrepared(next);
+    }catch(e){if(isCurrentProjectSession(scope))setError(message(e));}
+    finally{if(isCurrentProjectSession(scope))setBusy(false);}
   };
-  const approveImage=async(jobId:string)=>{
+  const generate=async()=>{
     const scope=captureProjectSession();if(!scope||!window.studio)return;
-    if(!rights.trim()){setGlabsError('Owner source/rights attestation required before approval.');return;}
-    const job=glabsJobs.find(item=>item.id===jobId);
-    if(!job||job.status!=='VALIDATED'||!job.staged||!imageUrls[job.id]||previewReady[job.id]!==previewIdentity(job)){
-      setGlabsError('GLABS_PREVIEW_NOT_VERIFIED: load and inspect the current generated image before approval.');return;
+    if(!target||!spec||!ready||!config||!ownerPrompt.trim()){
+      setError(spec?.reason||'Exact source-backed image requirement is not ready.');return;
     }
+    const attempts=jobs.filter(job=>job.targetKey===target.key&&job.token===pending?.token);
+    if(attempts.some(job=>['SUBMITTED','RUNNING','DOWNLOADED','QUEUED'].includes(job.status))){
+      setError('An image job is already active for this exact target. Resume or inspect it.');return;
+    }
+    setBusy(true);setError('');
+    try{
+      // One click = at most ONE paid submission. Main owns Electron paid dialog,
+      // rights/SHA validation, draft fingerprint, UNKNOWN and no-retry semantics.
+      await window.studio.glabsGenerate(scope.projectId,{targetKey:target.key,prompt:ownerPrompt.trim(),
+        model:config.model,aspectRatio:config.aspectRatio,references:refs(ownerRefs),authorized:true,
+        regenerate:attempts.length>0,acknowledgeUnknown:attempts.some(job=>job.status==='UNKNOWN')});
+      if(isCurrentProjectSession(scope))await refresh(scope);
+    }catch(e){if(isCurrentProjectSession(scope))setError(message(e));}
+    finally{if(isCurrentProjectSession(scope))setBusy(false);}
+  };
+  const poll=async(jobId:string)=>{
+    const scope=captureProjectSession();if(!scope||!window.studio)return;
+    setBusy(true);setError('');
+    try{await window.studio.glabsPoll(scope.projectId,jobId);if(isCurrentProjectSession(scope))await refresh(scope);}
+    catch(e){if(isCurrentProjectSession(scope))setError(message(e));}
+    finally{if(isCurrentProjectSession(scope))setBusy(false);}
+  };
+  const approve=async(jobId:string)=>{
+    const scope=captureProjectSession();if(!scope||!window.studio)return;
+    const job=jobs.find(item=>item.id===jobId);
+    if(!job||job.status!=='VALIDATED'||!job.staged||!urls[job.id]||previewReady[job.id]!==previewIdentity(job)){
+      setError('GLABS_PREVIEW_NOT_VERIFIED: inspect the exact current image before approval.');return;
+    }
+    if(!rights.trim()){setError('Owner source/rights attestation required before approval.');return;}
     if(!window.confirm('I have inspected the displayed current image. Approve this exact image revision and bind only its Native target?'))return;
-    setGlabsBusy(true);setGlabsError('');
+    setBusy(true);setError('');
     try{
       await window.studio.glabsApprove(scope.projectId,jobId,rights.trim());
       if(!isCurrentProjectSession(scope))return;
-      setPending(await window.studio.pendingMedia(scope.projectId) as PendingTargets|null);
-      await refreshImages(scope);
+      await refresh(scope);
       const next=await window.studio.projectState(scope.projectId);
-      if(setNativeIfSessionCurrent(scope,next))showNotice('Approved G-Labs image bound to frozen target; confirm Native candidate separately.');
-    }catch(e){if(isCurrentProjectSession(scope))setGlabsError(String(e));}
-    finally{if(isCurrentProjectSession(scope))setGlabsBusy(false);}
+      if(setNativeIfSessionCurrent(scope,next))showNotice('Inspected image approved and bound to exact Native target.');
+    }catch(e){if(isCurrentProjectSession(scope))setError(message(e));}
+    finally{if(isCurrentProjectSession(scope))setBusy(false);}
   };
-  const mapping=(native?.media??[]).filter(item=>{
-    if(!shot||!item.rights?.trim())return false;
-    if(item.kind==='image'&&item.shotId===shot.id&&item.layerId){
-      const actual=(native?.manifest?.shots as Array<Record<string,unknown>>|undefined)?.find(s=>s.id===shot.id);
-      return Boolean(actual&&Array.isArray(actual.layers)&&layerPath(actual.layers,item.layerId)===item.path);
-    }
-    if(item.kind==='sfx'&&item.track&&item.trackIndex!==undefined){
-      const track=native?.manifest?.[item.track];
-      return Array.isArray(track)&&(track[item.trackIndex] as Record<string,unknown>)?.path===item.path;
-    }
-    return false;
-  });
-  const importedUnassigned=(native?.media??[]).filter(item=>!item.shotId&&!item.track);
-  const importAndBind=async()=>{
-    if(!native||!window.studio||!pending||!target){setError('Choose an exact frozen native target before importing.');return;}
-    if(!rights.trim()){setError('Enter explicit rights/source attestation.');return;}
-    const scope=captureProjectSession();if(!scope)return;
-    try{
-      const file=await window.studio.importMedia(scope.projectId,{kind:target.kind,rights:rights.trim()});
-      if(!file||!isCurrentProjectSession(scope))return;
-      const result=await window.studio.fulfillMedia(scope.projectId,pending.token,target.key,file.path,rights.trim()) as PendingTargets;
-      if(!isCurrentProjectSession(scope))return;
-      const state=await window.studio.projectState(scope.projectId);
-      if(!setNativeIfSessionCurrent(scope,state))return;
-      setPending(result);setTargetKey('');
-      setError('');showNotice('File bound to the selected pending native target; confirm the candidate to commit.');
-    }catch(reason){if(isCurrentProjectSession(scope))setError(reason instanceof Error?reason.message:String(reason));}
-  };
-  return <div className="storyboard-layout"><Card>
-    <CardHeader title="Storyboard shots" hint={candidateShots.length?'Frozen external Native candidate · not yet committed':'Only shots actually present in original project.json'} action={<Badge tone={active.length?'mint':'amber'}>{active.length?'NATIVE DATA':'EMPTY'}</Badge>}/>
-    {active.length?<div className="shot-grid">{active.map((item,i)=><button key={item.id} className={index===i?'selected':''} onClick={()=>{setSelected(i);setTargetKey('');setImagePrompt('');}}><div className="scene-thumb"><strong>{item.id}</strong></div><div><strong>{item.id} · {item.title}</strong><small>{item.duration.toFixed(2)}s · {item.status}</small></div></button>)}</div>:<div className="info">EMPTY — No native shots. Import a reviewed Native Manifest from External ChatGPT. Pending media can still be bound below before promotion.</div>}
-  </Card><Card><CardHeader title={shot?shot.id+' · '+shot.title:'Native media fulfillment'} hint="No synthetic image or default layer"/>
-    {shot?<dl className="kvs"><dt>Duration</dt><dd>{shot.duration.toFixed(2)} seconds</dd><dt>Caption overlaps</dt><dd>{shot.captions?.map(item=>item.text+' ('+item.start+'–'+item.end+')').join(' | ')??shot.caption}</dd><dt>Committed native media</dt><dd>{mapping.map(item=>item.path).join(', ')||'None'}</dd><dt>Source</dt><dd>{candidateShots.length?'FROZEN NATIVE CANDIDATE':'project.json'}</dd></dl>:<div className="info">No selected native shot. This view does not create or display fixture artwork.</div>}
-    {native&&<Card><CardHeader title="Generate G-Labs image" hint="Choose a missing image layer for this Shot. Submissions are paid and require explicit confirmation."/>
-      <div className="info">Missing image targets in selected Shot: {shotImageTargets.length} · Total unresolved media references: {available.length}.</div>
-      {shotImageTargets.length>0?<Field label="Image layer to generate"><Select value={imageTarget?.key??''} onChange={event=>{setTargetKey(event.target.value);setImagePrompt('');setGlabsError('');}}>
-        {shotImageTargets.map(item=><option key={item.key} value={item.key}>{item.layerId} · {item.path}</option>)}
-      </Select></Field>:<div className="info" data-testid="glabs-image-unavailable">{!pending?'No current Native Author candidate is staged. Import/validate Native Author JSON first.':available.some(item=>item.kind==='image')?'No missing IMAGE layer in this Shot. Select another Shot on the left.':'No unfulfilled IMAGE layer remains in the current Native candidate.'}</div>}
-      {imageTarget&&<div className="info">{imageTarget.shotId} / {imageTarget.layerId} · {imageTarget.path}</div>}
-      <Field label="Image prompt (owner-confirmed, not invented)"><Textarea value={imagePrompt} onChange={event=>setImagePrompt(event.target.value)} placeholder="Paste/confirm the actual image requirement from Native asset_needs or shot ledger"/></Field>
-      <Field label="Ordered image references (comma-separated approved assets/images paths)"><Input value={referencePaths} onChange={event=>setReferencePaths(event.target.value)} placeholder="assets/images/reference1.png, assets/images/reference2.png"/></Field>
-      <div className="info">Model: {glabsConfig?.model??'Configure Settings first'} · Ratio: {glabsConfig?.aspectRatio??'unconfigured'} · Existing attempt: {latestTargetJob?.status??'None'}</div>
-      <Button variant="primary" disabled={glabsBusy||!imageTarget||!glabsConfig||!imagePrompt.trim()} onClick={generateImage}>Generate / Regenerate image (paid confirmation)</Button>
-    </Card>}
-    {shot&&<><div className="info">Image layers: {nativeImageLayers(shot.layers??[]).join(', ')||'No image layers'}</div>
-      {matchingLedger.length>0&&<pre className="prompt">Shot creative ledger (read only): {JSON.stringify(matchingLedger,null,2)}</pre>}
-      {relevantNeeds.length>0&&<pre className="prompt">Asset needs (read only): {JSON.stringify(relevantNeeds,null,2)}</pre>}
-    </>}
-    <dl className="kvs"><dt>Unassigned media imports</dt><dd>{importedUnassigned.length}</dd><dt>Pending missing references</dt><dd>{available.length}</dd></dl>
-    {native&&<><Field label="Exact missing candidate image layer or original audio track">
-      <Select value={targetKey} onChange={event=>{setTargetKey(event.target.value);setImagePrompt('');setGlabsError('');}}><option value="">Choose a real pending reference</option>{visibleTargets.map(item=><option key={item.key} value={item.key}>{item.kind.toUpperCase()} · {item.shotId||item.track} / {item.layerId||item.trackIndex} · {item.path}</option>)}</Select>
-    </Field><Field label="Owner-confirmed rights/source"><Input value={rights} onChange={event=>setRights(event.target.value)} placeholder="Owned or licensed source and rights"/></Field>
-    <div className="actions"><Button variant="primary" disabled={!target||!rights.trim()} onClick={importAndBind}>Import and bind target</Button><Button onClick={async()=>{if(!window.studio||!id)return;const scope=captureProjectSession();if(!scope)return;try{const value=await window.studio.pendingMedia(id) as PendingTargets|null;if(!isCurrentProjectSession(scope))return;setPending(value);setError('')}catch(e){if(!isCurrentProjectSession(scope))return;setPending(null);setError('Pending media ERROR: '+String(e))}}}>Refresh missing references</Button></div>
-    {pending&&<div className="info">Pending candidate: {pending.status}. A file is not committed until the reviewed native candidate is confirmed in External ChatGPT.</div>}
-
-    {shotJobs.length>0&&<div className="stack" aria-label="G-Labs image attempts">{shotJobs.map(job=><Card key={job.id}>
-      <CardHeader title={job.layerId+' · '+job.status} hint={job.model+' / '+job.aspectRatio}/>
-      <div className="info">Target: {job.targetPath} · Task: {job.providerTaskId??'Unconfirmed'} · {job.reason??''}</div>
-      {job.staged&&imageUrls[job.id]&&<img key={previewIdentity(job)} src={imageUrls[job.id]} alt={'G-Labs candidate for '+job.shotId+'/'+job.layerId} style={{maxWidth:'100%',maxHeight:260,objectFit:'contain'}}
-        onLoad={event=>{
-          if(event.currentTarget.complete&&event.currentTarget.naturalWidth>0&&event.currentTarget.naturalHeight>0){
-            setPreviewReady(previous=>({...previous,[job.id]:previewIdentity(job)}));
-            setPreviewErrors(previous=>{const next={...previous};delete next[job.id];return next;});
-          }else{
-            setPreviewReady(previous=>{const next={...previous};delete next[job.id];return next;});
-            setPreviewErrors(previous=>({...previous,[job.id]:'The image did not decode to visible pixels.'}));
-          }
-        }}
-        onError={()=>{
-          setPreviewReady(previous=>{const next={...previous};delete next[job.id];return next;});
-          setPreviewErrors(previous=>({...previous,[job.id]:'Generated image preview failed to load.'}));
-        }}/>} 
-      {job.status==='VALIDATED'&&previewReady[job.id]!==previewIdentity(job)&&<div className="info">Preview not verified — approve is disabled until the actual image loads.</div>}
-      {previewErrors[job.id]&&<div className="info error" role="alert">{previewErrors[job.id]}</div>}
-      {job.staged&&previewErrors[job.id]&&<Button disabled={glabsBusy} onClick={()=>{
-        setPreviewReady(previous=>{const next={...previous};delete next[job.id];return next;});
-        setPreviewErrors(previous=>{const next={...previous};delete next[job.id];return next;});
-        setPreviewAttempts(previous=>({...previous,[job.id]:(previous[job.id]??0)+1}));
-        const scope=captureProjectSession();
-        if(scope)void refreshImages(scope).catch(error=>{if(isCurrentProjectSession(scope))setGlabsError(String(error));});
-      }}>Retry image preview</Button>}
-      <div className="actions">
-        {['SUBMITTED','RUNNING','DOWNLOADED','UNKNOWN'].includes(job.status)&&<Button disabled={glabsBusy} onClick={()=>void pollImage(job.id)}>{job.providerTaskId?'Resume / Check status (read-only)':'Reconcile unconfirmed submission (read-only)'}</Button>}
-        {job.status==='QUEUED'&&<Button disabled={glabsBusy} onClick={async()=>{
-          const scope=captureProjectSession();if(!scope||!window.studio||!window.confirm('Cancel this queued G-Labs attempt before paid submission?'))return;
-          try{await window.studio.glabsCancelQueued(scope.projectId,job.id);if(isCurrentProjectSession(scope))await refreshImages(scope);}
-          catch(error){if(isCurrentProjectSession(scope))setGlabsError(String(error));}
-        }}>Cancel queued attempt</Button>}
-        {job.status==='VALIDATED'&&<Button variant="primary" disabled={glabsBusy||!rights.trim()||!imageUrls[job.id]||previewReady[job.id]!==previewIdentity(job)} onClick={()=>void approveImage(job.id)}>Approve inspected image + bind</Button>}
+  const counts={ready:prepared?.jobs.filter(j=>j.state==='READY').length??0,
+    review:prepared?.jobs.filter(j=>j.state==='NEEDS_OWNER_REVIEW').length??0,
+    blocked:prepared?.jobs.filter(j=>j.state==='BLOCKED').length??0};
+  return <div className="stack" data-testid="storyboard-automation">
+    <Card>
+      <CardHeader title="Storyboard & Images" hint="Prepare → Review → Generate → Inspect / Approve → Exact Native Binding" action={<Badge tone={native?.nativeDraft?'mint':'amber'}>{native?.nativeDraft?'DRAFT':'NO DRAFT'}</Badge>}/>
+      <div className="info"><strong>Current Project Style:</strong> {native?.project.style??'No project'} (read-only) · Video {native?.brief.ratio??'9:16'} · Native DRAFT {native?.nativeDraft?'r'+native.nativeDraft.revision:'not available'}</div>
+      <div className="info">Creative review: {native?.nativeDraft?.reviewStatus??'not verified'} · Unresolved findings are retained; media observations remain deferred.</div>
+      <div className="info" data-testid="image-queue-counts">
+        {prepared?.shotCount??shotIds.length} Shots · {prepared?.imageOccurrences??imageTargets.length} missing image occurrences · {prepared?.uniquePaths??new Set(imageTargets.map(item=>item.path)).size} distinct paths · READY {counts.ready} · Needs owner review {counts.review} · Blocked {counts.blocked}
       </div>
-      {job.approved&&<div className="info">Owner approved media: {job.approved.path} · SHA {job.approved.sha256}. Native candidate confirmation is separate.</div>}
-    </Card>)}</div>}
-    {shotJobs.some(job=>job.status==='APPROVED')&&<div className="info">An approved image remains locked. To replace it, start a new reviewed Native correction candidate for the exact Shot/layer; the existing committed asset is retained until the new candidate is confirmed.</div>}
-    {glabsError&&<div className="info error" role="alert">{glabsError}</div>}
-    {error&&<div className="info error" role="alert">{error}</div>}
-    </>}
-    {!native&&<div className="info">Open a real native project to import media.</div>}
-  </Card></div>;
+      <div className="actions"><Button disabled={!id||busy||!native?.nativeDraft} onClick={()=>void prepare()}>Prepare Images (read-only; no paid requests)</Button></div>
+      {shotIds.length?<div className="shot-grid">{shotIds.map(value=><button key={value} className={shotId===value?'selected':''} onClick={()=>{setSelectedShot(value);setSelectedKey('');}}>
+        <div className="scene-thumb"><strong>{value}</strong></div><div><strong>{value}</strong><small>{imageTargets.filter(t=>t.shotId===value).length} missing image layers</small></div>
+      </button>)}</div>:<div className="info">No Native DRAFT shots. Stage an approved source-grounded Native Author artifact first.</div>}
+    </Card>
+    <Card>
+      <CardHeader title={shotId?shotId+' · Image assets':'Image assets'} hint="Choose an image layer — style, prompt, model, ratio and technical IDs are inherited."/>
+      {shotTargets.length?<div className="stack" aria-label="Native image asset list">{shotTargets.map(item=>{
+        const row=prepared?.jobs.find(x=>x.targetKey===item.key);
+        const current=jobs.find(j=>j.token===pending?.token&&j.targetKey===item.key);
+        return <button key={item.key} className={target?.key===item.key?'selected':''} style={{padding:10,textAlign:'left'}}
+          onClick={()=>{setSelectedKey(item.key);setError('');}}>
+          <strong>{row?.sourceDescription.slice(0,115)||item.layerId||'Source description unavailable'}</strong>
+          <div className="info">{row?.state??'Preparing'} · {current?.status??'Not generated'} · {row?.occurrencesAtPath??1} same-path occurrence(s), not shared jobs</div>
+          {row?.reason&&<div className="info error">{row.reason}</div>}
+        </button>;
+      })}</div>:<div className="info" data-testid="glabs-image-unavailable">{!pending?'No Native DRAFT media candidate staged.':imageTargets.length?'No missing images in this Shot.':'All required image occurrences are fulfilled.'}</div>}
+      {spec&&<div className="stack">
+        <div className="info"><strong>Source image description:</strong> {spec.sourceDescription||spec.reason}</div>
+        <div className="info"><strong>Image Prompt:</strong> {spec.ownerEdited?'Owner-confirmed target override':'Deterministically compiled from approved style and exact Native source'} · {spec.state}{spec.reason?' · '+spec.reason:''}</div>
+        {spec.prompt&&<details><summary>Review complete Image Prompt and provenance</summary>
+          <pre className="prompt">{spec.prompt}</pre>
+          <pre className="prompt">{JSON.stringify(spec.sourceRows,null,2)}</pre>
+        </details>}
+        {spec.styleAnchors.length>0&&<Field label="Verified B4 style reference"><Select value={refs(ownerRefs).find(value=>value.startsWith('@modeb/b4/'))??''}
+          onChange={event=>setDraftReferences(old=>({...old,[identity]:event.target.value}))}>
+          <option value="">Choose a packaged B4 approved illustration</option>
+          {spec.styleAnchors.map(anchor=><option key={anchor.id} value={'@modeb/b4/'+anchor.id}>{anchor.id} · {anchor.label.slice(0,85)}</option>)}
+        </Select></Field>}
+        <div className="info">G-Labs model: {config?.model??'Configure Settings first'} · Output ratio: {config?.aspectRatio??'unknown'} · Price: unavailable · Paid submissions authorized: maximum 1 per click.</div>
+        {dirty&&<div className="info">Save this target's edit before paid generation. Other Shot/Layer prompts remain unchanged.</div>}
+        <div className="actions"><Button variant="primary" disabled={busy||!config||!ready||!ownerPrompt.trim()} onClick={()=>void generate()}>Generate Selected (1 paid request)</Button></div>
+      </div>}
+      {shotJobs.some(job=>job.status==='VALIDATED')&&<Field label="Owner-confirmed rights/source"><Input value={rights} onChange={event=>setRights(event.target.value)} placeholder="Owned/licensed provider image and source"/></Field>}
+      {shotJobs.length>0&&<div className="info">Actual generated-image previews (never automatically approved)</div>}
+      {shotJobs.map(job=><Card key={job.id}>
+        <CardHeader title={job.layerId+' · '+job.status} hint={job.model+' / '+job.aspectRatio}/>
+        <div className="info">Exact target: {job.shotId}/{job.layerId} · {job.targetPath} · {job.reason??''}</div>
+        {job.staged&&urls[job.id]&&<img key={previewIdentity(job)} src={urls[job.id]} alt={'G-Labs candidate for '+job.shotId+'/'+job.layerId}
+          style={{maxWidth:'100%',maxHeight:260,objectFit:'contain'}}
+          onLoad={event=>{
+            if(event.currentTarget.complete&&event.currentTarget.naturalWidth>0&&event.currentTarget.naturalHeight>0){
+              setPreviewReady(old=>({...old,[job.id]:previewIdentity(job)}));
+              setPreviewErrors(old=>{const next={...old};delete next[job.id];return next;});
+            }else{setPreviewReady(old=>{const next={...old};delete next[job.id];return next;});
+              setPreviewErrors(old=>({...old,[job.id]:'Generated image did not decode to visible pixels.'}));}
+          }}
+          onError={()=>{setPreviewReady(old=>{const next={...old};delete next[job.id];return next;});
+            setPreviewErrors(old=>({...old,[job.id]:'Generated image preview failed to load.'}));}}/>}
+        {job.status==='VALIDATED'&&previewReady[job.id]!==previewIdentity(job)&&<div className="info">Preview not verified — approval is blocked until the actual image loads.</div>}
+        {previewErrors[job.id]&&<div className="info error" role="alert">{previewErrors[job.id]}</div>}
+        {job.staged&&previewErrors[job.id]&&<Button disabled={busy} onClick={()=>{
+          setPreviewReady(old=>{const next={...old};delete next[job.id];return next;});
+          setPreviewErrors(old=>{const next={...old};delete next[job.id];return next;});
+          setPreviewAttempts(old=>({...old,[job.id]:(old[job.id]??0)+1}));
+          const scope=captureProjectSession();
+          if(scope)void refresh(scope).catch(e=>{if(isCurrentProjectSession(scope))setError(message(e));});
+        }}>Retry image preview</Button>}
+        <div className="actions">
+          {['SUBMITTED','RUNNING','DOWNLOADED','UNKNOWN'].includes(job.status)&&<Button disabled={busy} onClick={()=>void poll(job.id)}>Resume / Check status (read-only)</Button>}
+          {job.status==='VALIDATED'&&<Button variant="primary" disabled={busy||!rights.trim()||!urls[job.id]||previewReady[job.id]!==previewIdentity(job)} onClick={()=>void approve(job.id)}>Approve inspected image + bind</Button>}
+          {job.status==='QUEUED'&&<Button disabled={busy} onClick={async()=>{
+            const scope=captureProjectSession();if(!scope||!window.studio||!window.confirm('Cancel this queued request before paid submission?'))return;
+            try{await window.studio.glabsCancelQueued(scope.projectId,job.id);if(isCurrentProjectSession(scope))await refresh(scope);}
+            catch(e){if(isCurrentProjectSession(scope))setError(message(e));}
+          }}>Cancel queued attempt</Button>}
+        </div>
+        {job.approved&&<div className="info">Approved image: {job.approved.path} · SHA256 {job.approved.sha256}. This does not mean other occurrences are bound.</div>}
+      </Card>)}
+      {error&&<div className="info error" role="alert">{error}</div>}
+      {spec&&<details><summary>Advanced · target-specific edits and verified references</summary>
+        <div className="info">Native target: {spec.shotId}/{spec.layerId} · {spec.path}</div>
+        <div className="info">Style authority: {spec.styleProfileRef.path} · SHA256 {spec.styleProfileRef.sha256} · Creative fingerprint {spec.draftIdentity.creativeFingerprint}</div>
+        <Field label="Edit image prompt for current target only"><Textarea value={ownerPrompt} onChange={event=>setDraftPrompts(old=>({...old,[identity]:event.target.value}))} placeholder={spec.reason||'Prepared prompt appears automatically'}/></Field>
+        <Field label="Approved image references (advanced)"><Input value={ownerRefs} onChange={event=>setDraftReferences(old=>({...old,[identity]:event.target.value}))} placeholder="Only exact approved asset paths"/></Field>
+        <Button disabled={busy||ownerPrompt.trim().length<12} onClick={()=>void saveOverride()}>Save target-specific prompt/references</Button>
+      </details>}
+    </Card>
+    <details open={advanced} onToggle={event=>setAdvanced(event.currentTarget.open)}>
+      <summary>Advanced · manual Import & Bind, raw Native ledgers and diagnostics</summary>
+      {advanced&&<LegacyStoryboardWorkspace/>}
+    </details>
+  </div>;
 }
