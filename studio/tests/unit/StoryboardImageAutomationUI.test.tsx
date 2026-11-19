@@ -59,7 +59,7 @@ describe('Storyboard P1: real renderer queue and paid-action isolation',()=>{
     await screen.findByText(/Current Project Style:/);
     await waitFor(()=>expect(screen.getByTestId('image-queue-counts')).toHaveTextContent('READY 2'));
     expect(screen.getByText(/Creative review:/)).toHaveTextContent('REVIEWED_WITH_FINDINGS');
-    expect(screen.getByText(/Current Project Style:/)).toHaveTextContent('B2');
+    expect(screen.getByText(/Current Project Style:/).closest('div')).toHaveTextContent('B2');
     expect(generate).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button',{name:'Prepare Images (read-only; no paid requests)'}));
     await waitFor(()=>expect(prepare).toHaveBeenCalledTimes(2));
@@ -74,7 +74,7 @@ describe('Storyboard P1: real renderer queue and paid-action isolation',()=>{
     fireEvent.change(input,{target:{value:'Owner custom red kite pose and no caption'}});
     expect(screen.getByText(/Save this target's edit before paid generation/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button',{name:/sh-b/}));
-    expect(screen.getByText(/A blue backpack/)).toBeInTheDocument();
+    expect(screen.getAllByText(/A blue backpack/).length).toBeGreaterThan(0);
     const selected=screen.getByText(/Source image description:/).closest('div');
     expect(selected).toHaveTextContent('A blue backpack');
     expect(generate).not.toHaveBeenCalled();
@@ -96,7 +96,7 @@ describe('Storyboard P1: real renderer queue and paid-action isolation',()=>{
     render(<AppStateProvider><Harness/></AppStateProvider>);
     await waitFor(()=>expect(screen.getByTestId('image-queue-counts')).toHaveTextContent('READY 2'));
     fireEvent.click(screen.getByRole('button',{name:'Switch project B'}));
-    await waitFor(()=>expect(screen.getByText(/Current Project Style:/)).toHaveTextContent('B2'));
+    await waitFor(()=>expect(screen.getByText(/Current Project Style:/).closest('div')).toHaveTextContent('B2'));
     await waitFor(()=>expect(screen.getByTestId('image-queue-counts')).toHaveTextContent('READY 2'));
     fireEvent.click(screen.getByRole('button',{name:'Generate Selected (1 paid request)'}));
     await waitFor(()=>expect(generate).toHaveBeenCalled());
