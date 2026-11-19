@@ -76,7 +76,7 @@ export function StoryboardWorkspace(){
     const scope=captureProjectSession();if(!scope||!window.studio?.prepareImages)return;
     setBusy(true);setError('');
     try{
-      const next=await window.studio.prepareImages(scope.projectId);
+      const next=await window.studio.prepareImages(scope.projectId,true);
       if(isCurrentProjectSession(scope))setPrepared(next);
     }catch(e){if(isCurrentProjectSession(scope))setError(message(e));}
     finally{if(isCurrentProjectSession(scope))setBusy(false);}
