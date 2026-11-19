@@ -4,7 +4,7 @@ import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import type {CredentialCipher} from './elevenlabsCredentials.js';
 import {getPendingMedia,importMediaFile,fulfillMedia,nativeImageTargetIdentity} from './externalTasks.js';
-import {prepareNativeImages} from './imagePreparation.js';
+import {prepareNativeImages,loadImageStyleProfile} from './imagePreparation.js';
 import {atomicJson,nativeSkillRoot,readState,resolveProjectFile,sha,strictJson} from './services.js';
 
 export const GLABS_MODELS=['nano_banana_2','nano_banana_pro'] as const;
@@ -14,6 +14,7 @@ export interface GLabsSettings{endpoint:string;contract:'legacy';model:string;as
 export interface GLabsJob {
   schema:'r3-glabs-job-v1';id:string;projectId:string;nativeRevision:number;token:string;targetKey:string;shotId:string;layerId:string;targetPath:string;candidateSha256:string;
   authorTaskId?:string;draftRevisionAtSubmission?:number;targetCreativeSha256?:string;
+  styleProfileId?:'B1'|'B2'|'B3'|'B4';styleProfileSha256?:string;
   prompt:string;promptSha256:string;references:Array<{path:string;sha256:string;mime:string;name:string;rightsSha256:string}>;model:string;aspectRatio:string;status:JobStatus;
   providerTaskId?:string;staged?:{path:string;sha256:string;mime:string;width:number;height:number};
   reason?:string;approved?:{rights:string;path:string;sha256:string};createdAt:string;updatedAt:string;
@@ -204,6 +205,11 @@ function assertJobTarget(appPath:string,root:string,job:GLabsJob){
   if(identity.authorTaskId!==job.authorTaskId||identity.fingerprint!==job.targetCreativeSha256||
     identity.shotId!==job.shotId||identity.layerId!==job.layerId||identity.path!==job.targetPath)
     throw new Error('GLABS_JOB_STALE_CREATIVE_TARGET: Native image instructions changed.');
+  if(!job.styleProfileSha256||!job.styleProfileId)
+    throw new Error('GLABS_JOB_STYLE_AUTHORITY_MISSING: old job cannot be newly approved without pinned style evidence.');
+  if(state.project.style!==job.styleProfileId||
+    loadImageStyleProfile(appPath,state.project.style as 'B1'|'B2'|'B3'|'B4').sha256!==job.styleProfileSha256)
+    throw new Error('GLABS_JOB_STALE_STYLE_AUTHORITY: approved style source changed after image generation.');
   return current;
 }
 /** Persist stale attempts so output history is retained, never silently re-bound. */
@@ -228,7 +234,9 @@ export function invalidateGlabsJobsAfterNativeCorrection(appPath:string,root:str
       try{
         const identity=nativeImageTargetIdentity(root,job.targetKey);
         current=identity.fingerprint===job.targetCreativeSha256&&
-          identity.authorTaskId===job.authorTaskId;
+          identity.authorTaskId===job.authorTaskId&&
+          job.styleProfileId===readState(root).project.style&&Boolean(job.styleProfileSha256)&&
+          loadImageStyleProfile(appPath,job.styleProfileId as 'B1'|'B2'|'B3'|'B4').sha256===job.styleProfileSha256;
       }catch{/* A retired target has no current binding. */}
       if(!current){
         job.reason='GLABS_APPROVED_OUTPUT_SUPERSEDED: historical approved media retained; current Native draft requires a new target review.';
@@ -265,6 +273,7 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
     throw new Error('GLABS_MODEL_CONFIG_MISMATCH: save exact chosen model/ratio in Settings.');
   const {pending,match}=pendingTarget(appPath,root,input.targetKey);
   const state=readState(root),creative=nativeImageTargetIdentity(root,input.targetKey),
+    styleProfile=loadImageStyleProfile(appPath,state.project.style as 'B1'|'B2'|'B3'|'B4'),
     old=listGlabsJobs(root).filter(j=>j.token===pending.token&&j.targetKey===input.targetKey);
   const shots=(pending.after as Record<string,unknown>).shots;
   if(!['B1','B2','B3','B4'].includes(state.project.style)||state.brief.ratio!=='9:16'||
@@ -308,6 +317,7 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
     nativeRevision:state.tasks?.native?.revision??0,token:pending.token,targetKey:match.key,shotId:match.shotId,layerId:match.layerId,
     targetPath:match.path,candidateSha256:sha(JSON.stringify(pending.after)),
     authorTaskId:creative.authorTaskId,draftRevisionAtSubmission:creative.draftRevision,targetCreativeSha256:creative.fingerprint,
+    styleProfileId:styleProfile.id,styleProfileSha256:styleProfile.sha256,
     prompt:input.prompt.trim(),promptSha256:sha(input.prompt.trim()),
     references:referenceFiles,model:input.model,aspectRatio:input.aspectRatio,status:'QUEUED',createdAt:timestamp(),updatedAt:timestamp()};
   const lock=job.projectId+':'+job.token+':'+job.targetKey;
