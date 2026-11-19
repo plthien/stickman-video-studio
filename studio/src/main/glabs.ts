@@ -4,7 +4,7 @@ import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import type {CredentialCipher} from './elevenlabsCredentials.js';
 import {getPendingMedia,importMediaFile,fulfillMedia,nativeImageTargetIdentity} from './externalTasks.js';
-import {atomicJson,readState,resolveProjectFile,sha,strictJson} from './services.js';
+import {atomicJson,nativeSkillRoot,readState,resolveProjectFile,sha,strictJson} from './services.js';
 
 export const GLABS_MODELS=['nano_banana_2','nano_banana_pro'] as const;
 export const GLABS_RATIOS=['1:1','3:4','4:3','9:16','16:9'] as const;
@@ -148,6 +148,27 @@ function validatedImage(root:string,relative:string,recordedSha?:string){
   if(recordedSha&&sha(bytes)!==recordedSha)throw new Error('G-Labs referenced image SHA changed.');
   return{bytes,mime,sha256:sha(bytes)};
 }
+/** B4 approved Skill references may be transmitted as image-only style anchors.
+ * Their SHA and approved manifest are checked again at submission and approval. */
+function verifiedB4Reference(appPath:string,root:string,identifier:string){
+  const parsed=/^@modeb\/b4\/([A-Za-z0-9_-]+)$/.exec(identifier);
+  if(!parsed||readState(root).project.style!=='B4')throw new Error('GLABS_B4_REFERENCE_NOT_ELIGIBLE');
+  const dir=path.join(nativeSkillRoot(appPath).root,'assets','b4');
+  const raw=fs.readFileSync(path.join(dir,'approved-style.json'),'utf8');
+  const manifest=strictJson(raw) as Record<string,unknown>;
+  const pinnedPrompt=manifest.prompt as Record<string,unknown>|undefined;
+  if(manifest.style!=='B4'||pinnedPrompt?.sha256!==sha(fs.readFileSync(path.join(dir,'style-lock.txt'))))
+    throw new Error('GLABS_B4_STYLE_LOCK_INVALID');
+  if(!Array.isArray(manifest.references))throw new Error('GLABS_B4_REFERENCE_MANIFEST_INVALID');
+  const record=manifest.references.find(value=>value&&typeof value==='object'&&(value as Record<string,unknown>).id===parsed[1]) as Record<string,unknown>|undefined;
+  if(!record||typeof record.path!=='string'||!/^[A-Za-z0-9_-]+\.png$/.test(record.path)||
+    typeof record.sha256!=='string'||!/^[a-f0-9]{64}$/.test(record.sha256))
+    throw new Error('GLABS_B4_REFERENCE_NOT_PINNED');
+  const bytes=fs.readFileSync(path.join(dir,record.path));
+  if(bytes.length>MAX_IMAGE||sha(bytes)!==record.sha256||imageMime(bytes)!=='image/png')
+    throw new Error('GLABS_B4_REFERENCE_SHA_OR_MIME_MISMATCH');
+  return{bytes,mime:'image/png',sha256:record.sha256,rightsSha256:sha(raw+'|style-only|'+identifier)};
+}
 function writeJob(root:string,job:GLabsJob){
   job.updatedAt=timestamp();
   atomicJson(jobFile(root,job.id),job);
@@ -234,6 +255,12 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
   if(!['B1','B2','B3','B4'].includes(state.project.style)||state.brief.ratio!=='9:16'||
     !Array.isArray(shots)||shots.some(item=>!pureObject(item)||typeof item.end!=='number'||item.end>=300))
     throw new Error('GLABS_R3_SCOPE_INVALID: only verified B1–B4 portrait Native candidates below 300 seconds.');
+  if(state.project.style==='B4'){
+    const locked=fs.readFileSync(path.join(nativeSkillRoot(appPath).root,'assets','b4','style-lock.txt'),'utf8').trim();
+    if(!input.prompt.includes(locked))throw new Error('GLABS_B4_STYLE_LOCK_REQUIRED');
+    if(!input.references.some(ref=>typeof ref==='string'&&ref.startsWith('@modeb/b4/')))
+      throw new Error('GLABS_B4_APPROVED_REFERENCE_REQUIRED');
+  }
   if(old.some(j=>['QUEUED','SUBMITTED','RUNNING','DOWNLOADED'].includes(j.status)))
     throw new Error('GLABS_EXISTING_ACTIVE_ATTEMPT');
   if(old.some(j=>j.status==='UNKNOWN')&&!input.acknowledgeUnknown)
@@ -243,6 +270,10 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
   if(!Array.isArray(input.references)||input.references.length>8||new Set(input.references).size!==input.references.length)
     throw new Error('GLABS_REFERENCES_INVALID');
   const referenceFiles=input.references.map((relative,index)=>{
+    if(typeof relative==='string'&&relative.startsWith('@modeb/b4/')){
+      const pinned=verifiedB4Reference(appPath,root,relative);
+      return{path:relative,sha256:pinned.sha256,mime:pinned.mime,name:'ref_'+String(index+1).padStart(3,'0')+'.png',rightsSha256:pinned.rightsSha256};
+    }
     if(typeof relative!=='string'||!/^assets\/images\/[^/]+\.(png|jpe?g)$/i.test(relative))
       throw new Error('GLABS_REFERENCE_PATH_INVALID');
     const entry=(state.media??[]).find(m=>m.path===relative&&m.kind==='image'&&Boolean(m.rights?.trim()));
@@ -288,9 +319,9 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
     try{
       // Creative draft or source rights may have changed during the async probe.
       assertJobTarget(appPath,root,job);
-      assertJobReferences(root,job,decode);
+      assertJobReferences(appPath,root,job,decode);
       const refs=job.references.map(ref=>{
-        const checked=validatedImage(root,ref.path,ref.sha256);
+        const checked=ref.path.startsWith('@modeb/b4/')?verifiedB4Reference(appPath,root,ref.path):validatedImage(root,ref.path,ref.sha256);
         return{data:'data:'+ref.mime+';base64,'+checked.bytes.toString('base64'),name:ref.name};
       });
       providerPayload={prompt:job.prompt,model:job.model,aspect_ratio:job.aspectRatio,reference_images:refs,upscale:[]};
@@ -391,10 +422,20 @@ export async function pollGlabsImage(appPath:string,root:string,userData:string,
   job.status='VALIDATED';writeJob(root,job);
   return job;
 }
-function assertJobReferences(root:string,job:GLabsJob,decode:GLabsDecoder){
+function assertJobReferences(appPath:string,root:string,job:GLabsJob,decode:GLabsDecoder){
   if(!Array.isArray(job.references))throw new Error('GLABS_REFERENCE_EVIDENCE_MISSING');
   const media=readState(root).media??[];
   for(const ref of job.references){
+    if(ref&&typeof ref.path==='string'&&ref.path.startsWith('@modeb/b4/')){
+      const pinned=verifiedB4Reference(appPath,root,ref.path);
+      if(ref.sha256!==pinned.sha256||ref.mime!==pinned.mime||ref.rightsSha256!==pinned.rightsSha256)
+        throw new Error('GLABS_B4_REFERENCE_PIN_CHANGED');
+      const decoded=decode(pinned.bytes);
+      if(!decoded||!Buffer.isBuffer(decoded.png)||imageMime(decoded.png)!=='image/png'||
+        decoded.width<1||decoded.height<1||decoded.width>8192||decoded.height>8192)
+        throw new Error('GLABS_B4_REFERENCE_IMAGE_UNDECODABLE');
+      continue;
+    }
     if(!ref||typeof ref.path!=='string'||!/^assets\/images\/[^/]+\.(png|jpe?g)$/i.test(ref.path)||
        typeof ref.sha256!=='string'||typeof ref.mime!=='string'||typeof ref.rightsSha256!=='string'||
        !/^[a-f0-9]{64}$/.test(ref.rightsSha256))
