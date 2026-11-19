@@ -216,8 +216,15 @@ function assertJobTarget(appPath:string,root:string,job:GLabsJob){
 function currentJobTarget(appPath:string,root:string,job:GLabsJob):boolean{
   try{assertJobTarget(appPath,root,job);return true;}
   catch(error){
-    if(job.status!=='APPROVED'){
-      job.status='STALE';job.reason=error instanceof Error?error.message:'GLABS_JOB_STALE_CREATIVE_TARGET';
+    const reason=error instanceof Error?error.message:'GLABS_JOB_STALE_CREATIVE_TARGET';
+    if(job.status==='UNKNOWN'){
+      // Preserve the potentially charged outcome even when creative/style
+      // evidence becomes stale. Otherwise a new attempt could bypass the
+      // mandatory UNKNOWN-billing acknowledgement.
+      job.reason='GLABS_UNKNOWN_MAY_HAVE_CHARGED; '+reason;
+      writeJob(root,job);
+    }else if(job.status!=='APPROVED'){
+      job.status='STALE';job.reason=reason;
       writeJob(root,job);
     }
     return false;
