@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {deflateSync} from 'node:zlib';
 import {afterEach,describe,expect,it,vi} from 'vitest';
-import {approveGlabsImage,clearGlabsKey,glabsCredentialStatus,glabsProbe,glabsSettings,listGlabsJobs,pollGlabsImage,saveGlabsKey,saveGlabsSettings,submitGlabsImage,invalidateGlabsJobsAfterNativeCorrection} from '../../src/main/glabs';
+import {approveGlabsImage,clearGlabsKey,glabsCredentialStatus,glabsProbe,glabsSettings,listGlabsJobs,pollGlabsImage,saveGlabsKey,saveGlabsSettings,submitGlabsImage,invalidateGlabsJobsAfterNativeCorrection,reconcileGlabsJobs} from '../../src/main/glabs';
 import {getPendingMedia,importMediaFile,readNativeDraft,publishNativeDraftCorrection} from '../../src/main/externalTasks';
 import {readState,sha,writeState} from '../../src/main/services';
 import {appPath,cleanup,fixture,importedSource,nativePayload,stageNative} from './SixIssueFixtures';
@@ -313,6 +313,16 @@ describe('F04 — immutable approved style source binding in the paid image life
     expect(persisted.status).toBe('STALE');
     expect(persisted.reason).toMatch(/STALE_STYLE_AUTHORITY/);
     expect(readState(root).media!.filter(item=>item.shotId===targets[0].shotId)).toHaveLength(0);
+    expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
+  });
+  it('F04-GL05 read-only Storyboard job listing reconciles stale style evidence without paid POST',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport();
+    const job=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    await pollGlabsImage(appPath,root,dir,cipher,job.id,decode);
+    reviseApprovedB1StyleForTest();
+    const reconciled=reconcileGlabsJobs(appPath,root).find(entry=>entry.id===job.id)!;
+    expect(reconciled.status).toBe('STALE');
+    expect(reconciled.reason).toMatch(/STALE_STYLE_AUTHORITY/);
     expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
   });
   it('F04-GL04 changing style cannot downgrade UNKNOWN billing into a retryable stale job',async()=>{
