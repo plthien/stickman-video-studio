@@ -56,7 +56,8 @@ export function StoryboardWorkspace(){
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[id,native?.nativeDraft?.token,native?.nativeDraft?.revision,native?.external?.native?.revision]);
   useEffect(()=>{setDraftPrompts({});setDraftReferences({});setSelectedShot('');setSelectedKey('');setAdvanced(false);},[id]);
-  const shots=Array.isArray(pending?.after?.shots)?pending.after.shots as Array<Record<string,unknown>>:[];
+  const candidateAfter=pending?.after as {shots?:unknown[]}|undefined;
+  const shots=Array.isArray(candidateAfter?.shots)?candidateAfter.shots as Array<Record<string,unknown>>:[];
   const shotIds=shots.filter(row=>typeof row.id==='string').map(row=>row.id as string);
   const shotId=shotIds.includes(selectedShot)?selectedShot:shotIds[0]??'';
   const imageTargets=pending?.missing.filter(row=>row.kind==='image')??[];
