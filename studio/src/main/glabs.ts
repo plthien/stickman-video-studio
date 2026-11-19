@@ -467,7 +467,7 @@ export function approveGlabsImage(appPath:string,root:string,id:string,rights:st
     decoded.width<1||decoded.height<1||decoded.width>8192||decoded.height>8192)
     throw new Error('GLABS_IMAGE_APPROVAL_DECODE_MISMATCH');
   assertImageRatio(job.aspectRatio,decoded.width,decoded.height);
-  assertJobReferences(root,job,decode);
+  assertJobReferences(appPath,root,job,decode);
   // All output/reference checks precede importMediaFile and fulfillMedia mutation.
   const imported=importMediaFile(root,resolveProjectFile(root,job.staged.path),'image',rights.trim());
   const bound=fulfillMedia(appPath,root,job.token,job.targetKey,imported.path,rights.trim());
