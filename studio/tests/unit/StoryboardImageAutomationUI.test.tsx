@@ -88,6 +88,7 @@ describe('Storyboard P1: real renderer queue and paid-action isolation',()=>{
     await waitFor(()=>expect(generate).toHaveBeenCalledTimes(1));
     expect(generate).toHaveBeenCalledWith('A',expect.objectContaining({
       targetKey:'image:0:layer-a',model:'nano_banana_2',aspectRatio:'9:16',authorized:true,
+      preparedFingerprint:'a'.repeat(64),
       prompt:expect.stringContaining('A painted red kite'),references:[]
     }));
   });
