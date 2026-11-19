@@ -9,7 +9,7 @@ import {confirmLifecycleResult,freezeLifecycleTask,readFrozenExternalTask,stageL
 import {readExternalHistory} from './externalHistory.js';
 import {prepareNativeImages,saveNativeImagePrompt} from './imagePreparation.js';
 import { getCaptionReview, draftCaptionReview, approveCaptionReview,autoCaptionReview } from './captionReview.js';
-import {glabsSettings,saveGlabsSettings,glabsCredentialStatus,saveGlabsKey,clearGlabsKey,glabsProbe,listGlabsJobs,submitGlabsImage,pollGlabsImage,approveGlabsImage,cancelQueuedGlabsImage,type GLabsSettings,type ImageRequest} from './glabs.js';
+import {glabsSettings,saveGlabsSettings,glabsCredentialStatus,saveGlabsKey,clearGlabsKey,glabsProbe,reconcileGlabsJobs,submitGlabsImage,pollGlabsImage,approveGlabsImage,cancelQueuedGlabsImage,type GLabsSettings,type ImageRequest} from './glabs.js';
 import { discoverNano, generateNano, nanoBase } from './nanoClient.js';
 import { cancelJob, nativeJob, reconcileJob } from './nativeJobs.js';
 import { importAlignedWords, importApprovedWav, longformStatus, runLongform, narrationAction } from './voiceMedia.js';
@@ -47,7 +47,7 @@ function registerIpc() {
   ipcMain.handle('glabs:saveKey',(_event,key:string)=>saveGlabsKey(app.getPath('userData'),safeStorage,key));
   ipcMain.handle('glabs:clearKey',()=>clearGlabsKey(app.getPath('userData'),safeStorage));
   ipcMain.handle('glabs:probe',()=>glabsProbe(app.getPath('userData'),safeStorage));
-  ipcMain.handle('glabs:jobs',(_event,id:string)=>listGlabsJobs(rootFor(id)));
+  ipcMain.handle('glabs:jobs',(_event,id:string)=>reconcileGlabsJobs(app.getAppPath(),rootFor(id)));
   const decodeGlabsImage=(bytes:Buffer)=>{
     const decoded=nativeImage.createFromBuffer(bytes);
     if(decoded.isEmpty())throw new Error('GLABS_IMAGE_DECODE_FAILED');
