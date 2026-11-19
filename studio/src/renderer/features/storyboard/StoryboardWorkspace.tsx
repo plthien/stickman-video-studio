@@ -1,7 +1,7 @@
+/* eslint-disable react-hooks/exhaustive-deps -- all async refreshes are guarded by the captured project session */
 import {useEffect,useState} from 'react';
 import {useAppState} from '../../app/AppState';
 import {Badge,Button,Card,CardHeader,Field,Input,Select,Textarea} from '../../components/ui';
-import type {ImageJobSpec} from '../../../main/imagePreparation.js';
 import {LegacyStoryboardWorkspace} from './LegacyStoryboardWorkspace';
 
 type Studio=NonNullable<Window['studio']>;
