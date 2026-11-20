@@ -642,6 +642,12 @@ export function approveGlabsImage(appPath:string,root:string,id:string,rights:st
       return{job,pending:getPendingMedia(appPath,root)};
     }
     if(job.status!=='VALIDATED'||!job.staged)throw new Error('GLABS_IMAGE_NOT_VALIDATED');
+    // Validate provider-prompt provenance on EVERY approval path, before
+    // attempting crash recovery or mutating a fulfillment journal. A forged
+    // prompt hash must fail closed without rewriting the original job state.
+    if(typeof job.prompt!=='string'||typeof job.promptSha256!=='string'||
+      job.promptSha256!==sha(job.prompt))
+      throw new Error('GLABS_JOB_STALE_PROMPT_EVIDENCE: stored image prompt SHA does not match the original provider payload.');
     // Crash-safe idempotency: only the exact same generated job can recover its
     // already committed binding; there must never be a second import.
     const recovered=recoverCommittedGeneratedApproval(appPath,root,job,decode);
