@@ -621,7 +621,8 @@ export function getNativeImageGallery(_appPath:string,root:string){
   const originalShots=Array.isArray(original.shots)?original.shots as Array<Record<string,unknown>>:[];
   const frozenRefs=nativeRefs(original).filter(ref=>ref.kind==='image');
   const targets:Array<{key:string;shotId:string;layerId:string;path:string;
-    boundPath:string;boundSha256?:string;fulfilled:boolean;managed:boolean}>=[];
+    boundPath:string;boundSha256?:string;creativeFingerprint?:string;
+    fulfilled:boolean;managed:boolean}>=[];
   const shots=originalShots.map((shot,index)=>{
     const shotId=String(shot.id??'');
     const available:typeof targets=[];
@@ -633,6 +634,13 @@ export function getNativeImageGallery(_appPath:string,root:string){
           const key='image:'+index+':'+layerId;
           const ref=frozenRefs.find(row=>row.key===key&&row.shotId===shotId&&row.path===layer.path);
           const binding=ref?pending.fulfillments[key]:undefined;
+          let creativeFingerprint:string|undefined;
+          if(ref){
+            try{
+              creativeFingerprint=imageTargetIdentity(state,draft.authorTaskId,
+                draft.token,draft.revision,draft.artifact,key).fingerprint;
+            }catch{/* A candidate without verified creative identity cannot be approved. */}
+          }
           // Exact committed journal and media metadata must agree before the
           // gallery describes a Layer as fulfilled. This is not a replacement
           // for bytewise SHA validation when a binding is actually used.
@@ -643,6 +651,7 @@ export function getNativeImageGallery(_appPath:string,root:string){
           available.push({key,shotId,layerId,path:layer.path,
             boundPath:fulfilled?binding!.relative:layer.path,
             ...(fulfilled?{boundSha256:binding!.sha256}:{}),
+            ...(creativeFingerprint?{creativeFingerprint}:{}),
             fulfilled,managed:Boolean(ref)});
         }
         if(Array.isArray(layer.children))visit(layer.children);
