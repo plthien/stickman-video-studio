@@ -284,8 +284,10 @@ export function StoryboardWorkspace(){
   useEffect(()=>{setSelectedApproved(new Set());},[id,shotId,pending?.token,
     native?.nativeDraft?.revision]);
   useEffect(()=>{
+    // Selection/approval intent is scoped to the visible Native Shot.
+    // Navigating away stops remaining approvals after the current mutation.
     if(approvalBatch.current)approvalBatch.current.cancelled=true;
-  },[id,native?.nativeDraft?.token,native?.nativeDraft?.revision]);
+  },[id,shotId,native?.nativeDraft?.token,native?.nativeDraft?.revision]);
   const prepare=async()=>{
     const scope=captureProjectSession();if(!scope||!window.studio?.prepareImages)return;
     setBusy(true);setError('');
