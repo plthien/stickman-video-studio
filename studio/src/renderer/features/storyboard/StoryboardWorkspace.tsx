@@ -192,10 +192,13 @@ export function StoryboardWorkspace(){
         (right.createdAt??'').localeCompare(left.createdAt??''));
     const spec=prepared?.jobs.find(value=>value.targetKey===item.key)??null;
     const sameAuthority=(job:ImageJob)=>(
-      (!job.targetCreativeSha256||!spec||
-        job.targetCreativeSha256===spec.draftIdentity.creativeFingerprint)&&
+      (!job.targetCreativeSha256||
+        ((spec?.draftIdentity.creativeFingerprint??item.creativeFingerprint)===
+          job.targetCreativeSha256))&&
       (!job.styleProfileSha256||!spec||
-        job.styleProfileSha256===spec.styleProfileRef.sha256)
+        job.styleProfileSha256===spec.styleProfileRef.sha256)&&
+      (!job.styleProfileId||!native?.project.style||
+        job.styleProfileId===native.project.style)
     );
     const bound=history.find(job=>job.status==='APPROVED'&&item.fulfilled&&
       sameAuthority(job)&&(!job.approved||
