@@ -312,7 +312,7 @@ function assertPreparedImageRequest(appPath:string,root:string,input:ImageReques
   // Existing explicit manual owner-authored workflow remains supported.
   // Automatic Storyboard submissions carry a frozen creative fingerprint
   // and cannot bypass source readiness or reuse a stale saved prompt.
-  if(input.preparedFingerprint===undefined)return;
+  if(input.preparedFingerprint===undefined)return null;
   if(typeof input.preparedFingerprint!=='string'||!/^[a-f0-9]{64}$/.test(input.preparedFingerprint))
     throw new Error('GLABS_PREPARED_FINGERPRINT_INVALID');
   const candidate=prepareNativeImageTarget(appPath,root,input.targetKey);
@@ -320,13 +320,19 @@ function assertPreparedImageRequest(appPath:string,root:string,input:ImageReques
   if(!ready||ready.state!=='READY'||ready.prompt.trim()!==input.prompt.trim()||
     JSON.stringify(ready.references)!==JSON.stringify(input.references))
     throw new Error('GLABS_PREPARED_TARGET_NOT_READY_OR_STALE');
+  return ready;
 }
 export async function submitGlabsImage(appPath:string,root:string,userData:string,cipher:CredentialCipher,input:ImageRequest,decode:GLabsDecoder){
   const preflightStarted=performance.now();
   if(input.authorized!==true)throw new Error('GLABS_PAID_SUBMISSION_REQUIRES_EXPLICIT_OWNER_AUTHORIZATION');
   if(typeof input.prompt!=='string'||input.prompt.trim().length<12||input.prompt.length>18000)
     throw new Error('GLABS_PROMPT_REQUIRED: owner must confirm an actual image requirement.');
-  assertPreparedImageRequest(appPath,root,input);
+  const prepared=assertPreparedImageRequest(appPath,root,input);
+  // Owner prompt is an editable description; for prepared Native image jobs
+  // the authoritative selected B1–B4 guidance is independently composed.
+  const providerPrompt=prepared?.effectivePrompt??input.prompt.trim();
+  if(providerPrompt.length>18000)
+    throw new Error('GLABS_EFFECTIVE_PROMPT_OVERSIZE');
   const config=glabsSettings(userData);
   if(input.model!==config.model||input.aspectRatio!==config.aspectRatio)
     throw new Error('GLABS_MODEL_CONFIG_MISMATCH: save exact chosen model/ratio in Settings.');
@@ -340,7 +346,7 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
     throw new Error('GLABS_R3_SCOPE_INVALID: only verified B1–B4 portrait Native candidates below 300 seconds.');
   if(state.project.style==='B4'){
     const locked=loadImageStyleProfile(appPath,'B4').guidance;
-    if(!input.prompt.includes(locked))throw new Error('GLABS_B4_STYLE_LOCK_REQUIRED');
+    if(!providerPrompt.includes(locked))throw new Error('GLABS_B4_STYLE_LOCK_REQUIRED');
     if(!input.references.some(ref=>typeof ref==='string'&&ref.startsWith('@modeb/b4/')))
       throw new Error('GLABS_B4_APPROVED_REFERENCE_REQUIRED');
   }
@@ -380,7 +386,7 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
     targetPath:match.path,candidateSha256:sha(JSON.stringify(pending.after)),
     authorTaskId:creative.authorTaskId,draftRevisionAtSubmission:creative.draftRevision,targetCreativeSha256:creative.fingerprint,
     styleProfileId:styleProfile.id,styleProfileSha256:styleProfile.sha256,
-    prompt:input.prompt.trim(),promptSha256:sha(input.prompt.trim()),
+    prompt:providerPrompt,promptSha256:sha(providerPrompt),
     references:referenceFiles,model:input.model,aspectRatio:input.aspectRatio,status:'QUEUED',createdAt:timestamp(),updatedAt:timestamp()};
   const lock=job.projectId+':'+job.token+':'+job.targetKey;
   if(active.has(lock))throw new Error('GLABS_TARGET_ALREADY_RUNNING');
