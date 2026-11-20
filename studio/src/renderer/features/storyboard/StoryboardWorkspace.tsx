@@ -3,11 +3,13 @@ import {useEffect,useLayoutEffect,useRef,useState} from 'react';
 import {useAppState} from '../../app/AppState';
 import {Badge,Button,Card,CardHeader,Field,Input,Select,Textarea} from '../../components/ui';
 import {LegacyStoryboardWorkspace} from './LegacyStoryboardWorkspace';
+import {ShotImageGallery,type GalleryTarget,type GalleryCard} from './ShotImageGallery';
 
 type Studio=NonNullable<Window['studio']>;
 type Pending=Awaited<ReturnType<Studio['pendingMedia']>>;
 type Prepared=Awaited<ReturnType<Studio['prepareImages']>>;
 type ImageJob=Awaited<ReturnType<Studio['glabsJobs']>>[number];
+type Gallery=Awaited<ReturnType<NonNullable<Studio['galleryImages']>>>;
 const message=(error:unknown)=>error instanceof Error?error.message:String(error);
 const refs=(raw:string)=>raw.split(',').map(v=>v.trim()).filter(Boolean);
 
@@ -18,6 +20,13 @@ export function StoryboardWorkspace(){
   const [pending,setPending]=useState<Pending|null>(null);
   const [prepared,setPrepared]=useState<Prepared|null>(null);
   const [jobs,setJobs]=useState<ImageJob[]>([]);
+  const [gallery,setGallery]=useState<Gallery|null>(null);
+  const [selectedApproved,setSelectedApproved]=useState<Set<string>>(new Set());
+  const approving=useRef(false);
+  const approvalBatch=useRef<{cancelled:boolean}|null>(null);
+  const [approvalResults,setApprovalResults]=useState<Array<{
+    jobId:string;shotId:string;layerId:string;status:'approved'|'failed';detail:string
+  }>>([]);
   // Provider events can arrive while initial source preparation is still
   // running. Buffer them so an older glabsJobs snapshot cannot hide DONE.
   const receivedJobUpdates=useRef<Map<string,ImageJob>>(new Map());
@@ -54,10 +63,11 @@ export function StoryboardWorkspace(){
     // Show corruption as an explicit error instead of an empty queue.
     const nextPending=await studio.pendingMedia(scope.projectId)
       .catch(cause=>{throw new Error('Pending media ERROR: '+message(cause));});
-    const [nextJobs,nextConfig,nextPrepared]=await Promise.all([
+    const [nextJobs,nextConfig,nextPrepared,nextGallery]=await Promise.all([
       studio.glabsJobs(scope.projectId),
       studio.glabsSettings(),
-      studio.prepareImages?.(scope.projectId)??Promise.resolve(null)
+      studio.prepareImages?.(scope.projectId)??Promise.resolve(null),
+      studio.galleryImages?.(scope.projectId)??Promise.resolve(null)
     ]);
     // Avoid N image URL IPC roundtrips for projects with hundreds of jobs.
     // Only the selected candidate's preview is resolved on demand below.
@@ -74,13 +84,14 @@ export function StoryboardWorkspace(){
         merged.unshift(newer);
     }
     setPending(nextPending);setJobs(merged);setConfig(nextConfig.config);
-    setPrepared(nextPrepared);
+    setPrepared(nextPrepared);setGallery(nextGallery);
     return{pending:nextPending,jobs:merged};
   };
   useEffect(()=>{
     const scope=captureProjectSession();
     receivedJobUpdates.current.clear();
-    setPending(null);setPrepared(null);setJobs([]);setConfig(null);setUrls({});
+    setPending(null);setPrepared(null);setJobs([]);setGallery(null);setConfig(null);setUrls({});
+    setSelectedApproved(new Set());setApprovalResults([]);
     setPreviewReady({});setPreviewErrors({});setPreviewAttempts({});setError('');setRights('');setBusy(false);
     setSubmission(null);setBatchProgress(null);
     if(scope&&window.studio)void refresh(scope).catch(e=>{if(isCurrentProjectSession(scope))setError(message(e));});
@@ -109,6 +120,8 @@ export function StoryboardWorkspace(){
   useEffect(()=>()=>{if(batchSession.current)batchSession.current.cancelled=true;},[]);
   useEffect(()=>{
     if(batchSession.current)batchSession.current.cancelled=true;
+    if(approvalBatch.current)approvalBatch.current.cancelled=true;
+    setSelectedApproved(new Set());setApprovalResults([]);
     setDraftPrompts({});setDraftReferences({});setSelectedShot('');setSelectedKey('');
     setAdvanced(false);setUrls({});
   },[id]);
