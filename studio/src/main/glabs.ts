@@ -512,15 +512,19 @@ export async function pollGlabsImage(appPath:string,root:string,userData:string,
   if(!currentJobTarget(appPath,root,job))return job;
   if(!pureObject(response)||response.task_id!==task)throw new Error('GLABS_STATUS_TASK_ID_MISMATCH');
   const status=String(response.status);
-  if(status==='pending'||status==='running'){
-    // A previous verified completion cannot be undone by a stale provider
-    // reply. Retain original completion evidence and retry GET-only later.
-    if(job.providerCompletedAt)return job;
+  if((status==='pending'||status==='running')&&!job.providerCompletedAt){
     if(job.status!=='RUNNING'){job.status='RUNNING';job.syncPhase='provider';writeJob(root,job);}
     return job;
   }
-  if(status==='failed'){job.status='FAILED';job.reason='Provider reported failure (no automatic retry).';writeJob(root,job);return job;}
-  if(status!=='completed')throw new Error('GLABS_STATUS_UNRECOGNIZED');
+  if(status==='failed'&&!job.providerCompletedAt){
+    job.status='FAILED';job.reason='Provider reported failure (no automatic retry).';
+    writeJob(root,job);return job;
+  }
+  // Once completion has been persisted, any later stale pending/running/failed
+  // status cannot revoke the DONE evidence or strand an image with an earlier
+  // result/download failure. Continue GET-only ingestion of that SAME task.
+  if(status!=='completed'&&!job.providerCompletedAt)
+    throw new Error('GLABS_STATUS_UNRECOGNIZED');
   // Provider completion is independently durable evidence. Errors below are
   // result-ingestion errors, never a failed/chargeable generation or new POST.
   if(!job.providerCompletedAt){
