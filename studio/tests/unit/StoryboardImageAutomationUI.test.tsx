@@ -72,7 +72,7 @@ describe('Storyboard P1: real renderer queue and paid-action isolation',()=>{
     fireEvent.click(screen.getByText(/Advanced · target-specific edits/));
     const input=screen.getByLabelText('Edit image prompt for current target only');
     fireEvent.change(input,{target:{value:'Owner custom red kite pose and no caption'}});
-    expect(screen.getByText('Save the edited prompt/references before generating this image')).toBeInTheDocument();
+    expect(screen.getByText(/Save the edited prompt\/references before generating this image\./)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button',{name:/sh-b/}));
     expect(screen.getAllByText(/A blue backpack/).length).toBeGreaterThan(0);
     const selected=screen.getByText(/Source image description:/).closest('div');
