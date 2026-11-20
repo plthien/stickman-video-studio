@@ -90,7 +90,7 @@ describe('F07 — UNKNOWN recovery in the primary Storyboard without automatic p
       'Original provider task timed out; billing uncertain');
     expect(screen.getByTestId('unknown-attempt-evidence')).toHaveTextContent('ab12cd34');
     expect(screen.getByText(/Exact Native target:/).closest('div')).toHaveTextContent('shot-1/layer-1');
-    expect(screen.getByRole('button',{name:'Regenerate Selected (1 NEW paid request)'})).toBeDisabled();
+    expect(screen.getByRole('button',{name:'Regenerate Image'})).toBeDisabled();
     expect(screen.queryByRole('button',{name:'Authorize ONE New Image Attempt (paid confirmation)'})).not.toBeInTheDocument();
     expect(generate).not.toHaveBeenCalled();
   });
