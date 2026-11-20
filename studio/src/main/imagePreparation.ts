@@ -113,9 +113,32 @@ export function compileImageJobSpecs(input:{
     const requirements=imageRequirementsForTarget(rows,{
       shotId:target.shotId??'',layerId:target.layerId??'',path:target.path
     });
-    const matching=requirements.matching;
+    const matching=requirements.matching,globals=requirements.global;
     const conflictingPath=requirements.conflicting.length>0;
     const descriptions=[...new Set(matching.map(row=>row.description).filter(Boolean))];
+    // Global fields are instructions, never invented per-target descriptions.
+    // Each row is rendered separately in source order and remains in provenance.
+    const globalCreative=globals.map(row=>[
+      ...(row.description?['CONTENT / DIRECTIVE',row.description]:[]),
+      ...(row.orientation?['OUTPUT / ORIENTATION',row.orientation]:[]),
+      ...(row.continuity?['CONTINUITY',row.continuity]:[]),
+      ...(row.assetKind?['ASSET KIND',row.assetKind]:[])
+    ]);
+    const missingGlobalInstruction=globalCreative.some(parts=>parts.length===0);
+    const globalSections=globalCreative.map(parts=>
+      ['EXPLICIT GLOBAL IMAGE INSTRUCTION [Native asset_needs]',...parts].join('\n'));
+    const declaredOrientations=[
+      ...matching.map(row=>row.orientation).filter(Boolean),
+      ...globals.map(row=>row.orientation).filter(Boolean)
+    ];
+    const declaredKinds=[
+      ...matching.map(row=>row.assetKind).filter(Boolean),
+      ...globals.map(row=>row.assetKind).filter(Boolean)
+    ];
+    const globalFieldConflict=globals.length>0&&(
+      new Set(declaredOrientations).size>1||
+      new Set(declaredKinds).size>1
+    );
     const dimensions=[...new Set(matching.map(row=>row.orientation).filter(Boolean))];
     const continuity=[...new Set(matching.map(row=>row.continuity).filter(Boolean))];
     const ledger=ledgers.find(value=>object(value)&&(value.shot_id===target.shotId||value.shotId===target.shotId));
@@ -124,6 +147,12 @@ export function compileImageJobSpecs(input:{
     let state:PreparedState='READY',reason='';
     if(!layerExists||!fingerprint||!target.shotId||!target.layerId){state='BLOCKED';reason='Exact current Shot/Layer/path or creative fingerprint is invalid.';}
     else if(conflictingPath){state='BLOCKED';reason='Conflicting Native expected_path for the exact Shot/Layer; targeted Native Correct required.';}
+    else if(missingGlobalInstruction){
+      state='BLOCKED';reason='An explicitly global asset_needs row has no expressible creative instruction. Correct the Native Author source; this global fingerprint cannot be silently omitted from a prompt.';
+    }
+    else if(globalFieldConflict){
+      state='BLOCKED';reason='Conflicting global versus target-specific output orientation or asset kind in Native asset_needs. Correct the source before image generation.';
+    }
     else if(requirements.partial.length){state='NEEDS_OWNER_REVIEW';reason='Partial legacy Shot/Layer ownership cannot identify this image target safely. Specify exact Shot/Layer/path or one shared exact path description.';}
     else if(matching.length===0){state='NEEDS_OWNER_REVIEW';reason='No exact matching image description in asset_needs (target or shared exact path).';}
     else if(descriptions.length===0){state='NEEDS_OWNER_REVIEW';reason='Matching asset_needs has no explicit image content/description.';}
@@ -135,6 +164,7 @@ export function compileImageJobSpecs(input:{
     const sections=[
       'APPROVED MODE B STYLE '+style+' ['+profile.path+'; SHA256 '+profile.sha256+']',
       profile.guidance,
+      ...globalSections,
       'EXACT IMAGE CONTENT [Native asset_needs; '+target.shotId+'/'+target.layerId+'; '+target.path+']',
       sourceDescription,
       ...(dimensions.length===1?['ASSET ORIENTATION / OUTPUT REQUIREMENT',dimensions[0]]:[]),
@@ -145,7 +175,20 @@ export function compileImageJobSpecs(input:{
     const owner=input.overrides?.[target.key];
     const validOwner=owner?.creativeFingerprint===fingerprint&&owner.style===style&&owner.styleSha256===profile.sha256&&
       typeof owner.prompt==='string'&&owner.prompt.trim().length>=12;
-    const prompt=validOwner?owner.prompt.trim():computed;
+    // An owner override must not silently erase authoritative global source
+    // requirements. Retain the stored owner text, add any missing global
+    // directives, and retain style authority in this effective prepared prompt.
+    const ownerText=validOwner?owner.prompt.trim():'';
+    const missingOwnerGlobals=validOwner?globalSections.filter((_section,index)=>{
+      const directive=globalCreative[index];
+      return directive.some(value=>!['CONTENT / DIRECTIVE','OUTPUT / ORIENTATION','CONTINUITY','ASSET KIND'].includes(value)&&
+        !ownerText.includes(value));
+    }):[];
+    const prompt=validOwner?[
+      ...(globals.length&&!ownerText.includes(profile.guidance)?
+        ['APPROVED MODE B STYLE '+style+' ['+profile.path+'; SHA256 '+profile.sha256+']',profile.guidance]:[]),
+      ownerText,...missingOwnerGlobals
+    ].filter(Boolean).join('\n\n'):computed;
     // Owner edits can resolve a missing/conflicting description, but never a
     // structural blocker or a missing/integrity-failed style authority.
     if(validOwner&&state==='NEEDS_OWNER_REVIEW'){state='READY';reason='Owner reviewed and supplied this exact target prompt.';}
@@ -159,7 +202,7 @@ export function compileImageJobSpecs(input:{
       assetKey:target.key,targetKeys:[target.key],expectedPaths:[target.path],
       targetKey:target.key,shotId:target.shotId??'',layerId:target.layerId??'',path:target.path,assetKind:declaredKind,
       state,reason,prompt,promptSha256:prompt?sha(prompt):'',
-      sourceDescription,sourceLedger,sourceRows:[...matching,...requirements.conflicting,...requirements.partial].map(row=>row.source),
+      sourceDescription,sourceLedger,sourceRows:requirements.effective.map(row=>row.source),
       styleProfileRef:{id:style,path:profile.path,sha256:profile.sha256},
       references:validOwner&&Array.isArray(owner?.references)?owner.references:[],
       styleAnchors:profile.anchors,
