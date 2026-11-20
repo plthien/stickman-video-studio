@@ -1,5 +1,5 @@
 /* eslint-disable react-hooks/exhaustive-deps -- all async refreshes are guarded by the captured project session */
-import {useEffect,useState} from 'react';
+import {useEffect,useRef,useState} from 'react';
 import {useAppState} from '../../app/AppState';
 import {Badge,Button,Card,CardHeader,Field,Input,Select,Textarea} from '../../components/ui';
 import {LegacyStoryboardWorkspace} from './LegacyStoryboardWorkspace';
@@ -28,6 +28,12 @@ export function StoryboardWorkspace(){
   const [previewAttempts,setPreviewAttempts]=useState<Record<string,number>>({});
   const [rights,setRights]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const [advanced,setAdvanced]=useState(false);
+  // UNKNOWN consent belongs to one exact project/session/Shot/Layer/attempt
+  // identity. It is neither persisted nor reused after selection changes.
+  const [checkedUnknown,setCheckedUnknown]=useState('');
+  const [acknowledgedUnknown,setAcknowledgedUnknown]=useState('');
+  const recoveryEpoch=useRef(0);
+  const recoveryIdentityRef=useRef('');
   const refresh=async(scope=captureProjectSession())=>{
     if(!scope||!window.studio)return;
     const studio=window.studio;
@@ -75,7 +81,21 @@ export function StoryboardWorkspace(){
     (draftReferences[identity]!==undefined&&draftReferences[identity]!==spec?.references.join(','));
   const ready=spec?.state==='READY'&&!dirty;
   const selectedAttempts=jobs.filter(job=>job.targetKey===target?.key&&job.token===pending?.token);
-  const hasUncertainAttempt=selectedAttempts.some(job=>job.status==='UNKNOWN');
+  const unknownAttempts=selectedAttempts.filter(job=>job.status==='UNKNOWN');
+  const hasUncertainAttempt=unknownAttempts.length>0;
+  const recoveryIdentity=hasUncertainAttempt&&spec?[
+    id??'',pending?.token??'',spec.shotId,spec.layerId,spec.path,
+    spec.draftIdentity.creativeFingerprint,spec.styleProfileRef.sha256,
+    ...unknownAttempts.map(job=>job.id+':'+(job.providerTaskId??'')).sort()
+  ].join('|'):'';
+  recoveryIdentityRef.current=recoveryIdentity;
+  useEffect(()=>{
+    recoveryEpoch.current+=1;
+    setCheckedUnknown('');
+    setAcknowledgedUnknown('');
+  },[recoveryIdentity,selectedShot,selectedKey]);
+  const recoveryChecked=Boolean(recoveryIdentity&&checkedUnknown===recoveryIdentity);
+  const recoveryAcknowledged=Boolean(recoveryChecked&&acknowledgedUnknown===recoveryIdentity);
   const hasActiveAttempt=selectedAttempts.some(job=>['SUBMITTED','RUNNING','DOWNLOADED','QUEUED'].includes(job.status));
   const hasPreviousAttempt=selectedAttempts.length>0;
   const canSubmit=Boolean(ready&&!hasUncertainAttempt&&!hasActiveAttempt);
@@ -103,26 +123,54 @@ export function StoryboardWorkspace(){
     }catch(e){if(isCurrentProjectSession(scope))setError(message(e));}
     finally{if(isCurrentProjectSession(scope))setBusy(false);}
   };
-  const generate=async()=>{
-    const scope=captureProjectSession();if(!scope||!window.studio)return;
+  const checkUnknownAttempts=async()=>{
+    const scope=captureProjectSession();
+    if(!scope||!window.studio||!recoveryIdentity||!unknownAttempts.length||busy)return;
+    const identity=recoveryIdentity,epoch=recoveryEpoch.current;
+    setBusy(true);setError('');setCheckedUnknown('');setAcknowledgedUnknown('');
+    try{
+      // Only existing read-only polling routes. Never trigger a provider POST.
+      const outcomes=await Promise.all(unknownAttempts.map(job=>
+        window.studio!.glabsPoll(scope.projectId,job.id)));
+      if(!isCurrentProjectSession(scope)||recoveryEpoch.current!==epoch||
+        recoveryIdentityRef.current!==identity)return;
+      await refresh(scope);
+      if(isCurrentProjectSession(scope)&&recoveryEpoch.current===epoch&&
+        recoveryIdentityRef.current===identity&&outcomes.every(job=>job.status==='UNKNOWN'))
+        setCheckedUnknown(identity);
+    }catch(e){if(isCurrentProjectSession(scope)&&recoveryEpoch.current===epoch)
+      setError('Checking existing G-Labs attempt failed: '+message(e));}
+    finally{if(isCurrentProjectSession(scope)&&recoveryEpoch.current===epoch)setBusy(false);}
+  };
+  const generate=async(recoverUnknown=false)=>{
+    const scope=captureProjectSession();if(!scope||!window.studio||busy)return;
     if(!target||!spec||!ready||!config||!ownerPrompt.trim()){
       setError(spec?.reason||'Exact source-backed image requirement is not ready.');return;
     }
     const attempts=jobs.filter(job=>job.targetKey===target.key&&job.token===pending?.token);
-    if(attempts.some(job=>job.status==='UNKNOWN')){
-      setError('GLABS_UNKNOWN_MAY_HAVE_CHARGED: reconcile the existing attempt before requesting another paid image. No automatic retry is authorized.');return;
+    const uncertain=attempts.some(job=>job.status==='UNKNOWN');
+    if(uncertain&&!recoverUnknown){
+      setError('GLABS_UNKNOWN_MAY_HAVE_CHARGED: check the existing attempt before authorizing another potentially paid image.');return;
+    }
+    if(recoverUnknown&&(!uncertain||!recoveryAcknowledged||
+      recoveryIdentityRef.current!==recoveryIdentity)){
+      setError('GLABS_UNKNOWN_ACK_REQUIRED: first check the existing attempt and explicitly acknowledge possible duplicate billing for this exact target.');return;
     }
     if(attempts.some(job=>['SUBMITTED','RUNNING','DOWNLOADED','QUEUED'].includes(job.status))){
       setError('An image job is already active for this exact target. Resume or inspect it.');return;
     }
-    if(attempts.length&&!window.confirm('Regenerate this exact image target? This starts a NEW potentially paid request; the previous attempt will not be reused.'))return;
+    if(attempts.length&&!recoverUnknown&&
+      !window.confirm('Regenerate this exact image target? This starts a NEW potentially paid request; the previous attempt will not be reused.'))return;
+    // Consume consent BEFORE awaiting the Electron dialog; a second click
+    // cannot reuse consent, even if the owner cancels that paid confirmation.
+    if(recoverUnknown){setCheckedUnknown('');setAcknowledgedUnknown('');}
     setBusy(true);setError('');
     try{
-      // One click = at most ONE paid submission. Main owns Electron paid dialog,
-      // rights/SHA validation, draft fingerprint, UNKNOWN and no-retry semantics.
+      // One click = at most ONE paid submission. Main owns the mandatory
+      // Electron warning/dialog, frozen creative/style checks and no-retry rule.
       await window.studio.glabsGenerate(scope.projectId,{targetKey:target.key,prompt:ownerPrompt.trim(),
         model:config.model,aspectRatio:config.aspectRatio,references:refs(ownerRefs),authorized:true,
-        regenerate:attempts.length>0,acknowledgeUnknown:false,
+        regenerate:attempts.length>0,acknowledgeUnknown:recoverUnknown,
         preparedFingerprint:spec.draftIdentity.creativeFingerprint});
       if(isCurrentProjectSession(scope))await refresh(scope);
     }catch(e){if(isCurrentProjectSession(scope))setError(message(e));}
@@ -165,7 +213,7 @@ export function StoryboardWorkspace(){
         {prepared?.shotCount??shotIds.length} Shots · {prepared?.imageOccurrences??imageTargets.length} missing image occurrences · {prepared?.uniquePaths??new Set(imageTargets.map(item=>item.path)).size} distinct paths · READY {counts.ready} · Needs owner review {counts.review} · Blocked {counts.blocked}
       </div>
       <div className="actions"><Button disabled={!id||busy||!native?.nativeDraft} onClick={()=>void prepare()}>Prepare Images (read-only; no paid requests)</Button></div>
-      {shotIds.length?<div className="shot-grid">{shotIds.map(value=><button key={value} className={shotId===value?'selected':''} onClick={()=>{setSelectedShot(value);setSelectedKey('');}}>
+      {shotIds.length?<div className="shot-grid">{shotIds.map(value=><button key={value} className={shotId===value?'selected':''} onClick={()=>{recoveryEpoch.current+=1;setCheckedUnknown('');setAcknowledgedUnknown('');setSelectedShot(value);setSelectedKey('');}}>
         <div className="scene-thumb"><strong>{value}</strong></div><div><strong>{value}</strong><small>{imageTargets.filter(t=>t.shotId===value).length} missing image layers</small></div>
       </button>)}</div>:<div className="info">No native shots in the current Native DRAFT. Stage an approved source-grounded Native Author artifact first.</div>}
     </Card>
@@ -175,7 +223,7 @@ export function StoryboardWorkspace(){
         const row=prepared?.jobs.find(x=>x.targetKey===item.key);
         const current=jobs.find(j=>j.token===pending?.token&&j.targetKey===item.key);
         return <button key={item.key} className={target?.key===item.key?'selected':''} style={{padding:10,textAlign:'left'}}
-          onClick={()=>{setSelectedKey(item.key);setError('');}}>
+          onClick={()=>{recoveryEpoch.current+=1;setCheckedUnknown('');setAcknowledgedUnknown('');setSelectedKey(item.key);setError('');}}>
           <strong>{row?.sourceDescription.slice(0,115)||item.layerId||'Source description unavailable'}</strong>
           <div className="info">{row?.state??'Preparing'} · {current?.status??'Not generated'} · {row?.occurrencesAtPath??1} same-path occurrence(s), not shared jobs</div>
           {row?.reason&&<div className="info error">{row.reason}</div>}
@@ -197,8 +245,29 @@ export function StoryboardWorkspace(){
         {dirty&&<div className="info">Save this target's edit before paid generation. Other Shot/Layer prompts remain unchanged.</div>}
         {hasUncertainAttempt&&<div className="info error" role="alert">Prior G-Labs job has UNKNOWN billing status. Check/reconcile that attempt; this screen will not authorize a new paid request automatically.</div>}
         {hasActiveAttempt&&<div className="info">An image job is already active. Check its status or inspect the result instead of resubmitting.</div>}
-        <div className="actions"><Button variant="primary" disabled={busy||!config||!canSubmit||!ownerPrompt.trim()} onClick={()=>void generate()}>{hasPreviousAttempt?'Regenerate Selected (1 NEW paid request)':'Generate Selected (1 paid request)'}</Button></div>
+        <div className="actions"><Button variant="primary" disabled={busy||!config||!canSubmit||!ownerPrompt.trim()} onClick={()=>void generate(false)}>{hasPreviousAttempt?'Regenerate Selected (1 NEW paid request)':'Generate Selected (1 paid request)'}</Button></div>
       </div>}
+      {hasUncertainAttempt&&target&&<Card>
+        <CardHeader title="UNKNOWN image attempt · owner recovery" hint="Existing provider request may already have been charged. Checking is read-only."/>
+        <div className="info"><strong>Exact Native target:</strong> {target.shotId}/{target.layerId} · {target.path} · {target.key}</div>
+        {unknownAttempts.map(job=><div key={job.id} className="info" data-testid="unknown-attempt-evidence">
+          <strong>UNKNOWN</strong> · Job {job.id} · Provider task ID: {job.providerTaskId??'Not confirmed'}
+          <div>Persisted diagnostic: {job.reason??'No further provider evidence available'}</div>
+        </div>)}
+        <div className="info error" role="alert">UNKNOWN does not mean failed or successful. The provider may have charged for the prior request; do not assume it is safe to retry.</div>
+        <Button disabled={busy} onClick={()=>void checkUnknownAttempts()}>Check Existing Attempt (read-only)</Button>
+        {recoveryChecked&&<div className="stack" data-testid="unknown-recovery-confirmation">
+          <div className="info error">Existing attempt still UNKNOWN after checking. A new image attempt can cause duplicate billing.</div>
+          <label style={{display:'flex',gap:8,alignItems:'flex-start'}}>
+            <input type="checkbox" aria-label="Acknowledge possible duplicate billing for this exact G-Labs target"
+              checked={recoveryAcknowledged}
+              onChange={event=>setAcknowledgedUnknown(event.target.checked?recoveryIdentity:'')}/>
+            I understand the previous request may already have been charged, and I authorize one separate new attempt for this exact Shot/Layer.
+          </label>
+          <Button variant="primary" disabled={busy||!ready||!config||!ownerPrompt.trim()||!recoveryAcknowledged||hasActiveAttempt}
+            onClick={()=>void generate(true)}>Authorize ONE New Image Attempt (paid confirmation)</Button>
+        </div>}
+      </Card>}
       {shotJobs.some(job=>job.status==='VALIDATED')&&<Field label="Owner-confirmed rights/source"><Input value={rights} onChange={event=>setRights(event.target.value)} placeholder="Owned/licensed provider image and source"/></Field>}
       {shotJobs.length>0&&<div className="info">Actual generated-image previews (never automatically approved)</div>}
       {shotJobs.map(job=><Card key={job.id}>
