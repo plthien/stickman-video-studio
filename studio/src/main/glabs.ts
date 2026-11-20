@@ -580,6 +580,14 @@ function recoverCommittedGeneratedApproval(
 ){
   if(job.status!=='VALIDATED'||!job.staged||!job.styleProfileId||
     !job.styleProfileSha256||!job.targetCreativeSha256)return null;
+  // Normal approvals are unbound. Inspect the small persisted journal first:
+  // do NOT hash/resolve all Native targets twice for every 200-image approval.
+  const file=resolveProjectFile(root,'.studio/external/pending.json');
+  if(!fs.existsSync(file))return null;
+  const snapshot=strictJson(fs.readFileSync(file,'utf8')) as {
+    token?:string;fulfillments?:Record<string,{relative:string;sha256:string;rights:string;kind:string}>
+  };
+  if(snapshot.token!==job.token||!snapshot.fulfillments?.[job.targetKey])return null;
   const pending=getPendingMedia(appPath,root);
   if(!pending||pending.token!==job.token)return null;
   const binding=pending.fulfillments[job.targetKey];
