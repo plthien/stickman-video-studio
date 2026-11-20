@@ -595,15 +595,27 @@ export function StoryboardWorkspace(){
       <CardHeader title="Storyboard Images" action={<Badge tone={native?.nativeDraft?'mint':'amber'}>{native?.nativeDraft?'DRAFT':'NO DRAFT'}</Badge>}/>
       <div className="storyboard-compact-toolbar">
         <div className="info" data-testid="image-queue-counts">
-          {prepared?.imageOccurrences??imageTargets.length} missing image occurrences · READY {counts.ready} · Review {counts.review} · Blocked {counts.blocked}
+          {galleryTargets.length} Native images · {imageCounts.notGenerated} not generated ·
+          {' '+imageCounts.processing} processing · {imageCounts.syncIssues} sync issue ·
+          {' '+imageCounts.inspectedReady} inspected ready ·
+          {' '+imageCounts.approved} currently approved ·
+          {' '+imageCounts.superseded} superseded ·
+          READY {counts.ready} · Review {counts.review} · Blocked {counts.blocked}
         </div>
         <Button disabled={!id||busy||Boolean(submission)||!native?.nativeDraft} onClick={()=>void prepare()}>Refresh Images</Button>
         <span title="Starts one potentially paid G-Labs request per never-attempted READY image. Total cost is unavailable. No automatic retries.">
           <Button variant="primary" disabled={busy||Boolean(submission)||!eligibleBulk.length}
             onClick={()=>void generateAll()}>
-            Generate All Ready ({eligibleBulk.length} requests)
+            Generate All Ready ({eligibleBulk.length} paid attempts)
           </Button>
         </span>
+        <Button disabled={!shotIds.length} onClick={()=>{
+          setSelectedShot(nextReviewShot());setUnknownReview(null);
+        }}>Review Project Images</Button>
+        <Button disabled={busy||!inspectedReadyCards.length}
+          onClick={()=>void approveCandidates(inspectedReadyCards.map(card=>card.job.id))}>
+          Approve All Inspected Ready ({inspectedReadyCards.length})
+        </Button>
       </div>
       {batchProgress&&<div className="storyboard-batch-progress" role="status" data-testid="image-batch-progress">
         <strong>{batchProgress.state==='running'?'Submitting image requests':
@@ -628,7 +640,9 @@ export function StoryboardWorkspace(){
       {shotIds.length?<div className="storyboard-shot-strip" aria-label="Native shots">{shotIds.map(value=><button key={value}
         className={shotId===value?'selected':''}
         onClick={()=>{recoveryEpoch.current+=1;setUnknownReview(null);setSelectedShot(value);}}>
-        {value}<small>{galleryTargets.filter(item=>item.shotId===value).length} images</small>
+        {value}<small>{galleryTargets.filter(item=>item.shotId===value).length} images ·
+          {' '+resolvedCards.filter(card=>card.target.shotId===value&&
+            card.job?.status==='VALIDATED'&&!card.target.fulfilled).length} ready</small>
       </button>)}</div>:<div className="info">No native shots in the current Native DRAFT. Stage an approved source-grounded Native Author artifact first.</div>}
       <details className="storyboard-technical-details">
         <summary>Project &amp; queue details</summary>
@@ -643,7 +657,7 @@ export function StoryboardWorkspace(){
         <Button variant="primary" disabled={busy||Boolean(submission)||
           !eligibleBulk.some(item=>item.shotId===shotId)}
           onClick={()=>void generateAll(shotId)}>
-          Generate All in Shot ({eligibleBulk.filter(item=>item.shotId===shotId).length})
+          Generate All in Shot ({eligibleBulk.filter(item=>item.shotId===shotId).length} paid attempts)
         </Button>
         <Button disabled={busy||!inspectedReadyCards.some(card=>
           card.target.shotId===shotId&&selectedApproved.has(card.job.id))}
@@ -655,18 +669,18 @@ export function StoryboardWorkspace(){
         <Button disabled={busy||!inspectedReadyCards.some(card=>card.target.shotId===shotId)}
           onClick={()=>void approveCandidates(inspectedReadyCards.filter(card=>
             card.target.shotId===shotId).map(card=>card.job.id))}>
-          Approve All Ready in Shot ({inspectedReadyCards.filter(card=>
+          Approve All Inspected Ready in Shot ({inspectedReadyCards.filter(card=>
             card.target.shotId===shotId).length})
-        </Button>
-        <Button disabled={busy||!inspectedReadyCards.length}
-          onClick={()=>void approveCandidates(inspectedReadyCards.map(card=>card.job.id))}>
-          Approve All Ready ({inspectedReadyCards.length})
         </Button>
       </div>
       <div className="info">Only inspected, successfully loaded VALIDATED images can be approved.
         Other Shots must be visually reviewed before project-wide approval.
         G-Labs provenance is recorded automatically; external licensing is not independently verified.
-        Each Generate request may incur a separate charge.</div>
+        Each Generate request may incur a separate charge.
+        {galleryTargets.length>uniquePaths&&
+          ' '+galleryTargets.length+' Native occurrences map to '+uniquePaths+
+          ' unique asset paths: each eligible target can be billed separately; no shared binding is implied.'}
+      </div>
       <ShotImageGallery projectId={id??''} shotId={shotId} cards={cards} urls={urls}
         previewReady={previewReady} previewErrors={previewErrors}
         previewIdentity={previewIdentity}
