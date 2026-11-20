@@ -54,10 +54,11 @@ function Harness(){
     <StoryboardWorkspace/></>;
 }
 function install(options:{blocked?:boolean;pollResult?:'UNKNOWN'|'RUNNING'|'FAILED';
-  journalAdvancesDuringPoll?:boolean;cancellation?:boolean}={}){
+  journalAdvancesDuringPoll?:boolean;pollRejected?:boolean;cancellation?:boolean}={}){
   let persisted=[unknown];
   const generate=vi.fn(async()=>options.cancellation?null:{id:'22222222-2222-4222-8222-222222222222'});
   const poll=vi.fn(async()=>{
+    if(options.pollRejected)throw new Error('Injected G-Labs read-only GET timeout');
     if(options.journalAdvancesDuringPoll){
       // Simulate an older poll returning UNKNOWN while persisted job history
       // has already advanced to RUNNING in a separate read-only reconciliation.
@@ -108,6 +109,20 @@ describe('F07 — UNKNOWN recovery in the primary Storyboard without automatic p
     expect(poll).toHaveBeenCalledWith('A',unknown.id);
     expect(generate).not.toHaveBeenCalled();
     expect(screen.getByTestId('unknown-recovery-confirmation')).toHaveTextContent('duplicate billing');
+  });
+  it('F12-UNKNOWN-01 rejected provider GET is CHECK_FAILED_UNVERIFIED, not CHECKED_STILL_UNKNOWN',async()=>{
+    const {poll,generate}=install({pollRejected:true});
+    render(<AppStateProvider><Harness/></AppStateProvider>);
+    fireEvent.click(await screen.findByRole('button',{name:'Check Existing Attempt (read-only)'}));
+    await waitFor(()=>expect(screen.getByTestId('unknown-check-outcome'))
+      .toHaveTextContent('CHECK_FAILED_UNVERIFIED'));
+    expect(screen.getByTestId('unknown-attempt-evidence')).toHaveTextContent('UNKNOWN');
+    expect(screen.queryByTestId('unknown-recovery-confirmation')).not.toBeInTheDocument();
+    expect(screen.queryByRole('checkbox',{
+      name:'Acknowledge possible duplicate billing for this exact G-Labs target'
+    })).not.toBeInTheDocument();
+    expect(poll).toHaveBeenCalledTimes(1);
+    expect(generate).not.toHaveBeenCalled();
   });
   it('F07-UI03 UNKNOWN evidence survives a fresh UI mount, but no old recovery consent does',async()=>{
     const {generate}=install();
