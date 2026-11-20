@@ -72,6 +72,7 @@ export function StoryboardWorkspace(){
     // The session guard prevents async responses from being applied to another project.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[id,native?.nativeDraft?.token,native?.nativeDraft?.revision,native?.external?.native?.revision]);
+  useEffect(()=>()=>{if(batchSession.current)batchSession.current.cancelled=true;},[]);
   useEffect(()=>{
     if(batchSession.current)batchSession.current.cancelled=true;
     setDraftPrompts({});setDraftReferences({});setSelectedShot('');setSelectedKey('');
@@ -113,7 +114,20 @@ export function StoryboardWorkspace(){
   const recoveryAcknowledged=Boolean(recoveryChecked&&acknowledgedUnknown===recoveryIdentity);
   const hasActiveAttempt=selectedAttempts.some(job=>['SUBMITTED','RUNNING','DOWNLOADED','QUEUED'].includes(job.status));
   const hasPreviousAttempt=selectedAttempts.length>0;
-  const canSubmit=Boolean(ready&&!hasUncertainAttempt&&!hasActiveAttempt);
+  const canSubmit=Boolean(ready&&!hasUncertainAttempt&&!hasActiveAttempt&&
+    !submission&&!batchSession.current);
+  // A bulk click covers only never-attempted, source-backed READY targets.
+  // FAILED/UNKNOWN/staged/approved jobs are excluded; none is retried.
+  const eligibleBulk=prepared?.token===pending?.token&&config?
+    prepared.jobs.filter(item=>item.state==='READY'&&Boolean(item.prompt.trim())&&
+      imageTargets.some(candidate=>candidate.key===item.targetKey&&
+        candidate.shotId===item.shotId&&candidate.layerId===item.layerId&&
+        candidate.path===item.path)&&
+      !jobs.some(job=>job.token===pending?.token&&job.targetKey===item.targetKey)&&
+      draftPrompts[[id??'',pending?.token??'',item.draftIdentity.creativeFingerprint,
+        item.targetKey].join('|')]===undefined&&
+      draftReferences[[id??'',pending?.token??'',item.draftIdentity.creativeFingerprint,
+        item.targetKey].join('|')]===undefined):[];
   const shotJobs=jobs.filter(job=>job.shotId===shotId&&job.targetKey===target?.key&&job.token===pending?.token);
   // G-Labs returns newest jobs first. Keep history, but show only the current
   // selected target and latest candidate on the main screen.
@@ -231,6 +245,82 @@ export function StoryboardWorkspace(){
       if(isCurrentProjectSession(scope))setSubmission(null);
     }
   };
+  const generateAll=async()=>{
+    const scope=captureProjectSession();
+    if(!scope||!window.studio||!pending||!config||!eligibleBulk.length||
+      busy||paidInFlight.current||batchSession.current)return;
+    // The button displays the exact number of individually billed requests.
+    // It is the owner's explicit one-time authorization for this frozen queue.
+    const batch={cancelled:false,projectId:scope.projectId,token:pending.token};
+    batchSession.current=batch;
+    paidInFlight.current=true;
+    const queue=[...eligibleBulk];
+    const selectedConfig={...config};
+    let sent=0;
+    let stopReason='';
+    setError('');
+    setBatchProgress({state:'running',total:queue.length,sent:0,current:'Preparing queue',reason:''});
+    try{
+      for(const item of queue){
+        if(batch.cancelled||!isCurrentProjectSession(scope)){stopReason='Stopped by owner or project change.';break;}
+        setSubmission({key:item.targetKey,label:item.shotId+'/'+item.layerId});
+        setBatchProgress({state:'running',total:queue.length,sent,
+          current:item.shotId+'/'+item.layerId,reason:''});
+        // Verify the exact Native queue identity immediately before each
+        // attempt. Backend repeats frozen fingerprint/style/reference/rights
+        // validation and rejects creative drift before any provider POST.
+        const current=await window.studio.pendingMedia(scope.projectId);
+        if(batch.cancelled||!isCurrentProjectSession(scope)){
+          stopReason='Stopped by owner or project change.';break;
+        }
+        if(!current||current.token!==batch.token||!current.missing.some(candidate=>
+          candidate.key===item.targetKey&&candidate.kind==='image'&&
+          candidate.shotId===item.shotId&&candidate.layerId===item.layerId&&
+          candidate.path===item.path)){
+          stopReason='Native DRAFT changed or target already fulfilled. No further requests were sent.';break;
+        }
+        const response=await window.studio.glabsGenerate(scope.projectId,{
+          targetKey:item.targetKey,prompt:item.prompt,model:selectedConfig.model,
+          aspectRatio:selectedConfig.aspectRatio,references:[...item.references],
+          authorized:true,regenerate:false,acknowledgeUnknown:false,
+          preparedFingerprint:item.draftIdentity.creativeFingerprint
+        });
+        if(response===null){
+          stopReason='Submission was cancelled. Remaining images were not requested.';break;
+        }
+        if(response&&typeof response==='object'&&'status' in response){
+          const status=String(response.status);
+          // An inconclusive or rejected POST must stop the queue. No retry.
+          if(status==='UNKNOWN'||status==='FAILED'||status==='CANCELLED'||status==='STALE'){
+            stopReason='Image '+item.shotId+'/'+item.layerId+' returned '+status+
+              '. The batch stopped without retrying or billing further targets.';
+            break;
+          }
+          if('id' in response&&typeof response.id==='string'&&
+            'targetKey' in response&&response.targetKey===item.targetKey&&
+            isCurrentProjectSession(scope)){
+            setJobs(previous=>[response as ImageJob,
+              ...previous.filter(job=>job.id!==(response as ImageJob).id)]);
+          }
+        }
+        sent++;
+        if(isCurrentProjectSession(scope))setBatchProgress({
+          state:'running',total:queue.length,sent,current:item.shotId+'/'+item.layerId,reason:''
+        });
+      }
+    }catch(e){
+      stopReason='Batch stopped: '+message(e)+'. No automatic retry was attempted.';
+    }finally{
+      if(isCurrentProjectSession(scope)){
+        setBatchProgress({state:stopReason||batch.cancelled?'stopped':'complete',
+          total:queue.length,sent,current:'',reason:stopReason});
+        setSubmission(null);
+        try{await refresh(scope);}catch(e){if(isCurrentProjectSession(scope))setError(message(e));}
+      }
+      paidInFlight.current=false;
+      if(batchSession.current===batch)batchSession.current=null;
+    }
+  };
   const poll=async(jobId:string)=>{
     const scope=captureProjectSession();if(!scope||!window.studio)return;
     setBusy(true);setError('');
@@ -266,8 +356,25 @@ export function StoryboardWorkspace(){
         <div className="info" data-testid="image-queue-counts">
           {prepared?.imageOccurrences??imageTargets.length} missing image occurrences · READY {counts.ready} · Review {counts.review} · Blocked {counts.blocked}
         </div>
-        <Button disabled={!id||busy||!native?.nativeDraft} onClick={()=>void prepare()}>Refresh Images</Button>
+        <Button disabled={!id||busy||Boolean(submission)||!native?.nativeDraft} onClick={()=>void prepare()}>Refresh Images</Button>
+        <Button variant="primary" disabled={busy||Boolean(submission)||!eligibleBulk.length}
+          onClick={()=>void generateAll()}>
+          Generate All Ready ({eligibleBulk.length})
+        </Button>
       </div>
+      {batchProgress&&<div className="storyboard-batch-progress" role="status" data-testid="image-batch-progress">
+        <strong>{batchProgress.state==='running'?'Generating images':
+          batchProgress.state==='complete'?'Batch submitted':'Batch stopped'}</strong>
+        <span>{batchProgress.sent} / {batchProgress.total} requests submitted
+          {batchProgress.current?' · '+batchProgress.current:''}
+          {batchProgress.reason?' · '+batchProgress.reason:''}</span>
+        {batchProgress.state==='running'&&<Button onClick={()=>{
+          if(batchSession.current)batchSession.current.cancelled=true;
+        }}>Stop after current request</Button>}
+      </div>}
+      {submission&&!batchProgress&&<div className="storyboard-batch-progress" role="status" data-testid="image-submitting">
+        Submitting image {submission.label} to G-Labs… Shot and Layer navigation stays available.
+      </div>}
       {shotIds.length?<div className="storyboard-shot-strip" aria-label="Native shots">{shotIds.map(value=><button key={value}
         className={shotId===value?'selected':''}
         onClick={()=>{recoveryEpoch.current+=1;setCheckedUnknown('');setAcknowledgedUnknown('');setSelectedShot(value);setSelectedKey('');}}>
