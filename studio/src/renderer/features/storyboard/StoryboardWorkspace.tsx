@@ -52,6 +52,8 @@ export function StoryboardWorkspace(){
   // UNKNOWN consent belongs to one exact project/session/Shot/Layer/attempt
   // identity. It is neither persisted nor reused after selection changes.
   const [checkedUnknown,setCheckedUnknown]=useState('');
+  const [unknownCheckOutcome,setUnknownCheckOutcome]=useState<
+    'CHECK_FAILED_UNVERIFIED'|'CHECKED_STILL_UNKNOWN'|'CHECKED_RESOLVED'|null>(null);
   const [acknowledgedUnknown,setAcknowledgedUnknown]=useState('');
   const recoveryEpoch=useRef(0);
   const recoveryIdentityRef=useRef('');
@@ -204,6 +206,7 @@ export function StoryboardWorkspace(){
     recoveryEpoch.current+=1;
     setCheckedUnknown('');
     setAcknowledgedUnknown('');
+    setUnknownCheckOutcome(null);
   },[recoveryIdentity,selectedShot,selectedKey]);
   const recoveryChecked=Boolean(recoveryIdentity&&checkedUnknown===recoveryIdentity);
   const recoveryAcknowledged=Boolean(recoveryChecked&&acknowledgedUnknown===recoveryIdentity);
@@ -307,6 +310,7 @@ export function StoryboardWorkspace(){
     if(!scope||!window.studio||!recoveryIdentity||!unknownAttempts.length||busy)return;
     const identity=recoveryIdentity,epoch=recoveryEpoch.current;
     setBusy(true);setError('');setCheckedUnknown('');setAcknowledgedUnknown('');
+    setUnknownCheckOutcome(null);
     try{
       // Only existing read-only polling routes. Never trigger a provider POST.
       const outcomes=await Promise.all(unknownAttempts.map(job=>
@@ -321,13 +325,20 @@ export function StoryboardWorkspace(){
         job.targetKey===target?.key&&job.status==='UNKNOWN').map(job=>job.id).sort();
       const stillUnknown=Boolean(refreshed?.pending?.token===pending?.token&&
         persistedIds&&JSON.stringify(persistedIds)===JSON.stringify(previousIds));
-      if(stillUnknown&&isCurrentProjectSession(scope)&&
-        recoveryEpoch.current===epoch&&recoveryIdentityRef.current===identity&&
-        outcomes.every(job=>job!==null&&typeof job==='object'&&
-          'status' in job&&job.status==='UNKNOWN'))
+      if(!isCurrentProjectSession(scope)||recoveryEpoch.current!==epoch||
+        recoveryIdentityRef.current!==identity)return;
+      if(stillUnknown&&outcomes.every(job=>job!==null&&typeof job==='object'&&
+        'status' in job&&job.status==='UNKNOWN')){
         setCheckedUnknown(identity);
-    }catch(e){if(isCurrentProjectSession(scope)&&recoveryEpoch.current===epoch)
-      setError('Checking existing G-Labs attempt failed: '+message(e));}
+        setUnknownCheckOutcome('CHECKED_STILL_UNKNOWN');
+      }else{
+        setUnknownCheckOutcome('CHECKED_RESOLVED');
+      }
+    }catch(e){if(isCurrentProjectSession(scope)&&recoveryEpoch.current===epoch&&
+      recoveryIdentityRef.current===identity){
+      setUnknownCheckOutcome('CHECK_FAILED_UNVERIFIED');
+      setError('CHECK_FAILED_UNVERIFIED: Checking existing G-Labs attempt failed: '+message(e));
+    }}
     finally{if(isCurrentProjectSession(scope))setBusy(false);}
   };
   const generate=async(recoverUnknown=false)=>{
@@ -562,11 +573,10 @@ export function StoryboardWorkspace(){
     if(!job||job.status!=='VALIDATED'||!job.staged||!urls[job.id]||previewReady[job.id]!==previewIdentity(job)){
       setError('GLABS_PREVIEW_NOT_VERIFIED: inspect the exact current image before approval.');return;
     }
-    if(!rights.trim()){setError('Owner source/rights attestation required before approval.');return;}
     if(!window.confirm('I have inspected the displayed current image. Approve this exact image revision and bind only its Native target?'))return;
     setBusy(true);setError('');
     try{
-      await window.studio.glabsApprove(scope.projectId,jobId,rights.trim());
+      await window.studio.glabsApprove(scope.projectId,jobId,rights.trim()||undefined);
       if(!isCurrentProjectSession(scope))return;
       await refresh(scope);
       const next=await window.studio.projectState(scope.projectId);
@@ -746,6 +756,13 @@ export function StoryboardWorkspace(){
         </div>)}
         <div className="info error" role="alert">UNKNOWN does not mean failed or successful. The provider may have charged for the prior request; do not assume it is safe to retry.</div>
         <Button disabled={busy} onClick={()=>void checkUnknownAttempts()}>Check Existing Attempt (read-only)</Button>
+        {unknownCheckOutcome&&<div className="info" data-testid="unknown-check-outcome">
+          {unknownCheckOutcome==='CHECK_FAILED_UNVERIFIED'?
+            'CHECK_FAILED_UNVERIFIED · Provider check failed; original billing remains uncertain. No new request is authorized.':
+            unknownCheckOutcome==='CHECKED_STILL_UNKNOWN'?
+            'CHECKED_STILL_UNKNOWN · Read-only check succeeded, outcome remains UNKNOWN; explicit owner and Electron confirmation are required.':
+            'CHECKED_RESOLVED · Provider status changed; inspect the existing attempt.'}
+        </div>}
         {recoveryChecked&&<div className="stack" data-testid="unknown-recovery-confirmation">
           <div className="info error">Existing attempt still UNKNOWN after checking. A new image attempt can cause duplicate billing.</div>
           <label style={{display:'flex',gap:8,alignItems:'flex-start'}}>
@@ -809,7 +826,12 @@ export function StoryboardWorkspace(){
             const scope=captureProjectSession();
             if(scope)void refresh(scope).catch(e=>{if(isCurrentProjectSession(scope))setError(message(e));});
           }}>Retry Preview</Button>}
-          {job.status==='VALIDATED'&&<Field label="Owner-confirmed rights/source"><Input value={rights} onChange={event=>setRights(event.target.value)} placeholder="Owned or licensed image source"/></Field>}
+          {job.status==='VALIDATED'&&<details className="storyboard-technical-details">
+              <summary>Legacy optional image source note</summary>
+              <Field label="Owner-confirmed rights/source"><Input value={rights}
+                onChange={event=>setRights(event.target.value)}
+                placeholder="Optional legacy note; generated-image provenance is recorded automatically"/></Field>
+            </details>}
           <div className="actions">
             {hasPreviousAttempt&&<Button variant={canSubmit?'primary':'ghost'}
               disabled={busy||!config||!canSubmit||!ownerPrompt.trim()} onClick={()=>void generate(false)}>
@@ -819,7 +841,7 @@ export function StoryboardWorkspace(){
               <span className="info">Checking provider automatically</span>
               <Button disabled={busy} onClick={()=>void poll(job.id)}>Check Now</Button>
             </>}
-            {job.status==='VALIDATED'&&<Button variant="primary" disabled={busy||!rights.trim()||!urls[job.id]||previewReady[job.id]!==previewIdentity(job)} onClick={()=>void approve(job.id)}>Approve Image &amp; Bind</Button>}
+            {job.status==='VALIDATED'&&<Button variant="primary" disabled={busy||!urls[job.id]||previewReady[job.id]!==previewIdentity(job)} onClick={()=>void approve(job.id)}>Approve Image &amp; Bind</Button>}
             {job.status==='QUEUED'&&<Button disabled={busy} onClick={async()=>{
               const scope=captureProjectSession();if(!scope||!window.studio||!window.confirm('Cancel this queued request before paid submission?'))return;
               try{await window.studio.glabsCancelQueued(scope.projectId,job.id);if(isCurrentProjectSession(scope))await refresh(scope);}
