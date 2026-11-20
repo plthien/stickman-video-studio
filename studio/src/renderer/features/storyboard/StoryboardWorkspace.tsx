@@ -170,25 +170,36 @@ export function StoryboardWorkspace(){
   const galleryTargets=gallery&&pending&&gallery.token===pending.token?
     gallery.targets:fallbackGalleryTargets;
   const previewIdentity=(job:ImageJob)=>[id,job.id,job.token,job.staged?.sha256??'-',urls[job.id]??'-',previewAttempts[job.id]??0].join('|');
-  const cards:GalleryCard[]=galleryTargets.filter(item=>item.shotId===shotId)
-    .map(item=>{
-      const history=jobs.filter(job=>job.token===pending?.token&&
-        job.targetKey===item.key&&job.shotId===item.shotId&&
-        job.layerId===item.layerId);
-      // An approved/bound card remains visible even after it leaves
-      // pending.missing. The exact historical job and SHA are retained.
-      const job=history.find(value=>value.status==='APPROVED')??history[0]??null;
-      return{target:item,job,history,
-        spec:prepared?.jobs.find(value=>value.targetKey===item.key)??null};
-    });
-  const inspectedReadyCards=galleryTargets.map(item=>{
+  // Native fulfillment and exact creative/style lineage, not APPROVED history,
+  // decide which image is current. A corrected Shot can reuse the target KEY.
+  const resolvedCards:GalleryCard[]=galleryTargets.map(item=>{
     const history=jobs.filter(job=>job.token===pending?.token&&
-      job.targetKey===item.key&&job.shotId===item.shotId&&job.layerId===item.layerId);
-    const job=history.find(value=>value.status==='APPROVED')??history[0];
-    return{target:item,job};
-  }).filter((card):card is {target:GalleryTarget;job:ImageJob}=>Boolean(
-    card.job?.status==='VALIDATED'&&card.job.staged&&urls[card.job.id]&&
-    !previewErrors[card.job.id]&&previewReady[card.job.id]===previewIdentity(card.job)
+      job.targetKey===item.key&&job.shotId===item.shotId&&
+      job.layerId===item.layerId).sort((left,right)=>
+        (right.createdAt??'').localeCompare(left.createdAt??''));
+    const spec=prepared?.jobs.find(value=>value.targetKey===item.key)??null;
+    const sameAuthority=(job:ImageJob)=>(
+      (!job.targetCreativeSha256||!spec||
+        job.targetCreativeSha256===spec.draftIdentity.creativeFingerprint)&&
+      (!job.styleProfileSha256||!spec||
+        job.styleProfileSha256===spec.styleProfileRef.sha256)
+    );
+    const bound=history.find(job=>job.status==='APPROVED'&&item.fulfilled&&
+      sameAuthority(job)&&(!job.approved||
+        job.approved.path===item.boundPath&&
+        (!item.boundSha256||job.approved.sha256===item.boundSha256)));
+    const active=history.find(job=>job.status!=='APPROVED'&&
+      sameAuthority(job)&&job.status!=='STALE');
+    const job=bound??(!item.fulfilled?active:null)??null;
+    return{target:item,job,history,spec,currentlyBound:Boolean(bound),
+      superseded:!item.fulfilled&&history.some(value=>value.status==='APPROVED'),
+      hasCurrentAttempt:Boolean(active)};
+  });
+  const cards=resolvedCards.filter(card=>card.target.shotId===shotId);
+  const inspectedReadyCards=resolvedCards.filter((card):card is GalleryCard&{job:ImageJob}=>Boolean(
+    !card.target.fulfilled&&card.job?.status==='VALIDATED'&&card.job.staged&&
+    urls[card.job.id]&&!previewErrors[card.job.id]&&
+    previewReady[card.job.id]===previewIdentity(card.job)
   ));
   const target=shotTargets.find(row=>row.key===selectedKey)??shotTargets[0]??null;
   const spec=prepared?.jobs.find(row=>row.targetKey===target?.key)??null;
