@@ -609,38 +609,45 @@ export function getPendingMedia(appPath:string,root:string) {
 export function getNativeImageGallery(appPath:string,root:string){
   const state=readState(root),draft=readNativeDraft(root,state);
   if(!draft)return{token:null,shots:[],targets:[]};
-  const pending=getPendingMedia(appPath,root);
-  if(!pending||pending.token!==draft.token)throw new Error('NATIVE_GALLERY_DRAFT_TOKEN_MISMATCH');
+  // Gallery is a READ ONLY inventory: the caller already validates the
+  // current Native draft. Do not re-run collectMissing()/verifiedMedia(), which
+  // synchronously rehash all bound image files (potentially 200+ large PNGs).
+  // Strict on-disk SHA/rights checks remain in pendingMedia and approval/bind.
+  const pending=readPending(root);
+  if(pending.stage!=='native'||pending.projectId!==state.project.id||
+    pending.token!==draft.token||pending.taskId!==draft.authorTaskId)
+    throw new Error('NATIVE_GALLERY_DRAFT_TOKEN_MISMATCH');
   const original=draft.artifact.manifest as Record<string,unknown>;
   const originalShots=Array.isArray(original.shots)?original.shots as Array<Record<string,unknown>>:[];
-  const candidate=pending.after as Record<string,unknown>;
-  const resolvedShots=Array.isArray(candidate.shots)?candidate.shots as Array<Record<string,unknown>>:[];
   const frozenRefs=nativeRefs(original).filter(ref=>ref.kind==='image');
   const targets:Array<{key:string;shotId:string;layerId:string;path:string;
     boundPath:string;fulfilled:boolean;managed:boolean}>=[];
   const shots=originalShots.map((shot,index)=>{
     const shotId=String(shot.id??'');
     const available:typeof targets=[];
-    const visit=(layers:unknown[],resolved:unknown[])=>{
+    const visit=(layers:unknown[])=>{
       for(const node of layers){
         if(!node||typeof node!=='object'||Array.isArray(node))continue;
         const layer=node as Record<string,unknown>,layerId=String(layer.id??'');
-        const current=resolved.find(value=>value&&typeof value==='object'&&
-          !Array.isArray(value)&&(value as Record<string,unknown>).id===layerId) as Record<string,unknown>|undefined;
         if(layer.type==='image'&&typeof layer.path==='string'&&shotId&&layerId){
           const key='image:'+index+':'+layerId;
           const ref=frozenRefs.find(row=>row.key===key&&row.shotId===shotId&&row.path===layer.path);
-          const bound=ref&&Object.prototype.hasOwnProperty.call(pending.fulfillments??{},key);
+          const binding=ref?pending.fulfillments[key]:undefined;
+          // Exact committed journal and media metadata must agree before the
+          // gallery describes a Layer as fulfilled. This is not a replacement
+          // for bytewise SHA validation when a binding is actually used.
+          const fulfilled=Boolean(ref&&binding&&binding.kind==='image'&&
+            state.media?.some(row=>row.kind==='image'&&row.path===binding.relative&&
+              row.sha256===binding.sha256&&row.rights===binding.rights&&
+              row.shotId===shotId&&row.layerId===layerId));
           available.push({key,shotId,layerId,path:layer.path,
-            boundPath:typeof current?.path==='string'?current.path:layer.path,
-            fulfilled:Boolean(bound),managed:Boolean(ref)});
+            boundPath:fulfilled?binding!.relative:layer.path,
+            fulfilled,managed:Boolean(ref)});
         }
-        if(Array.isArray(layer.children))visit(layer.children,
-          Array.isArray(current?.children)?current.children:[]);
+        if(Array.isArray(layer.children))visit(layer.children);
       }
     };
-    visit(Array.isArray(shot.layers)?shot.layers:[],
-      Array.isArray(resolvedShots[index]?.layers)?resolvedShots[index].layers:[]);
+    visit(Array.isArray(shot.layers)?shot.layers:[]);
     targets.push(...available);
     return{id:shotId,index,imageCount:available.length};
   });
