@@ -10,6 +10,7 @@ import {readExternalHistory} from './externalHistory.js';
 import {prepareNativeImages,saveNativeImagePrompt} from './imagePreparation.js';
 import { getCaptionReview, draftCaptionReview, approveCaptionReview,autoCaptionReview } from './captionReview.js';
 import {glabsSettings,saveGlabsSettings,glabsCredentialStatus,saveGlabsKey,clearGlabsKey,glabsProbe,reconcileGlabsJobs,submitGlabsImage,pollGlabsImage,approveGlabsImage,cancelQueuedGlabsImage,type GLabsSettings,type ImageRequest} from './glabs.js';
+import {createGlabsAutoPolling} from './glabsAutoPolling.js';
 import { discoverNano, generateNano, nanoBase } from './nanoClient.js';
 import { cancelJob, nativeJob, reconcileJob } from './nativeJobs.js';
 import { importAlignedWords, importApprovedWav, longformStatus, runLongform, narrationAction } from './voiceMedia.js';
@@ -24,6 +25,33 @@ const roots = new Map<string, string>();
 const registerRoot = (root: string) => { const real = fs.realpathSync(root), id = projectId(real); roots.set(id, real); return id; };
 const rootFor = (id: string) => { const root = roots.get(id); if (!root || projectId(root) !== id) throw new Error('Unknown or unopened project.'); return root; };
 
+// The provider job JSON is durable; the poll coordinator only performs
+// read-only status/result GETs and broadcasts progress independently of tabs.
+const glabsPolling=createGlabsAutoPolling({
+  intervalMs:2500,concurrency:2,
+  poll:(id,jobId)=>pollGlabsImage(app.getAppPath(),rootFor(id),app.getPath('userData'),safeStorage,jobId,decodeGlabsImage),
+  onJob:(projectId,job)=>{
+    for(const win of BrowserWindow.getAllWindows()){
+      if(!win.isDestroyed()&&!win.webContents.isDestroyed())
+        win.webContents.send('glabs:jobChanged',{projectId,job});
+    }
+  },
+  onError:(projectId,jobId,error)=>{
+    // A failed read-only GET is never replayed as a paid POST.
+    console.warn('[glabs-auto-poll]',projectId,jobId,error instanceof Error?error.message:String(error));
+  }
+});
+const resumeGlabsPolling=(id:string,root:string)=>{
+  try{glabsPolling.observeAll(id,reconcileGlabsJobs(app.getAppPath(),root));}
+  catch(error){console.warn('[glabs-auto-poll] resume failed:',error instanceof Error?error.message:String(error));}
+};
+
+
+const decodeGlabsImage=(bytes:Buffer)=>{
+  const decoded=nativeImage.createFromBuffer(bytes);
+  if(decoded.isEmpty())throw new Error('GLABS_IMAGE_DECODE_FAILED');
+  const size=decoded.getSize();return{png:decoded.toPNG(),width:size.width,height:size.height};
+};
 function registerIpc() {
   const recentPath = path.join(app.getPath('userData'), 'recent-projects.json');
   const recent = () => fs.existsSync(recentPath) ? strictJson(fs.readFileSync(recentPath, 'utf8')) as { projects?: StudioState['project'][] } : { projects: [] };
@@ -37,7 +65,12 @@ function registerIpc() {
     return result.canceled || !result.filePaths[0] ? null : assertLocalRoot(result.filePaths[0]);
   });
   ipcMain.handle('project:openDialog', async () => { const result = await dialog.showOpenDialog({ properties: ['openDirectory'] }); return result.canceled ? null : result.filePaths[0]; });
-  ipcMain.handle('project:open', (_event, root: string) => { const state = reconcileScriptActivation(root); registerRoot(root); saveRecent(state.project); reconcileJob(root); return projectSnapshot(root,app.getAppPath()); });
+  ipcMain.handle('project:open', (_event, root: string) => {
+    const state=reconcileScriptActivation(root);
+    registerRoot(root);saveRecent(state.project);reconcileJob(root);
+    resumeGlabsPolling(state.project.id,root);
+    return projectSnapshot(root,app.getAppPath());
+  });
   ipcMain.handle('project:state', (_event, id: string) => { const root=rootFor(id); reconcileScriptActivation(root); return projectSnapshot(root,app.getAppPath()); });
   ipcMain.handle('project:saveBrief', (_event, id: string, brief: StudioState['brief'] & { title: string }) => { const root = rootFor(id), state = readState(root); state.project.title = brief.title.trim(); state.brief = { topic: brief.topic, language: brief.language, ratio: '9:16', targetDuration: brief.targetDuration, audience: brief.audience, purpose: brief.purpose }; state.project.updatedAt = new Date().toISOString(); writeState(root, state); saveRecent(state.project); return projectSnapshot(root,app.getAppPath()); });
   ipcMain.handle('storyboard:prepareImages',(_event,id:string,persist=false)=>prepareNativeImages(app.getAppPath(),rootFor(id),persist===true));
@@ -47,12 +80,11 @@ function registerIpc() {
   ipcMain.handle('glabs:saveKey',(_event,key:string)=>saveGlabsKey(app.getPath('userData'),safeStorage,key));
   ipcMain.handle('glabs:clearKey',()=>clearGlabsKey(app.getPath('userData'),safeStorage));
   ipcMain.handle('glabs:probe',()=>glabsProbe(app.getPath('userData'),safeStorage));
-  ipcMain.handle('glabs:jobs',(_event,id:string)=>reconcileGlabsJobs(app.getAppPath(),rootFor(id)));
-  const decodeGlabsImage=(bytes:Buffer)=>{
-    const decoded=nativeImage.createFromBuffer(bytes);
-    if(decoded.isEmpty())throw new Error('GLABS_IMAGE_DECODE_FAILED');
-    const size=decoded.getSize();return{png:decoded.toPNG(),width:size.width,height:size.height};
-  };
+  ipcMain.handle('glabs:jobs',(_event,id:string)=>{
+    const jobs=reconcileGlabsJobs(app.getAppPath(),rootFor(id));
+    glabsPolling.observeAll(id,jobs);
+    return jobs;
+  });
   ipcMain.handle('glabs:generate',async(_event,id:string,input:ImageRequest)=>{
     const root=rootFor(id);
     if(!input||input.authorized!==true)throw new Error('GLABS_EXPLICIT_AUTH_REQUIRED');
@@ -72,9 +104,14 @@ function registerIpc() {
       });
       if(confirmed.response!==1)return null;
     }
-    return submitGlabsImage(app.getAppPath(),root,app.getPath('userData'),safeStorage,input,decodeGlabsImage);
+    const job=await submitGlabsImage(app.getAppPath(),root,app.getPath('userData'),safeStorage,input,decodeGlabsImage);
+    glabsPolling.observe(id,job);
+    return job;
   });
-  ipcMain.handle('glabs:poll',(_event,id:string,jobId:string)=>pollGlabsImage(app.getAppPath(),rootFor(id),app.getPath('userData'),safeStorage,jobId,decodeGlabsImage));
+  ipcMain.handle('glabs:poll',(_event,id:string,jobId:string)=>{
+    rootFor(id); // Validate registered project even when joining an in-flight poll.
+    return glabsPolling.pollNow(id,jobId);
+  });
   ipcMain.handle('glabs:cancelQueued',(_event,id:string,jobId:string)=>cancelQueuedGlabsImage(rootFor(id),jobId));
   ipcMain.handle('glabs:approve',(_event,id:string,jobId:string,rights:string)=>approveGlabsImage(app.getAppPath(),rootFor(id),jobId,rights,decodeGlabsImage));
   ipcMain.handle('settings:elevenlabsStatus', () => elevenLabsStatus(app.getPath('userData'),safeStorage));
@@ -144,4 +181,5 @@ app.whenReady().then(() => {
   createWindow();
   app.on('activate',()=>{if(!BrowserWindow.getAllWindows().length)createWindow();});
 });
+app.on('before-quit',()=>glabsPolling.close());
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
