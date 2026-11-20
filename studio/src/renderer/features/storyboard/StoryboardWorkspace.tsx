@@ -186,10 +186,13 @@ export function StoryboardWorkspace(){
   // Native fulfillment and exact creative/style lineage, not APPROVED history,
   // decide which image is current. A corrected Shot can reuse the target KEY.
   const resolvedCards:GalleryCard[]=galleryTargets.map(item=>{
-    const history=jobs.filter(job=>job.token===pending?.token&&
-      job.targetKey===item.key&&job.shotId===item.shotId&&
-      job.layerId===item.layerId).sort((left,right)=>
-        (right.createdAt??'').localeCompare(left.createdAt??''));
+    // All generations for this frozen Shot/Layer key remain auditable across
+    // corrections and Native tokens. Only the current-token, current-style
+    // creative identity may occupy the actionable image card.
+    const history=jobs.filter(job=>job.targetKey===item.key&&
+      job.shotId===item.shotId&&job.layerId===item.layerId).sort((left,right)=>
+        (right.createdAt??'').localeCompare(left.createdAt??'')||
+        (right.journalRevision??0)-(left.journalRevision??0));
     const spec=prepared?.jobs.find(value=>value.targetKey===item.key)??null;
     const sameAuthority=(job:ImageJob)=>(
       // Authoritative fields, when available, MUST match. A historical
@@ -203,15 +206,17 @@ export function StoryboardWorkspace(){
       (!job.styleProfileId||!native?.project.style||
         job.styleProfileId===native.project.style)
     );
-    const bound=history.find(job=>job.status==='APPROVED'&&item.fulfilled&&
-      sameAuthority(job)&&(!job.approved||
+    const bound=history.find(job=>job.token===pending?.token&&
+      job.status==='APPROVED'&&item.fulfilled&&
+      sameAuthority(job)&&Boolean(job.approved)&&
+      (!job.approved||
         job.approved.path===item.boundPath&&
         (!item.boundSha256||job.approved.sha256===item.boundSha256)));
-    const active=history.find(job=>job.status!=='APPROVED'&&
-      sameAuthority(job)&&job.status!=='STALE');
+    const active=history.find(job=>job.token===pending?.token&&
+      job.status!=='APPROVED'&&sameAuthority(job)&&job.status!=='STALE');
     const job=bound??(!item.fulfilled?active:null)??null;
     return{target:item,job,history,spec,currentlyBound:Boolean(bound),
-      superseded:!item.fulfilled&&history.some(value=>value.status==='APPROVED'),
+      superseded:!bound&&history.some(value=>value.status==='APPROVED'),
       hasCurrentAttempt:Boolean(active)};
   });
   const cards=resolvedCards.filter(card=>card.target.shotId===shotId);
