@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
+import {performance} from 'node:perf_hooks';
 import type {CredentialCipher} from './elevenlabsCredentials.js';
 import {getPendingMedia,importMediaFile,fulfillMedia,nativeImageTargetIdentity,readNativeDraft} from './externalTasks.js';
 import {prepareNativeImageTarget,loadImageStyleProfile} from './imagePreparation.js';
@@ -315,6 +316,7 @@ function assertPreparedImageRequest(appPath:string,root:string,input:ImageReques
     throw new Error('GLABS_PREPARED_TARGET_NOT_READY_OR_STALE');
 }
 export async function submitGlabsImage(appPath:string,root:string,userData:string,cipher:CredentialCipher,input:ImageRequest,decode:GLabsDecoder){
+  const preflightStarted=performance.now();
   if(input.authorized!==true)throw new Error('GLABS_PAID_SUBMISSION_REQUIRES_EXPLICIT_OWNER_AUTHORIZATION');
   if(typeof input.prompt!=='string'||input.prompt.trim().length<12||input.prompt.length>18000)
     throw new Error('GLABS_PROMPT_REQUIRED: owner must confirm an actual image requirement.');
@@ -362,8 +364,11 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
     return{path:relative,sha256:checked.sha256,mime:checked.mime,name:'ref_'+String(index+1).padStart(3,'0')+'.'+ext,rightsSha256:sha(entry.rights)};
   });
   // Only read-only probes before an explicitly authorized paid POST.
+  const synchronousPreflightMs=Math.round(performance.now()-preflightStarted);
+  if(synchronousPreflightMs>=80)console.warn('[glabs-perf] sync_preflight_ms='+synchronousPreflightMs);
   const probe=await glabsProbe(userData,cipher);
   if(!probe.authVerified)throw new Error('GLABS_HEALTH_AUTH_UNVERIFIED: paid submission blocked before POST.');
+  const afterProbeStarted=performance.now();
   const job:GLabsJob={schema:'r3-glabs-job-v1',id:randomUUID(),projectId:state.project.id,
     nativeRevision:state.tasks?.native?.revision??0,token:pending.token,targetKey:match.key,shotId:match.shotId,layerId:match.layerId,
     targetPath:match.path,candidateSha256:sha(JSON.stringify(pending.after)),
@@ -410,6 +415,8 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
       writeJob(root,job);return job;
     }
     if(!currentJobTarget(appPath,root,job))return job;
+    const secondPreflightMs=Math.round(performance.now()-afterProbeStarted);
+    if(secondPreflightMs>=80)console.warn('[glabs-perf] post_probe_sync_validation_ms='+secondPreflightMs);
     job.status='SUBMITTED';writeJob(root,job); // durable uncertain marker BEFORE paid HTTP
     try{
       const result=await requestJson(config,userData,cipher,'POST','api/image/generate',providerPayload);
