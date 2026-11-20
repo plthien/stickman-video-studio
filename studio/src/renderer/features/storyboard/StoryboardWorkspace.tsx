@@ -575,6 +575,21 @@ export function StoryboardWorkspace(){
   const counts={ready:prepared?.jobs.filter(j=>j.state==='READY').length??0,
     review:prepared?.jobs.filter(j=>j.state==='NEEDS_OWNER_REVIEW').length??0,
     blocked:prepared?.jobs.filter(j=>j.state==='BLOCKED').length??0};
+  const imageCounts={
+    notGenerated:resolvedCards.filter(card=>!card.target.fulfilled&&!card.job&&!card.superseded).length,
+    processing:resolvedCards.filter(card=>card.job&&
+      ['QUEUED','SUBMITTED','RUNNING','DOWNLOADED'].includes(card.job.status)&&
+      !card.job.lastSyncError).length,
+    syncIssues:resolvedCards.filter(card=>Boolean(card.job?.lastSyncError)).length,
+    inspectedReady:inspectedReadyCards.length,
+    approved:resolvedCards.filter(card=>card.currentlyBound).length,
+    superseded:resolvedCards.filter(card=>card.superseded).length
+  };
+  const uniquePaths=new Set(galleryTargets.map(item=>item.path)).size;
+  const nextReviewShot=()=>resolvedCards.find(card=>card.job?.status==='VALIDATED'&&
+    !card.target.fulfilled&&
+    (!card.job.staged||previewReady[card.job.id]!==previewIdentity(card.job)))
+    ?.target.shotId??shotIds[0]??'';
   return <div className="stack" data-testid="storyboard-automation">
     <Card>
       <CardHeader title="Storyboard Images" action={<Badge tone={native?.nativeDraft?'mint':'amber'}>{native?.nativeDraft?'DRAFT':'NO DRAFT'}</Badge>}/>
@@ -690,7 +705,21 @@ export function StoryboardWorkspace(){
           setPreviewAttempts(previous=>({...previous,[jobId]:(previous[jobId]??0)+1}));
         }}
         onInspectUnknown={key=>{
-          setSelectedKey(key);setCheckedUnknown('');setAcknowledgedUnknown('');
+          if(unknownReview?.targetKey!==key)setUnknownReview(null);
+        }}
+        unknownReview={liveUnknownReview??undefined}
+        onCheckUnknown={key=>void checkUnknownForCard(key)}
+        onConsentUnknown={consentUnknownForCard}
+        onAuthorizeUnknown={key=>void authorizeUnknownForCard(key)}
+        onSavePrompt={(key,prompt,references)=>void savePromptForCard(key,prompt,references)}
+        onCancelQueued={jobId=>{
+          const scope=captureProjectSession();
+          if(!scope||!window.studio||!window.confirm(
+            'Cancel this queued request before paid submission?'))return;
+          void window.studio.glabsCancelQueued(scope.projectId,jobId).then(
+            ()=>refresh(scope)).catch(error=>{
+              if(isCurrentProjectSession(scope))setError(message(error));
+            });
         }}
       />
     </Card>
