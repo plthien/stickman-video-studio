@@ -193,13 +193,17 @@ export function compileImageJobSpecs(input:{
     // Keep the owner-edited description as the editable field. Compile the
     // provider payload separately: owner text cannot delete style authority.
     // Both hashes are retained so the submitted provider prompt is auditable.
-    const prompt=validOwner?ownerText:computed;
     const effectivePrompt=validOwner?[
       authoritativeStyle,
       ownerText.includes(authoritativeStyle)?
         ownerText.replace(authoritativeStyle,'').trim():ownerText,
       ...missingOwnerGlobals
     ].filter(Boolean).join('\n\n'):computed;
+    // Legacy canonical behavior retains global directives in the visible
+    // prepared prompt. When there are no global source rows, the owner-edited
+    // description remains exactly as entered. Provider always gets the
+    // independently composed effectivePrompt in both cases.
+    const prompt=validOwner?(globals.length?effectivePrompt:ownerText):computed;
     // Owner edits can resolve a missing/conflicting description, but never a
     // structural blocker or a missing/integrity-failed style authority.
     if(validOwner&&state==='NEEDS_OWNER_REVIEW'){state='READY';reason='Owner reviewed and supplied this exact target prompt.';}
