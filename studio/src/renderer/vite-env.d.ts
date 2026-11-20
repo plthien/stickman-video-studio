@@ -18,7 +18,13 @@ interface Window { studio?: Readonly<{
   glabsConfigure:(config:{endpoint:string;contract:'legacy';model:string;aspectRatio:string})=>Promise<unknown>;
   glabsSaveKey:(key:string)=>Promise<unknown>;glabsClearKey:()=>Promise<unknown>;
   glabsProbe:()=>Promise<{ready:false;reachable:boolean;authVerified:boolean;status:'UNREACHABLE'|'REACHABLE'|'AUTH_VERIFIED';modelCapability:'MODEL_CAPABILITY_UNVERIFIED';configuredModel:string;configuredRatio:string;contract:string;version:string;endpoint:string;diagnostic:string}>;
-  glabsJobs:(id:string)=>Promise<Array<{id:string;projectId:string;token:string;targetKey:string;shotId:string;layerId:string;targetPath:string;status:string;model:string;aspectRatio:string;prompt:string;providerTaskId?:string;staged?:{path:string;sha256:string;width:number;height:number};reason?:string;approved?:{path:string;sha256:string;rights:string}}>>;
+  glabsJobs:(id:string)=>Promise<Array<{id:string;projectId:string;token:string;targetKey:string;shotId:string;layerId:string;targetPath:string;status:string;model:string;aspectRatio:string;prompt:string;promptSha256?:string;providerTaskId?:string;staged?:{path:string;sha256:string;width:number;height:number};reason?:string;approved?:{path:string;sha256:string;rights:string;provenance?:{
+    source:'G-Labs generated output';projectId:string;jobId:string;providerTaskId:string|null;
+    model:string;promptSha256:string;imageSha256:string;nativeToken:string;
+    targetKey:string;shotId:string;layerId:string;targetPath:string;
+    styleSha256:string;approvedAt:string;ownerAuthorizedProjectUse:true;
+    providerLicenseVerified:false
+  }}}>>;
   glabsGenerate:(id:string,input:{targetKey:string;prompt:string;model:string;aspectRatio:string;references:string[];authorized:boolean;regenerate?:boolean;acknowledgeUnknown?:boolean;preparedFingerprint?:string})=>Promise<unknown>;
   onGlabsJobChanged?:(listener:(change:{projectId:string;job:Awaited<ReturnType<NonNullable<Window['studio']>['glabsJobs']>>[number]})=>void)=>()=>void;
   glabsPoll:(id:string,jobId:string)=>Promise<unknown>;glabsCancelQueued:(id:string,jobId:string)=>Promise<unknown>;
