@@ -317,7 +317,7 @@ describe('Storyboard — source-grounded paid image generation for current Nativ
     fireEvent.click(screen.getByText(/Advanced · target-specific edits/));
     const prompt=screen.getByLabelText('Edit image prompt for current target only');
     fireEvent.change(prompt,{target:{value:'Owner changes only first layer image pose'}});
-    expect(screen.getByText('Save the edited prompt/references before generating this image')).toBeInTheDocument();
+    expect(screen.getByText(/Save the edited prompt\/references before generating this image\./)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button',{name:/Owner-approved image for layer-2/}));
     expect(screen.getByLabelText('Edit image prompt for current target only')).toHaveValue(
       'Approved B1 style. Exact owner-approved image for layer-2');
