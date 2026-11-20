@@ -43,7 +43,7 @@ const status=(card:GalleryCard)=>{
   if(card.job?.status==='QUEUED')return'Queued';
   if(card.job?.status==='RUNNING'||card.job?.status==='SUBMITTED'||
     card.job?.status==='DOWNLOADED')return'Running';
-  if(card.job?.status==='VALIDATED')return'Validated';
+  if(card.job?.status==='VALIDATED')return'Ready to approve';
   if(card.job?.status==='FAILED')return'Failed';
   if(card.job?.status==='UNKNOWN')return'UNKNOWN';
   if(card.job?.status==='STALE')return'Stale';
@@ -191,6 +191,9 @@ export function ShotImageGallery({
                 card.superseded?'Needs Regeneration · previous image in History':
                 card.target.fulfilled?'Bound image recorded':'Not Generated'}</span>}
           </div>
+          {card.spec&&<div className="storyboard-source-summary" title={card.spec.sourceDescription}>
+            <strong>Image:</strong> {card.spec.sourceDescription||card.spec.reason}
+          </div>}
           <div className="shot-image-card-meta">
             <span>{staged?staged.width+' × '+staged.height+' px':'No generated dimensions'}</span>
             {staged&&<code title={staged.sha256}>SHA {staged.sha256.slice(0,12)}…</code>}
