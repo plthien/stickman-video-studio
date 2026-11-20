@@ -5,7 +5,7 @@ import path from 'node:path';
 import {deflateSync} from 'node:zlib';
 import {afterEach,describe,expect,it,vi} from 'vitest';
 import {approveGlabsImage,clearGlabsKey,glabsCredentialStatus,glabsProbe,glabsSettings,listGlabsJobs,pollGlabsImage,saveGlabsKey,saveGlabsSettings,submitGlabsImage,invalidateGlabsJobsAfterNativeCorrection,reconcileGlabsJobs} from '../../src/main/glabs';
-import {getPendingMedia,importMediaFile,readNativeDraft,publishNativeDraftCorrection} from '../../src/main/externalTasks';
+import {getPendingMedia,getNativeImageGallery,importMediaFile,readNativeDraft,publishNativeDraftCorrection} from '../../src/main/externalTasks';
 import {prepareNativeImages} from '../../src/main/imagePreparation';
 import {readState,sha,writeState} from '../../src/main/services';
 import {appPath,cleanup,fixture,importedSource,nativePayload,stageNative} from './SixIssueFixtures';
@@ -185,6 +185,64 @@ describe('R3 G-Labs security and lifecycle GL01–GL12',()=>{
     expect(readState(root).media!.some(item=>item.shotId===targets[0].shotId&&item.layerId===targets[0].layerId&&Boolean(item.rights.trim()))).toBe(true);
     expect(getPendingMedia(appPath,root)!.missing).toHaveLength(0);
     expect(calls.filter(c=>c.method==='POST')).toHaveLength(1);
+  });
+  it('F08-01 G-Labs owner approval needs no manually entered rights; provenance is factual and durable',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport();
+    const submitted=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    const done=await pollGlabsImage(appPath,root,dir,cipher,submitted.id,decode);
+    const result=approveGlabsImage(appPath,root,submitted.id,undefined,decode);
+    expect(result.job.status).toBe('APPROVED');
+    expect(result.job.approved?.rights).toContain('OWNER_APPROVED_GLABS_PROJECT_USE');
+    expect(result.job.approved?.rights).toContain('provider_license_not_verified');
+    expect(result.job.approved?.provenance).toMatchObject({
+      source:'G-Labs generated output',projectId:readState(root).project.id,
+      jobId:submitted.id,providerTaskId:'ab12cd34',model:'nano_banana_2',
+      promptSha256:submitted.promptSha256,imageSha256:done.staged!.sha256,
+      nativeToken:submitted.token,targetKey:submitted.targetKey,
+      shotId:submitted.shotId,layerId:submitted.layerId,targetPath:submitted.targetPath,
+      styleSha256:submitted.styleProfileSha256,
+      ownerAuthorizedProjectUse:true,providerLicenseVerified:false,
+      approvedAt:expect.any(String)
+    });
+    expect(listGlabsJobs(root).find(job=>job.id===submitted.id)!.approved?.provenance)
+      .toEqual(result.job.approved?.provenance);
+    expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
+    expect(getPendingMedia(appPath,root)!.missing).toHaveLength(0);
+  });
+  it('F11-01 approving the same job twice is idempotent without a second binding',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport();
+    const submitted=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    await pollGlabsImage(appPath,root,dir,cipher,submitted.id,decode);
+    const first=approveGlabsImage(appPath,root,submitted.id,undefined,decode);
+    const before=fs.readFileSync(path.join(root,'.studio','external','pending.json'),'utf8');
+    const media=readState(root).media;
+    const second=approveGlabsImage(appPath,root,submitted.id,undefined,decode);
+    expect(second.job.approved).toEqual(first.job.approved);
+    expect(fs.readFileSync(path.join(root,'.studio','external','pending.json'),'utf8')).toBe(before);
+    expect(readState(root).media).toEqual(media);
+    expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
+  });
+  it('F09-01 full frozen gallery retains approved target after pending.missing shrinks',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(true);transport();
+    const original=getNativeImageGallery(appPath,root);
+    expect(original.token).toEqual(getPendingMedia(appPath,root)!.token);
+    expect(original.targets.filter(item=>item.managed)).toHaveLength(2);
+    const first=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    await pollGlabsImage(appPath,root,dir,cipher,first.id,decode);
+    const approval=approveGlabsImage(appPath,root,first.id,undefined,decode);
+    const after=getNativeImageGallery(appPath,root);
+    expect(after.targets).toHaveLength(original.targets.length);
+    expect(after.targets.find(item=>item.key===targets[0].key)).toMatchObject({
+      key:targets[0].key,shotId:targets[0].shotId,layerId:targets[0].layerId,
+      fulfilled:true,boundPath:approval.job.approved!.path
+    });
+    expect(after.targets.find(item=>item.key===targets[1].key)?.fulfilled).toBe(false);
+    expect(getPendingMedia(appPath,root)!.missing.filter(item=>item.kind==='image')).toHaveLength(1);
+  });
+  it('F08-02 manual third-party file import keeps the original rights validation',()=>{
+    const {root}=nativeTarget();
+    expect(()=>importMediaFile(root,importedSource(root),'image','')).toThrow(/rights/i);
+    expect(()=>importMediaFile(root,importedSource(root),'image','   ')).toThrow(/rights/i);
   });
   it('GL08 explicitly regenerates one target while retaining its old validated image and other untouched target',async()=>{
     const dir=credential(),{root,targets}=nativeTarget(true),{calls}=transport();
