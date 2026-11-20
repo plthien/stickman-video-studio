@@ -1,4 +1,4 @@
-import {useState} from 'react';
+import {useEffect,useState} from 'react';
 import {Button} from '../../components/ui';
 
 type Studio=NonNullable<Window['studio']>;
@@ -15,7 +15,7 @@ export interface GalleryCard{
   spec:Prepared['jobs'][number]|null;
 }
 export interface ShotImageGalleryProps{
-  shotId:string;cards:GalleryCard[];urls:Record<string,string>;
+  projectId:string;shotId:string;cards:GalleryCard[];urls:Record<string,string>;
   previewReady:Record<string,string>;previewErrors:Record<string,string>;
   previewIdentity:(job:ImageJob)=>string;busy:boolean;selectedIds:Set<string>;
   onLoaded:(job:ImageJob,valid:boolean)=>void;
@@ -39,10 +39,35 @@ const status=(card:GalleryCard)=>{
   return'Not Generated';
 };
 
+function HistoryCandidate({job,projectId}:{job:ImageJob;projectId:string}){
+  const [expanded,setExpanded]=useState(false),[url,setUrl]=useState('');
+  useEffect(()=>{
+    if(!expanded||!job.staged||!window.studio)return;
+    let current=true;
+    void window.studio.mediaUrl(projectId,job.staged.path).then(value=>{
+      if(current)setUrl(value);
+    }).catch(()=>{if(current)setUrl('');});
+    return()=>{current=false};
+  },[expanded,projectId,job.id,job.staged?.path]);
+  return <details onToggle={event=>setExpanded(event.currentTarget.open)}>
+    <summary>{job.status} · {job.id}
+      {job.staged?' · '+job.staged.width+' × '+job.staged.height:''}
+    </summary>
+    {job.staged&&<><div>SHA {job.staged.sha256}</div>
+      {url?<div className="shot-image-history-preview"
+        style={{aspectRatio:job.staged.width+' / '+job.staged.height}}>
+        <img loading="lazy" src={url} alt={'Historical image candidate '+job.id}
+          style={{width:'100%',height:'100%',objectFit:'contain'}}/>
+      </div>:<div>Open to load historical candidate preview.</div>}
+    </>}
+    {job.reason&&<div>{job.reason}</div>}
+  </details>;
+}
+
 /** Image-first Native Shot gallery. No Layer selection or editable rights
  * input is required to see or approve an actual provider image. */
 export function ShotImageGallery({
-  shotId,cards,urls,previewReady,previewErrors,previewIdentity,busy,selectedIds,
+  projectId,shotId,cards,urls,previewReady,previewErrors,previewIdentity,busy,selectedIds,
   onLoaded,onSelect,onGenerate,onApprove,onCheck,onRetryPreview,onInspectUnknown
 }:ShotImageGalleryProps){
   const [expanded,setExpanded]=useState<string|null>(null);
@@ -138,11 +163,8 @@ export function ShotImageGallery({
               {job.approved&&<div>Approved binding: {job.approved.path} · SHA {job.approved.sha256}</div>}
             </>}
             {attempts.length>1&&<div className="shot-image-card-history">
-              {attempts.slice(1).map(attempt=><div key={attempt.id}>
-                <strong>{attempt.status}</strong> · {attempt.id}
-                {attempt.staged&&<span> · {attempt.staged.width} × {attempt.staged.height} · SHA {attempt.staged.sha256.slice(0,12)}</span>}
-                {attempt.reason&&<span> · {attempt.reason}</span>}
-              </div>)}
+              {attempts.slice(1).map(attempt=><HistoryCandidate
+                key={attempt.id} job={attempt} projectId={projectId}/>)}
             </div>}
           </details>
         </article>;
