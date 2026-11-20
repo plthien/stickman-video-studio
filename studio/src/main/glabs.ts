@@ -4,7 +4,7 @@ import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import type {CredentialCipher} from './elevenlabsCredentials.js';
 import {getPendingMedia,importMediaFile,fulfillMedia,nativeImageTargetIdentity,readNativeDraft} from './externalTasks.js';
-import {prepareNativeImages,loadImageStyleProfile} from './imagePreparation.js';
+import {prepareNativeImageTarget,loadImageStyleProfile} from './imagePreparation.js';
 import {atomicJson,nativeSkillRoot,readState,resolveProjectFile,sha,strictJson} from './services.js';
 
 export const GLABS_MODELS=['nano_banana_2','nano_banana_pro'] as const;
@@ -304,8 +304,8 @@ function assertPreparedImageRequest(appPath:string,root:string,input:ImageReques
   if(input.preparedFingerprint===undefined)return;
   if(typeof input.preparedFingerprint!=='string'||!/^[a-f0-9]{64}$/.test(input.preparedFingerprint))
     throw new Error('GLABS_PREPARED_FINGERPRINT_INVALID');
-  const ready=prepareNativeImages(appPath,root).jobs.find(job=>job.targetKey===input.targetKey&&
-    job.draftIdentity.creativeFingerprint===input.preparedFingerprint);
+  const candidate=prepareNativeImageTarget(appPath,root,input.targetKey);
+  const ready=candidate?.draftIdentity.creativeFingerprint===input.preparedFingerprint?candidate:null;
   if(!ready||ready.state!=='READY'||ready.prompt.trim()!==input.prompt.trim()||
     JSON.stringify(ready.references)!==JSON.stringify(input.references))
     throw new Error('GLABS_PREPARED_TARGET_NOT_READY_OR_STALE');
