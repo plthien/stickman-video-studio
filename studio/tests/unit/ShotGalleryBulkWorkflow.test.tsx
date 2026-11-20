@@ -63,10 +63,14 @@ function Harness(){
     <button onClick={()=>setNative(project('A',2))}>Revise Native DRAFT</button>
     <StoryboardWorkspace/></>;
 }
-function install({initial=4,rejectIndex=-1}:{
-  initial?:number;rejectIndex?:number
+function install({initial=4,rejectIndex=-1,superseded=false}:{
+  initial?:number;rejectIndex?:number;superseded?:boolean
 }={}){
   let records=targets.slice(0,initial).map((_target,index)=>job(index));
+  if(superseded){
+    const former={...job(0),status:'APPROVED',targetCreativeSha256:'9'.repeat(64)};
+    records=[former,...records];
+  }
   let fulfilled=new Set<string>();
   const pendingMedia=vi.fn(async(id:string)=>id==='A'?{
     token:'token-A',status:'WAITING_FOR_MEDIA',missing:targets.filter(t=>!fulfilled.has(t.key)),
@@ -134,7 +138,7 @@ describe('F09–F11 Native Shot gallery + explicit bulk approval',()=>{
       expect(image).toHaveAttribute('height',String(shapes[i][1]));
       expect(image).toHaveStyle({objectFit:'contain'});
     }
-    expect(screen.getByRole('button',{name:'Generate All in Shot (0)'})).toBeDisabled();
+    expect(screen.getByRole('button',{name:'Generate All in Shot (0 paid attempts)'})).toBeDisabled();
   });
   it('F11-INT-02 one click approves exactly one loaded candidate without a rights/source field',async()=>{
     const {approve,fulfilled}=install();
@@ -167,7 +171,7 @@ describe('F09–F11 Native Shot gallery + explicit bulk approval',()=>{
     render(<AppStateProvider><Harness/></AppStateProvider>);
     const cards=await shotCards(4);
     for(const card of cards.slice(0,3))await load(card);
-    const action=screen.getByRole('button',{name:'Approve All Ready in Shot (3)'});
+    const action=screen.getByRole('button',{name:'Approve All Inspected Ready in Shot (3)'});
     fireEvent.click(action);
     await waitFor(()=>expect(approve).toHaveBeenCalledTimes(3));
     expect(approve.mock.calls.map(call=>call[1])).toEqual(['job-0','job-1','job-2']);
@@ -182,7 +186,7 @@ describe('F09–F11 Native Shot gallery + explicit bulk approval',()=>{
     await load(cards[0]);
     fireEvent.click(screen.getByRole('button',{name:/shot-1 4 images/}));
     await shotCards(4);
-    const action=screen.getByRole('button',{name:'Approve All Ready (5)'});
+    const action=screen.getByRole('button',{name:'Approve All Inspected Ready (5)'});
     fireEvent.click(action);
     await waitFor(()=>expect(approve).toHaveBeenCalledTimes(5));
     expect(new Set(approve.mock.calls.map(call=>call[1]))).toEqual(
@@ -193,7 +197,7 @@ describe('F09–F11 Native Shot gallery + explicit bulk approval',()=>{
     render(<AppStateProvider><Harness/></AppStateProvider>);
     const cards=await shotCards(4);
     await load(cards[0]);await load(cards[1]);
-    fireEvent.click(screen.getByRole('button',{name:'Approve All Ready in Shot (2)'}));
+    fireEvent.click(screen.getByRole('button',{name:'Approve All Inspected Ready in Shot (2)'}));
     await waitFor(()=>expect(approve).toHaveBeenCalledTimes(2));
     await waitFor(()=>expect(screen.getByTestId('bulk-approval-results')).toHaveTextContent('1 approved'));
     expect(screen.getByTestId('bulk-approval-results')).toHaveTextContent('1 failed');
@@ -204,7 +208,7 @@ describe('F09–F11 Native Shot gallery + explicit bulk approval',()=>{
     const {generate}=install({initial:0});
     render(<AppStateProvider><Harness/></AppStateProvider>);
     await shotCards(4);
-    fireEvent.click(screen.getByRole('button',{name:'Generate All in Shot (4)'}));
+    fireEvent.click(screen.getByRole('button',{name:'Generate All in Shot (4 paid attempts)'}));
     await waitFor(()=>expect(generate).toHaveBeenCalledTimes(4));
     expect(generate.mock.calls.map(call=>call[1].targetKey)).toEqual(
       targets.slice(0,4).map(item=>item.key));
@@ -220,7 +224,7 @@ describe('F09–F11 Native Shot gallery + explicit bulk approval',()=>{
     }});
     render(<AppStateProvider><Harness/></AppStateProvider>);
     await shotCards(4);
-    fireEvent.click(screen.getByRole('button',{name:'Generate All in Shot (4)'}));
+    fireEvent.click(screen.getByRole('button',{name:'Generate All in Shot (4 paid attempts)'}));
     await waitFor(()=>expect(generating).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole('button',{name:'Stop after current request'}));
     complete({...job(0),status:'RUNNING'});
@@ -237,7 +241,7 @@ describe('F09–F11 Native Shot gallery + explicit bulk approval',()=>{
     }});
     render(<AppStateProvider><Harness/></AppStateProvider>);
     await shotCards(4);
-    const action=screen.getByRole('button',{name:'Generate All in Shot (4)'});
+    const action=screen.getByRole('button',{name:'Generate All in Shot (4 paid attempts)'});
     fireEvent.click(action);
     await waitFor(()=>expect(generate).toHaveBeenCalledTimes(1));
     fireEvent.click(action);
@@ -258,13 +262,13 @@ describe('F09–F11 Native Shot gallery + explicit bulk approval',()=>{
     }});
     render(<AppStateProvider><Harness/></AppStateProvider>);
     await shotCards(4);
-    fireEvent.click(screen.getByRole('button',{name:'Generate All in Shot (4)'}));
+    fireEvent.click(screen.getByRole('button',{name:'Generate All in Shot (4 paid attempts)'}));
     await waitFor(()=>expect(generate).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole('button',{name:'Revise Native DRAFT'}));
     finish({...job(0),status:'RUNNING'});
     // The pending session was invalidated by revision change. No new paid POST
     // may leave the client even if the old provider request completes later.
-    await waitFor(()=>expect(screen.getByRole('button',{name:'Generate All in Shot (4)'}))
+    await waitFor(()=>expect(screen.getByRole('button',{name:'Generate All in Shot (4 paid attempts)'}))
       .toBeInTheDocument());
     await Promise.resolve();
     expect(generate).toHaveBeenCalledTimes(1);
@@ -294,6 +298,27 @@ describe('F09–F11 Native Shot gallery + explicit bulk approval',()=>{
     expect(screen.getAllByTestId('shot-image-card')).toHaveLength(4);
     expect(within(screen.getAllByTestId('shot-image-card')[0])
       .getByText('Approved')).toBeInTheDocument();
+  });
+  it('F13-INT-01 an APPROVED candidate from older creative instructions is history, not current binding; regeneration is deliberate',async()=>{
+    const {generate}=install({initial:0,superseded:true});
+    render(<AppStateProvider><Harness/></AppStateProvider>);
+    const cards=await shotCards(4);
+    expect(within(cards[0]).getByText('Needs Regeneration')).toBeInTheDocument();
+    expect(within(cards[0]).queryByText('Approved')).not.toBeInTheDocument();
+    expect(generate).not.toHaveBeenCalled();
+    const button=within(cards[0]).getByRole('button',{
+      name:'Regenerate for Current Draft · portrait'
+    });
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    await waitFor(()=>expect(generate).toHaveBeenCalledTimes(1));
+    expect(generate).toHaveBeenCalledWith('A',expect.objectContaining({
+      targetKey:targets[0].key,regenerate:true,authorized:true,
+      preparedFingerprint:'1'.repeat(64)
+    }));
+    expect(generate).not.toHaveBeenCalledWith('A',expect.objectContaining({
+      targetKey:targets[1].key
+    }));
   });
   it('F09-INT-10 project switch clears previous cards and approval selection',async()=>{
     install({initial:5});
