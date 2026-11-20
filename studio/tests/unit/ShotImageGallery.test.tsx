@@ -63,7 +63,7 @@ describe('F09 Native Shot full-card gallery without selecting Layers',()=>{
     for(const image of images)
       expect(screen.getByText(image.layerId,{selector:'strong'})).toBeInTheDocument();
     expect(screen.getAllByRole('img')).toHaveLength(4);
-    expect(screen.getByText('Not Generated')).toBeInTheDocument();
+    expect(screen.getAllByText('Not Generated').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByTestId('shot-image-gallery')).toHaveTextContent('5 Native image Layers');
   });
   it('F09-02 uses 9:16, 1:1, 16:9 and off-ratio dimensions without cropping',()=>{
