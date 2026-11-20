@@ -720,8 +720,6 @@ export function StoryboardWorkspace(){
         }}
       />
     </Card>
-    <details className="storyboard-technical-details" data-testid="advanced-layer-inspector">
-      <summary>Advanced · Legacy Layer Inspector / G-Labs diagnostics</summary>
     <Card>
       <CardHeader title={shotId?shotId+' · Layer Inspector':'Layer Inspector'}/>
       <div className="storyboard-focus" data-testid="storyboard-focus">
@@ -877,7 +875,6 @@ export function StoryboardWorkspace(){
         </div>
       </div>
     </Card>
-    </details>
     <details open={advanced} onToggle={event=>setAdvanced(event.currentTarget.open)}>
       <summary>Advanced · manual Import & Bind, raw Native ledgers and diagnostics</summary>
       {advanced&&<LegacyStoryboardWorkspace/>}
