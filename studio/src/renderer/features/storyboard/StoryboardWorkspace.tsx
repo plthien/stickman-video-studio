@@ -253,11 +253,11 @@ export function StoryboardWorkspace(){
         </Select></Field>}
         {dirty&&<div className="info">Save the edited prompt/references before generating this image.</div>}
         {hasActiveAttempt&&<div className="info">Generation in progress. Use Check Status rather than submitting again.</div>}
-        <div className="actions">
+        {!hasPreviousAttempt&&<div className="actions">
           <Button variant="primary" disabled={busy||!config||!canSubmit||!ownerPrompt.trim()} onClick={()=>void generate(false)}>
-            {hasPreviousAttempt?'Regenerate Image':'Generate Image'}
+            Generate Image
           </Button>
-        </div>
+        </div>}
         <details className="storyboard-technical-details">
           <summary>Image prompt &amp; source details</summary>
           <div className="info"><strong>Image Prompt:</strong> {spec.ownerEdited?'Edited':'Compiled'} · {spec.state}</div>
@@ -321,6 +321,10 @@ export function StoryboardWorkspace(){
           }}>Retry Preview</Button>}
           {job.status==='VALIDATED'&&<Field label="Owner-confirmed rights/source"><Input value={rights} onChange={event=>setRights(event.target.value)} placeholder="Owned or licensed image source"/></Field>}
           <div className="actions">
+            {hasPreviousAttempt&&<Button variant={canSubmit?'primary':'ghost'}
+              disabled={busy||!config||!canSubmit||!ownerPrompt.trim()} onClick={()=>void generate(false)}>
+              Regenerate Image
+            </Button>}
             {['SUBMITTED','RUNNING','DOWNLOADED'].includes(job.status)&&<Button disabled={busy} onClick={()=>void poll(job.id)}>Check Status</Button>}
             {job.status==='VALIDATED'&&<Button variant="primary" disabled={busy||!rights.trim()||!urls[job.id]||previewReady[job.id]!==previewIdentity(job)} onClick={()=>void approve(job.id)}>Approve Image &amp; Bind</Button>}
             {job.status==='QUEUED'&&<Button disabled={busy} onClick={async()=>{
