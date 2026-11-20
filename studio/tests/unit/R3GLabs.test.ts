@@ -228,14 +228,15 @@ describe('R3 G-Labs security and lifecycle GL01–GL12',()=>{
     await pollGlabsImage(appPath,root,dir,cipher,first.id,decode);
     const second=await submitGlabsImage(appPath,root,dir,cipher,request(targets[1].key),decode);
     const secondDone=await pollGlabsImage(appPath,root,dir,cipher,second.id,decode);
-    const approved=approveGlabsImage(appPath,root,first.id,undefined,decode);
-    const firstBinding=approved.pending.fulfillments[targets[0].key];
+    approveGlabsImage(appPath,root,first.id,undefined,decode);
+    const firstBinding=getPendingMedia(appPath,root)?.fulfillments?.[targets[0].key];
+    expect(firstBinding).toBeDefined();
     fs.appendFileSync(path.join(root,secondDone.staged!.path),'tampered');
     expect(()=>approveGlabsImage(appPath,root,second.id,undefined,decode))
       .toThrow(/SHA|mismatch|changed/i);
     const after=getPendingMedia(appPath,root)!;
-    expect(after.fulfillments[targets[0].key]).toEqual(firstBinding);
-    expect(after.fulfillments[targets[1].key]).toBeUndefined();
+    expect(after.fulfillments?.[targets[0].key]).toEqual(firstBinding);
+    expect(after.fulfillments?.[targets[1].key]).toBeUndefined();
     expect(listGlabsJobs(root).find(row=>row.id===first.id)?.status).toBe('APPROVED');
     expect(after.missing.filter(item=>item.kind==='image')).toHaveLength(1);
     expect(calls.filter(call=>call.method==='POST')).toHaveLength(2);
