@@ -23,7 +23,30 @@ const createInput=(parent:string,folder='created')=>({parent,folder,title:'Actua
 function mappingFixture(){const{root}=fixture(),{response}=stageNative(root,nativePayload(root,{image:'early'})),entry=importMediaFile(root,importedSource(root),'image','owner rights');return{root,pending:response,entry}}
 
 describe('UT-MF01 early canonical native lock',()=>{
-  it('MF01-1 only one deferred preview reuse proceeds',async()=>{const x=await reusable(),gate=deferred(),adapter={...x.base,validate:async(...args:Parameters<typeof x.base.validate>)=>{await gate.promise;return x.base.validate(...args)}};const first=nativeJob(appPath,x.root,'preview',{seconds:20},{verifier:adapter});await vi.waitFor(()=>expect(fs.existsSync(path.join(x.root,'.studio/jobs/latest.json'))).toBe(true));await expect(nativeJob(appPath,x.root,'preview',{seconds:20},{verifier:x.base})).rejects.toThrow(/^BUSY:/);gate.resolve();await expect(first).resolves.toMatchObject({reused:true})});
+  it('MF01-1 only one deferred preview reuse proceeds',async()=>{
+    const x=await reusable(),gate=deferred();
+    const adapter={...x.base,validate:async(...args:Parameters<typeof x.base.validate>)=>{
+      await gate.promise;
+      return x.base.validate(...args);
+    }};
+    // nativeJob synchronously acquires the lock and writes STARTED evidence
+    // before its first awaited verifier operation. Polling the journal adds a
+    // timer dependency and needless latency to this concurrency test.
+    const first=nativeJob(appPath,x.root,'preview',{seconds:20},{verifier:adapter});
+    try{
+      const journal=path.join(x.root,'.studio/jobs/latest.json');
+      expect(fs.existsSync(journal)).toBe(true);
+      expect(JSON.parse(fs.readFileSync(journal,'utf8'))).toMatchObject({
+        command:'preview',status:'STARTED'
+      });
+      await expect(nativeJob(appPath,x.root,'preview',{seconds:20},{verifier:x.base}))
+        .rejects.toThrow(/^BUSY:/);
+    }finally{
+      // Never strand the first native job's gate if an assertion fails.
+      gate.resolve();
+    }
+    await expect(first).resolves.toMatchObject({reused:true});
+  });
   it('MF01-2 approve/render family shares the same project lock',async()=>{const x=await reusable(),gate=deferred(),adapter={...x.base,validate:async(...args:Parameters<typeof x.base.validate>)=>{await gate.promise;return x.base.validate(...args)}};const first=nativeJob(appPath,x.root,'preview',{seconds:20},{verifier:adapter});await vi.waitFor(()=>expect(fs.existsSync(path.join(x.root,'.studio/jobs/latest.json'))).toBe(true));await expect(nativeJob(appPath,x.root,'approve',{note:'review',attested:true,reviewedSha256:'x'},{verifier:x.base})).rejects.toThrow(/BUSY/);gate.resolve();await first});
   it('MF01-3 changed media/source cannot return reused success',async()=>{const x=await reusable(),gate=deferred(),adapter={...x.base,validate:async(...args:Parameters<typeof x.base.validate>)=>{await gate.promise;return x.base.validate(...args)}};const run=nativeJob(appPath,x.root,'preview',{seconds:20},{verifier:adapter});await vi.waitFor(()=>expect(fs.existsSync(path.join(x.root,'.studio/jobs/latest.json'))).toBe(true));const state=readState(x.root);state.brief.topic='unrelated but state-preserved';state.approvedScript!.text='changed';writeState(x.root,state);gate.resolve();await expect(run).rejects.toThrow(/changed|corrupt/i)});
   it('MF01-4 cancel during preflight releases lock',async()=>{const x=await reusable(),gate=deferred(),adapter={...x.base,validate:async(...args:Parameters<typeof x.base.validate>)=>{await gate.promise;return x.base.validate(...args)}};const run=nativeJob(appPath,x.root,'preview',{seconds:20},{verifier:adapter});await vi.waitFor(()=>expect(fs.existsSync(path.join(x.root,'.studio/jobs/latest.json'))).toBe(true));const job=JSON.parse(fs.readFileSync(path.join(x.root,'.studio/jobs/latest.json'),'utf8'));expect(cancelJob(x.root,job.id).cancelled).toBe(true);gate.resolve();await expect(run).rejects.toThrow(/CANCELLED/);await expect(nativeJob(appPath,x.root,'preview',{seconds:20},{verifier:x.base})).resolves.toMatchObject({reused:true})});
