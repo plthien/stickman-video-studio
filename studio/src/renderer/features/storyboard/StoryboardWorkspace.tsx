@@ -18,6 +18,9 @@ export function StoryboardWorkspace(){
   const [pending,setPending]=useState<Pending|null>(null);
   const [prepared,setPrepared]=useState<Prepared|null>(null);
   const [jobs,setJobs]=useState<ImageJob[]>([]);
+  // Provider events can arrive while initial source preparation is still
+  // running. Buffer them so an older glabsJobs snapshot cannot hide DONE.
+  const receivedJobUpdates=useRef<Map<string,ImageJob>>(new Map());
   const [config,setConfig]=useState<{model:string;aspectRatio:string}|null>(null);
   const [selectedShot,setSelectedShot]=useState(''),[selectedKey,setSelectedKey]=useState('');
   const [draftPrompts,setDraftPrompts]=useState<Record<string,string>>({});
@@ -59,12 +62,24 @@ export function StoryboardWorkspace(){
     // Avoid N image URL IPC roundtrips for projects with hundreds of jobs.
     // Only the selected candidate's preview is resolved on demand below.
     if(!isCurrentProjectSession(scope))return;
-    setPending(nextPending);setJobs(nextJobs);setConfig(nextConfig.config);
+    const updates=receivedJobUpdates.current;
+    const merged=nextJobs.map(job=>{
+      const newer=updates.get(job.id);
+      // A fresh backend terminal state always wins over prior UI events.
+      if(['APPROVED','STALE','CANCELLED'].includes(job.status))return job;
+      return newer&&newer.token===job.token?newer:job;
+    });
+    for(const newer of updates.values()){
+      if(newer.token===nextPending?.token&&!merged.some(job=>job.id===newer.id))
+        merged.unshift(newer);
+    }
+    setPending(nextPending);setJobs(merged);setConfig(nextConfig.config);
     setPrepared(nextPrepared);
-    return{pending:nextPending,jobs:nextJobs};
+    return{pending:nextPending,jobs:merged};
   };
   useEffect(()=>{
     const scope=captureProjectSession();
+    receivedJobUpdates.current.clear();
     setPending(null);setPrepared(null);setJobs([]);setConfig(null);setUrls({});
     setPreviewReady({});setPreviewErrors({});setPreviewAttempts({});setError('');setRights('');setBusy(false);
     setSubmission(null);setBatchProgress(null);
@@ -76,19 +91,21 @@ export function StoryboardWorkspace(){
   // transition. A selected completed job immediately resolves its image URL
   // using the existing lazy-preview effect: no manual "Check Status" required.
   useEffect(()=>{
-    const scope=captureProjectSession(),token=pending?.token;
-    if(!scope||!token||!window.studio?.onGlabsJobChanged)return;
+    const scope=captureProjectSession();
+    if(!scope||!window.studio?.onGlabsJobChanged)return;
     return window.studio.onGlabsJobChanged(change=>{
       if(!change||change.projectId!==scope.projectId||
-        !isCurrentProjectSession(scope)||change.job?.token!==token)return;
+        !isCurrentProjectSession(scope)||!change.job||
+        change.job.projectId!==scope.projectId)return;
       const updated=change.job;
+      receivedJobUpdates.current.set(updated.id,updated);
       setJobs(previous=>{
         const index=previous.findIndex(job=>job.id===updated.id);
         if(index<0)return[updated,...previous];
         return previous.map(job=>job.id===updated.id?updated:job);
       });
     });
-  },[id,pending?.token]);
+  },[id]);
   useEffect(()=>()=>{if(batchSession.current)batchSession.current.cancelled=true;},[]);
   useEffect(()=>{
     if(batchSession.current)batchSession.current.cancelled=true;
