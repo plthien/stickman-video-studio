@@ -97,7 +97,8 @@ describe('F07 — UNKNOWN recovery in the primary Storyboard without automatic p
     const {poll,generate}=install();
     render(<AppStateProvider><Harness/></AppStateProvider>);
     await afterCheck();
-    expect(poll).toHaveBeenCalledExactlyOnceWith('A',unknown.id);
+    expect(poll).toHaveBeenCalledTimes(1);
+    expect(poll).toHaveBeenCalledWith('A',unknown.id);
     expect(generate).not.toHaveBeenCalled();
     expect(screen.getByTestId('unknown-recovery-confirmation')).toHaveTextContent('duplicate billing');
   });
