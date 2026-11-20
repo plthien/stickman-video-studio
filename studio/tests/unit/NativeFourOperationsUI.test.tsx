@@ -300,7 +300,7 @@ describe('Storyboard — source-grounded paid image generation for current Nativ
     const generate=await screen.findByRole('button',{name:'Generate Image'});
     await waitFor(()=>expect(generate).toBeEnabled());
     expect(screen.getByText(/Current Project Style:/).closest('div')).toHaveTextContent('B1');
-    expect(screen.getByText(/Source image description:/).closest('div')).toHaveTextContent('layer-1');
+    expect(screen.getByText(/Image:/).closest('div')).toHaveTextContent('layer-1');
     expect(screen.getByText('Approved B1 style. Exact owner-approved image for layer-1', {selector:'pre'})).toBeInTheDocument();
     expect(glabsGenerate).not.toHaveBeenCalled();
     fireEvent.click(generate);
@@ -324,7 +324,7 @@ describe('Storyboard — source-grounded paid image generation for current Nativ
     expect(screen.getByLabelText('Edit image prompt for current target only')).not.toHaveValue(
       'Owner changes only first layer image pose');
     fireEvent.click(screen.getByRole('button',{name:/shot-2/}));
-    expect(screen.getByText(/Source image description:/).closest('div')).toHaveTextContent('layer-3');
+    expect(screen.getByText(/Image:/).closest('div')).toHaveTextContent('layer-3');
     expect(glabsGenerate).not.toHaveBeenCalled();
   });
   it('SB-IMG-04 Native DRAFT correction refreshes exact missing target without leaking previous selection',async()=>{
@@ -348,10 +348,10 @@ describe('Storyboard — source-grounded paid image generation for current Nativ
         <StoryboardWorkspace/></>;
     }
     render(<AppStateProvider><RecheckHarness/></AppStateProvider>);
-    await waitFor(()=>expect(screen.getByText(/Source image description:/).closest('div')).toHaveTextContent('layer-1'));
+    await waitFor(()=>expect(screen.getByText(/Image:/).closest('div')).toHaveTextContent('layer-1'));
     fireEvent.click(screen.getByRole('button',{name:'Commit current corrected DRAFT'}));
     await waitFor(()=>expect(pendingMedia).toHaveBeenCalledTimes(2));
-    await waitFor(()=>expect(screen.getByText(/Source image description:/).closest('div')).toHaveTextContent('layer-2'));
+    await waitFor(()=>expect(screen.getByText(/Image:/).closest('div')).toHaveTextContent('layer-2'));
     expect(screen.queryByRole('button',{name:/Owner-approved image for layer-1/})).not.toBeInTheDocument();
   });
   it('SB-IMG-03 missing Native candidate never offers a paid Generate action',async()=>{
