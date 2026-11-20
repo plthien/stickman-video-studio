@@ -195,8 +195,9 @@ export function StoryboardWorkspace(){
       (!job.targetCreativeSha256||
         ((spec?.draftIdentity.creativeFingerprint??item.creativeFingerprint)===
           job.targetCreativeSha256))&&
-      (!job.styleProfileSha256||!spec||
-        job.styleProfileSha256===spec.styleProfileRef.sha256)&&
+      (!job.styleProfileSha256||
+        (spec?.styleProfileRef.sha256??gallery?.styleProfileSha256)===
+          job.styleProfileSha256)&&
       (!job.styleProfileId||!native?.project.style||
         job.styleProfileId===native.project.style)
     );
