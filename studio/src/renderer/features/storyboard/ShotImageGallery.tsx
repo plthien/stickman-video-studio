@@ -236,6 +236,7 @@ export function ShotImageGallery({
               new Set(previous).add(card.target.key))}>Inspect Failure</Button>}
           </div>
           <details className="shot-image-card-details"
+            open={openDetails.has(card.target.key)}
             onToggle={event=>{
               const open=event.currentTarget.open;
               setOpenDetails(previous=>{
