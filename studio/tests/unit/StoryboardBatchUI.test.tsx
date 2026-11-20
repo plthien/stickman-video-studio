@@ -43,7 +43,8 @@ const prepared=(id:string)=>({
 });
 type ImageJob={id:string;projectId:string;token:string;targetKey:string;shotId:string;
   layerId:string;targetPath:string;status:string;model:string;aspectRatio:string;
-  prompt:string;reason?:string;staged?:{path:string;sha256:string;width:number;height:number}};
+  prompt:string;reason?:string;journalRevision?:number;
+  staged?:{path:string;sha256:string;width:number;height:number}};
 const job=(id:string,targetIndex:number,status='RUNNING'):ImageJob=>{
   const t=targets[targetIndex];
   return{id,projectId:'A',token:'token-A',targetKey:t.key,shotId:t.shotId,
@@ -276,6 +277,29 @@ describe('Phase-1 Storyboard viewport and owner-started safe bulk generation',()
     }});});
     expect(screen.queryByRole('img',{name:'Shot gallery sh-a/layer-a'})).not.toBeInTheDocument();
     expect(screen.getByTestId('shot-image-gallery')).toBeInTheDocument();
+  });
+  it('F17-UI-01 a late lower-revision RUNNING event never replaces journal-validated image',async()=>{
+    const ready={...job('revision-ordered',0,'VALIDATED'),journalRevision:9,
+      staged:{path:'assets/images/verified.png',sha256:'a'.repeat(64),
+        width:768,height:1376}};
+    const {generate}=install([ready]);
+    let notify!:(change:{projectId:string;job:ImageJob})=>void;
+    Object.defineProperty(window,'studio',{configurable:true,value:{
+      ...window.studio,onGlabsJobChanged:(listener:typeof notify)=>{
+        notify=listener;return()=>undefined;
+      }
+    }});
+    render(<AppStateProvider><Harness/></AppStateProvider>);
+    const card=(await screen.findAllByTestId('shot-image-card'))[0];
+    const image=await screen.findByRole('img',{name:'Shot gallery sh-a/layer-a'});
+    expect(image).toHaveAttribute('src','studio-media://A/assets/images/verified.png');
+    await act(async()=>{notify({projectId:'A',job:{
+      ...job('revision-ordered',0,'RUNNING'),journalRevision:8
+    }});});
+    expect(card).toHaveTextContent('Ready to approve');
+    expect(screen.getByRole('img',{name:'Shot gallery sh-a/layer-a'}))
+      .toHaveAttribute('src','studio-media://A/assets/images/verified.png');
+    expect(generate).not.toHaveBeenCalled();
   });
   it('PERF-01 on-demand preview URL resolves only selected candidate, not every staged job',async()=>{
     const a={...job('candidate-a',0,'VALIDATED'),staged:{
