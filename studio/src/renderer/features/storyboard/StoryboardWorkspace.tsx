@@ -369,7 +369,7 @@ export function StoryboardWorkspace(){
         </span>
       </div>
       {batchProgress&&<div className="storyboard-batch-progress" role="status" data-testid="image-batch-progress">
-        <strong>{batchProgress.state==='running'?'Generating images':
+        <strong>{batchProgress.state==='running'?'Submitting image requests':
           batchProgress.state==='complete'?'Batch submitted':'Batch stopped'}</strong>
         <span>{batchProgress.sent} / {batchProgress.total} requests submitted
           {batchProgress.current?' · '+batchProgress.current:''}
