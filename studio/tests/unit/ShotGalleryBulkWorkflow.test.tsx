@@ -320,6 +320,39 @@ describe('F09–F11 Native Shot gallery + explicit bulk approval',()=>{
       targetKey:targets[1].key
     }));
   });
+  it('F13-INT-02 old-token APPROVED and UNKNOWN are historical only; new-token regeneration remains explicit and unblocked',async()=>{
+    const {generate}=install({initial:0});
+    const existing=window.studio!;
+    const olderApproved={...job(0),token:'token-before-correction',
+      status:'APPROVED',targetCreativeSha256:'9'.repeat(64),
+      id:'historical-approved',createdAt:'2026-01-01T00:00:00Z'};
+    const olderUnknown={...job(0),token:'token-before-correction',
+      status:'UNKNOWN',targetCreativeSha256:'9'.repeat(64),
+      id:'historical-unknown',createdAt:'2026-01-02T00:00:00Z'};
+    Object.defineProperty(window,'studio',{configurable:true,value:{
+      ...existing,glabsJobs:async(id:string)=>id==='A'?[olderUnknown,olderApproved]:[]
+    }});
+    render(<AppStateProvider><Harness/></AppStateProvider>);
+    const cards=await shotCards(4),first=cards[0];
+    expect(within(first).getByText('Needs Regeneration')).toBeInTheDocument();
+    expect(within(first).queryByRole('button',{name:'Review UNKNOWN'})).not.toBeInTheDocument();
+    expect(within(first).getByRole('button',{
+      name:'Regenerate for Current Draft · portrait'
+    })).toBeEnabled();
+    expect(generate).not.toHaveBeenCalled();
+    fireEvent.click(within(first).getByText(
+      'Prompt · references · candidate history · diagnostics'));
+    expect(await within(first).findByText('Historical APPROVED image is superseded',
+      {exact:false})).toBeInTheDocument();
+    expect(within(first).getByText('Candidate History')).toBeInTheDocument();
+    fireEvent.click(within(first).getByRole('button',{
+      name:'Regenerate for Current Draft · portrait'
+    }));
+    await waitFor(()=>expect(generate).toHaveBeenCalledTimes(1));
+    expect(generate).toHaveBeenCalledWith('A',expect.objectContaining({
+      targetKey:targets[0].key,authorized:true,regenerate:false
+    }));
+  });
   it('F09-INT-10 project switch clears previous cards and approval selection',async()=>{
     install({initial:5});
     render(<AppStateProvider><Harness/></AppStateProvider>);
