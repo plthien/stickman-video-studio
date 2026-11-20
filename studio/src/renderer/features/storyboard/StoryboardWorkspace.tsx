@@ -389,6 +389,8 @@ export function StoryboardWorkspace(){
     </Card>
     <Card>
       <CardHeader title={shotId?shotId+' · Images':'Images'}/>
+      <div className="storyboard-focus" data-testid="storyboard-focus">
+        <div className="storyboard-focus-controls">
       {shotTargets.length?<div className="storyboard-layer-strip" aria-label="Native image asset list">{shotTargets.map(item=>{
         const row=prepared?.jobs.find(value=>value.targetKey===item.key);
         const current=jobs.find(job=>job.token===pending?.token&&job.targetKey===item.key);
@@ -399,7 +401,9 @@ export function StoryboardWorkspace(){
         </button>;
       })}</div>:<div className="info" data-testid="glabs-image-unavailable">{!pending?'No Native DRAFT media candidate staged.':imageTargets.length?'No missing images in this Shot.':'All required image occurrences are fulfilled.'}</div>}
       {spec&&<div className="stack">
-        <div className="info"><strong>Source image description:</strong> {spec.sourceDescription||spec.reason}</div>
+        <div className="info storyboard-source-summary" title={spec.sourceDescription||spec.reason}>
+          <strong>Image:</strong> {spec.sourceDescription||spec.reason}
+        </div>
         {spec.state!=='READY'&&<div className="info error">{spec.state}: {spec.reason}</div>}
         {spec.styleAnchors.length>0&&<Field label="Verified B4 style reference"><Select value={refs(ownerRefs).find(value=>value.startsWith('@modeb/b4/'))??''}
           onChange={event=>setDraftReferences(old=>({...old,[identity]:event.target.value}))}>
@@ -445,6 +449,28 @@ export function StoryboardWorkspace(){
             onClick={()=>void generate(true)}>Authorize ONE New Image Attempt (paid confirmation)</Button>
         </div>}
       </Card>}
+      {previousJobs.length>0&&<details className="storyboard-technical-details">
+        <summary>Previous attempts ({previousJobs.length})</summary>
+        {previousJobs.map(job=><div key={job.id} className="info">{job.status} · {job.id}
+          {job.providerTaskId?' · Provider '+job.providerTaskId:''}
+          {job.reason?' · '+job.reason:''}
+        </div>)}
+      </details>}
+      {error&&<div className="info error" role="alert">{error}</div>}
+      {spec&&<details><summary>Advanced · target-specific edits and verified references</summary>
+        <div className="info">Native target: {spec.shotId}/{spec.layerId} · {spec.path}</div>
+        <div className="info">Style authority: {spec.styleProfileRef.path} · SHA256 {spec.styleProfileRef.sha256} · Creative fingerprint {spec.draftIdentity.creativeFingerprint}</div>
+        <Field label="Edit image prompt for current target only"><Textarea value={ownerPrompt} onChange={event=>setDraftPrompts(old=>({...old,[identity]:event.target.value}))} placeholder={spec.reason||'Prepared prompt appears automatically'}/></Field>
+        <Field label="Approved image references (advanced)"><Input value={ownerRefs} onChange={event=>setDraftReferences(old=>({...old,[identity]:event.target.value}))} placeholder="Only exact approved asset paths"/></Field>
+        <Button disabled={busy||ownerPrompt.trim().length<12} onClick={()=>void saveOverride()}>Save target-specific prompt/references</Button>
+      </details>}
+        </div>
+        <div className="storyboard-focus-preview">
+          {!visibleJobs.length&&<div className="storyboard-empty-preview" data-testid="storyboard-empty-preview">
+            <strong>{target?target.shotId+' / '+target.layerId:'Select an image layer'}</strong>
+            <span>{submission?.key===target?.key?'Submitting image to G-Labs…':
+              target?'Generated image will appear here.':'Choose a Shot and image layer to preview.'}</span>
+          </div>}
       {visibleJobs.map(job=><div key={job.id} className="storyboard-selected-image" data-testid="storyboard-selected-image">
         <div className="storyboard-image-stage">
           {job.staged&&urls[job.id]?<img key={previewIdentity(job)} src={urls[job.id]}
@@ -498,21 +524,8 @@ export function StoryboardWorkspace(){
           </details>
         </div>
       </div>)}
-      {previousJobs.length>0&&<details className="storyboard-technical-details">
-        <summary>Previous attempts ({previousJobs.length})</summary>
-        {previousJobs.map(job=><div key={job.id} className="info">{job.status} · {job.id}
-          {job.providerTaskId?' · Provider '+job.providerTaskId:''}
-          {job.reason?' · '+job.reason:''}
-        </div>)}
-      </details>}
-      {error&&<div className="info error" role="alert">{error}</div>}
-      {spec&&<details><summary>Advanced · target-specific edits and verified references</summary>
-        <div className="info">Native target: {spec.shotId}/{spec.layerId} · {spec.path}</div>
-        <div className="info">Style authority: {spec.styleProfileRef.path} · SHA256 {spec.styleProfileRef.sha256} · Creative fingerprint {spec.draftIdentity.creativeFingerprint}</div>
-        <Field label="Edit image prompt for current target only"><Textarea value={ownerPrompt} onChange={event=>setDraftPrompts(old=>({...old,[identity]:event.target.value}))} placeholder={spec.reason||'Prepared prompt appears automatically'}/></Field>
-        <Field label="Approved image references (advanced)"><Input value={ownerRefs} onChange={event=>setDraftReferences(old=>({...old,[identity]:event.target.value}))} placeholder="Only exact approved asset paths"/></Field>
-        <Button disabled={busy||ownerPrompt.trim().length<12} onClick={()=>void saveOverride()}>Save target-specific prompt/references</Button>
-      </details>}
+        </div>
+      </div>
     </Card>
     <details open={advanced} onToggle={event=>setAdvanced(event.currentTarget.open)}>
       <summary>Advanced · manual Import & Bind, raw Native ledgers and diagnostics</summary>
