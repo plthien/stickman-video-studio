@@ -171,6 +171,14 @@ export function ShotImageGallery({
             {job&&<><div>Model {job.model} · Provider {job.providerTaskId??'not confirmed'} · Job {job.id}</div>
               {job.reason&&<div className="info error">{job.reason}</div>}
               {job.approved&&<div>Approved binding: {job.approved.path} · SHA {job.approved.sha256}</div>}
+              {job.approved?.provenance&&<div className="shot-image-provenance">
+                <strong>Generated-image source:</strong> {job.approved.provenance.source}
+                <div>Model {job.approved.provenance.model} · Provider task {job.approved.provenance.providerTaskId??'not supplied'}</div>
+                <div>Prompt SHA {job.approved.provenance.promptSha256}</div>
+                <div>Image SHA {job.approved.provenance.imageSha256}</div>
+                <div>Approved {job.approved.provenance.approvedAt} for project use by owner</div>
+                <div>Provider licensing terms have not been independently verified.</div>
+              </div>}
             </>}
             {attempts.length>1&&<div className="shot-image-card-history">
               {attempts.slice(1).map(attempt=><HistoryCandidate
