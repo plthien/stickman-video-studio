@@ -194,12 +194,12 @@ describe('F07 — UNKNOWN recovery in the primary Storyboard without automatic p
     expect(generate).not.toHaveBeenCalled();
   });
   it('F07-UI11 an old UNKNOWN poll reply cannot authorize a new paid attempt when persisted history is RUNNING',async()=>{
-    const {generate,poll,readJobs}=install({journalAdvancesDuringPoll:true});
+    const {generate,poll}=install({journalAdvancesDuringPoll:true});
     render(<AppStateProvider><Harness/></AppStateProvider>);
     const check=await screen.findByRole('button',{name:'Check Existing Attempt (read-only)'});
     fireEvent.click(check);
     await waitFor(()=>expect(poll).toHaveBeenCalledWith('A',unknown.id));
-    await waitFor(()=>expect(readJobs).toHaveBeenCalledTimes(2));
+    await waitFor(()=>expect(screen.getByTestId('storyboard-selected-image')).toHaveTextContent('Generating image…'));
     await waitFor(()=>expect(screen.queryByTestId('unknown-recovery-confirmation')).not.toBeInTheDocument());
     expect(screen.queryByRole('checkbox',{
       name:'Acknowledge possible duplicate billing for this exact G-Labs target'
