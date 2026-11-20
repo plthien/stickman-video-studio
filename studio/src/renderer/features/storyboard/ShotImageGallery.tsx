@@ -71,6 +71,7 @@ export function ShotImageGallery({
   onLoaded,onSelect,onGenerate,onApprove,onCheck,onRetryPreview,onInspectUnknown
 }:ShotImageGalleryProps){
   const [expanded,setExpanded]=useState<string|null>(null);
+  const [openDetails,setOpenDetails]=useState<Set<string>>(new Set());
   const eligible=(card:GalleryCard)=>{
     const job=card.job;
     return Boolean(job&&job.status==='VALIDATED'&&job.staged&&
@@ -149,8 +150,17 @@ export function ShotImageGallery({
               onClick={()=>onRetryPreview(job.id)}>Retry Preview</Button>}
             {job?.status==='FAILED'&&<Button onClick={()=>onCheck(job.id)}>Inspect Failure</Button>}
           </div>
-          <details className="shot-image-card-details">
+          <details className="shot-image-card-details"
+            onToggle={event=>{
+              const open=event.currentTarget.open;
+              setOpenDetails(previous=>{
+                const next=new Set(previous);
+                if(open)next.add(card.target.key);else next.delete(card.target.key);
+                return next;
+              });
+            }}>
             <summary>Prompt · references · candidate history · diagnostics</summary>
+            {openDetails.has(card.target.key)&&<>
             <div><strong>Exact target:</strong> {card.target.key}</div>
             <div><strong>Original:</strong> {card.target.path}</div>
             <div><strong>Resolved:</strong> {card.target.boundPath}</div>
@@ -166,6 +176,7 @@ export function ShotImageGallery({
               {attempts.slice(1).map(attempt=><HistoryCandidate
                 key={attempt.id} job={attempt} projectId={projectId}/>)}
             </div>}
+            </>}
           </details>
         </article>;
       })}
