@@ -9,7 +9,7 @@ import {confirmLifecycleResult,freezeLifecycleTask,readFrozenExternalTask,stageL
 import {readExternalHistory} from './externalHistory.js';
 import {prepareNativeImages,saveNativeImagePrompt} from './imagePreparation.js';
 import { getCaptionReview, draftCaptionReview, approveCaptionReview,autoCaptionReview } from './captionReview.js';
-import {glabsSettings,saveGlabsSettings,glabsCredentialStatus,saveGlabsKey,clearGlabsKey,glabsProbe,reconcileGlabsJobs,submitGlabsImage,pollGlabsImage,approveGlabsImage,cancelQueuedGlabsImage,type GLabsSettings,type ImageRequest} from './glabs.js';
+import {glabsSettings,saveGlabsSettings,glabsCredentialStatus,saveGlabsKey,clearGlabsKey,glabsProbe,reconcileGlabsJobs,readGlabsJob,submitGlabsImage,pollGlabsImage,approveGlabsImage,cancelQueuedGlabsImage,type GLabsSettings,type ImageRequest} from './glabs.js';
 import {createGlabsAutoPolling} from './glabsAutoPolling.js';
 import { discoverNano, generateNano, nanoBase } from './nanoClient.js';
 import { cancelJob, nativeJob, reconcileJob } from './nativeJobs.js';
@@ -37,8 +37,17 @@ const glabsPolling=createGlabsAutoPolling({
     }
   },
   onError:(projectId,jobId,error)=>{
-    // A failed read-only GET is never replayed as a paid POST.
+    // A failed read-only GET is never replayed as a paid POST. Send the
+    // verified persisted ingestion diagnostic, not exception/secret contents.
     console.warn('[glabs-auto-poll]',projectId,jobId,error instanceof Error?error.message:String(error));
+    try{
+      const job=readGlabsJob(rootFor(projectId),jobId);
+      if(!job.lastSyncError)return;
+      for(const win of BrowserWindow.getAllWindows()){
+        if(!win.isDestroyed()&&!win.webContents.isDestroyed())
+          win.webContents.send('glabs:jobChanged',{projectId,job});
+      }
+    }catch{/* A closed or no-longer-open project has no renderer audience. */}
   }
 });
 const resumeGlabsPolling=(id:string,root:string)=>{
