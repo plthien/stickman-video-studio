@@ -244,33 +244,76 @@ function correctDraftForTest(root:string,change:(artifact:NativeVisualArtifact)=
 }
 
 describe('R3 final repairs F01/F03/F06 — strict output, references and truthful probes',()=>{
-  it('F01-01 validates a real 9:16 generated PNG and F01-05 rechecks ratio at approval',async()=>{
-    const dir=credential(),{root,targets}=nativeTarget();transport();
+  it('RATIO-01 ignores output aspect-ratio mismatch during approval while keeping image SHA/rights/target binding checks',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport();
     const job=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
     const done=await pollGlabsImage(appPath,root,dir,cipher,job.id,decode);
     expect(done).toMatchObject({status:'VALIDATED',staged:{width:90,height:160}});
     const altered=JSON.parse(fs.readFileSync(path.join(root,'.studio','glabs','jobs',job.id+'.json'),'utf8')) as Record<string,unknown>;
     altered.aspectRatio='16:9';
     fs.writeFileSync(path.join(root,'.studio','glabs','jobs',job.id+'.json'),JSON.stringify(altered));
-    expect(()=>approveGlabsImage(appPath,root,job.id,'Owner rights confirmed',decode)).toThrow(/ASPECT_RATIO_MISMATCH/);
-    expect(getPendingMedia(appPath,root)!.missing).toHaveLength(1);
+    const result=approveGlabsImage(appPath,root,job.id,'Owner rights confirmed',decode);
+    expect(result.job.status).toBe('APPROVED');
+    expect(getPendingMedia(appPath,root)!.missing).toHaveLength(0);
+    expect(calls.filter(x=>x.method==='POST')).toHaveLength(1);
   });
-  it.each([[1,1],[160,90]])('F01-02/03/06 rejects output %i:%i for portrait job without a second paid POST',async(w,h)=>{
+  it.each([[1,1],[160,90],[768,1376]])('RATIO-02 accepts decodable output %i:%i despite requested portrait ratio, without another paid POST',async(w,h)=>{
     const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport({image:pngAt(w,h)});
     const job=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
-    const failed=await pollGlabsImage(appPath,root,dir,cipher,job.id,decode);
-    expect(failed.status).toBe('FAILED');expect(failed.reason).toMatch(/ASPECT_RATIO_MISMATCH/);
-    expect(failed.staged).toMatchObject({width:w,height:h});
-    expect(()=>approveGlabsImage(appPath,root,job.id,'Owner rights confirmed',decode)).toThrow(/NOT_VALIDATED/);
+    const received=await pollGlabsImage(appPath,root,dir,cipher,job.id,decode);
+    expect(received.status).toBe('VALIDATED');
+    expect(received.staged).toMatchObject({width:w,height:h});
+    expect(approveGlabsImage(appPath,root,job.id,'Owner rights confirmed',decode).job.status).toBe('APPROVED');
     expect(calls.filter(x=>x.method==='POST')).toHaveLength(1);
-    expect(getPendingMedia(appPath,root)!.missing).toHaveLength(1);
+    expect(getPendingMedia(appPath,root)!.missing).toHaveLength(0);
   });
   it.each([['1:1',90,90],['3:4',512,683],['4:3',683,512],['9:16',512,910],['16:9',910,512]] as const)(
-    'F01-04 tolerates normal integer rounding for requested %s',async(ratio,w,h)=>{
+    'RATIO-03 preserves the provider-requested %s ratio without rejecting returned PNG dimensions',async(ratio,w,h)=>{
       const dir=credential(),{root,targets}=nativeTarget();saveGlabsSettings(dir,{endpoint:'http://127.0.0.1:8765',contract:'legacy',model:'nano_banana_2',aspectRatio:ratio});transport({image:pngAt(w,h)});
       const job=await submitGlabsImage(appPath,root,dir,cipher,{...request(targets[0].key),aspectRatio:ratio},decode);
       expect((await pollGlabsImage(appPath,root,dir,cipher,job.id,decode)).status).toBe('VALIDATED');
     });
+  it('RATIO-04 recovers a previously FAILED staged ratio-mismatch job on refresh without new POST',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport({image:pngAt(768,1376)});
+    const submitted=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    const completed=await pollGlabsImage(appPath,root,dir,cipher,submitted.id,decode);
+    expect(completed.status).toBe('VALIDATED');
+    const file=path.join(root,'.studio','glabs','jobs',submitted.id+'.json');
+    const stored=JSON.parse(fs.readFileSync(file,'utf8')) as Record<string,unknown>;
+    stored.status='FAILED';stored.reason='GLABS_IMAGE_ASPECT_RATIO_MISMATCH';
+    fs.writeFileSync(file,JSON.stringify(stored));
+    const recovered=reconcileGlabsJobs(appPath,root).find(row=>row.id===submitted.id)!;
+    expect(recovered.status).toBe('VALIDATED');
+    expect(recovered.reason).toContain('GLABS_IMAGE_ASPECT_RATIO_MISMATCH');
+    expect(recovered.staged).toMatchObject({width:768,height:1376});
+    expect(calls.filter(x=>x.method==='POST')).toHaveLength(1);
+    expect(approveGlabsImage(appPath,root,submitted.id,'Owner rights confirmed',decode).job.status).toBe('APPROVED');
+    expect(getPendingMedia(appPath,root)!.missing).toHaveLength(0);
+  });
+  it('RATIO-05 does not recover ratio-failed history if staged SHA is tampered or file is missing',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport();
+    const submitted=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    const completed=await pollGlabsImage(appPath,root,dir,cipher,submitted.id,decode);
+    const file=path.join(root,'.studio','glabs','jobs',submitted.id+'.json');
+    const stored=JSON.parse(fs.readFileSync(file,'utf8')) as Record<string,unknown>;
+    stored.status='FAILED';stored.reason='GLABS_IMAGE_ASPECT_RATIO_MISMATCH';
+    fs.writeFileSync(file,JSON.stringify(stored));
+    fs.writeFileSync(path.join(root,completed.staged!.path),pngAt(90,161));
+    expect(reconcileGlabsJobs(appPath,root).find(row=>row.id===submitted.id)!.status).toBe('FAILED');
+    expect(()=>approveGlabsImage(appPath,root,submitted.id,'Owner rights confirmed',decode)).toThrow(/NOT_VALIDATED/);
+    expect(calls.filter(x=>x.method==='POST')).toHaveLength(1);
+  });
+  it('RATIO-06 preserves unrelated provider FAILED attempts and does not silently approve them',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport();
+    const submitted=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    await pollGlabsImage(appPath,root,dir,cipher,submitted.id,decode);
+    const file=path.join(root,'.studio','glabs','jobs',submitted.id+'.json');
+    const stored=JSON.parse(fs.readFileSync(file,'utf8')) as Record<string,unknown>;
+    stored.status='FAILED';stored.reason='Provider reported failure (no automatic retry).';
+    fs.writeFileSync(file,JSON.stringify(stored));
+    expect(reconcileGlabsJobs(appPath,root).find(row=>row.id===submitted.id)!.status).toBe('FAILED');
+    expect(calls.filter(x=>x.method==='POST')).toHaveLength(1);
+  });
   it('F03-01/05 unchanged reference and rights approve with immutable frozen evidence',async()=>{
     const dir=credential(),{root,targets}=nativeTarget();const{calls}=transport();
     const media=importMediaFile(root,importedSource(root),'image','Owner licensed original');
