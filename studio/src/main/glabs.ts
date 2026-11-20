@@ -223,8 +223,13 @@ function currentJobTarget(appPath:string,root:string,job:GLabsJob):boolean{
       // Preserve the potentially charged outcome even when creative/style
       // evidence becomes stale. Otherwise a new attempt could bypass the
       // mandatory UNKNOWN-billing acknowledgement.
-      job.reason='GLABS_UNKNOWN_MAY_HAVE_CHARGED; '+reason;
-      writeJob(root,job);
+      const diagnostic='GLABS_UNKNOWN_MAY_HAVE_CHARGED; '+reason;
+      // Append a new stale-identity diagnostic without replacing the original
+      // uncertain-submit/provider evidence or rewriting it on every refresh.
+      if(!job.reason?.includes(diagnostic)){
+        job.reason=[job.reason,diagnostic].filter(Boolean).join(' | ');
+        writeJob(root,job);
+      }
     }else if(job.status!=='APPROVED'){
       job.status='STALE';job.reason=reason;
       writeJob(root,job);
@@ -427,7 +432,12 @@ export async function pollGlabsImage(appPath:string,root:string,userData:string,
   if(!currentJobTarget(appPath,root,job))return job;
   if(job.status==='VALIDATED')return job;
   if(!job.providerTaskId){
-    job.status='UNKNOWN';job.reason='Submission has no confirmed provider task ID; never auto-POST again.';writeJob(root,job);return job;
+    const note='Submission has no confirmed provider task ID; never auto-POST again.';
+    if(job.status!=='UNKNOWN'||!job.reason?.includes(note)){
+      job.status='UNKNOWN';job.reason=[job.reason,note].filter(Boolean).join(' | ');
+      writeJob(root,job);
+    }
+    return job;
   }
   const config=glabsSettings(userData),task=job.providerTaskId;
   const response=await requestJson(config,userData,cipher,'GET','api/status/'+task);
