@@ -130,7 +130,7 @@ export function StoryboardWorkspace(){
   },[id]);
   const candidateAfter=pending?.after as {shots?:unknown[]}|undefined;
   const shots=Array.isArray(candidateAfter?.shots)?candidateAfter.shots as Array<Record<string,unknown>>:[];
-  const shotIds=gallery?.token===pending?.token&&gallery.shots.length?
+  const shotIds=gallery&&pending&&gallery.token===pending.token&&gallery.shots.length?
     gallery.shots.map(shot=>shot.id):
     shots.filter(row=>typeof row.id==='string').map(row=>row.id as string);
   const shotId=shotIds.includes(selectedShot)?selectedShot:shotIds[0]??'';
@@ -158,7 +158,7 @@ export function StoryboardWorkspace(){
     };
     if(Array.isArray(shot.layers))visit(shot.layers);
   });
-  const galleryTargets=gallery?.token===pending?.token?
+  const galleryTargets=gallery&&pending&&gallery.token===pending.token?
     gallery.targets:fallbackGalleryTargets;
   const previewIdentity=(job:ImageJob)=>[id,job.id,job.token,job.staged?.sha256??'-',urls[job.id]??'-',previewAttempts[job.id]??0].join('|');
   const cards:GalleryCard[]=galleryTargets.filter(item=>item.shotId===shotId)
