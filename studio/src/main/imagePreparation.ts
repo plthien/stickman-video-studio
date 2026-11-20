@@ -179,11 +179,11 @@ export function compileImageJobSpecs(input:{
     // requirements. Retain the stored owner text, add any missing global
     // directives, and retain style authority in this effective prepared prompt.
     const ownerText=validOwner?owner.prompt.trim():'';
-    const missingOwnerGlobals=validOwner?globalSections.filter((_section,index)=>{
-      const directive=globalCreative[index];
-      return directive.some(value=>!['CONTENT / DIRECTIVE','OUTPUT / ORIENTATION','CONTINUITY','ASSET KIND'].includes(value)&&
-        !ownerText.includes(value));
-    }):[];
+    // Requiring the COMPLETE compiled block avoids treating a quoted fragment
+    // (including a negated fragment) as evidence that a global instruction is
+    // present. Existing complete compiled owner prompts are not duplicated.
+    const missingOwnerGlobals=validOwner?
+      globalSections.filter(section=>!ownerText.includes(section)):[];
     const prompt=validOwner?[
       ...(globals.length&&!ownerText.includes(profile.guidance)?
         ['APPROVED MODE B STYLE '+style+' ['+profile.path+'; SHA256 '+profile.sha256+']',profile.guidance]:[]),
