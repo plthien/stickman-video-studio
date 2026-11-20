@@ -56,16 +56,22 @@ function registerIpc() {
   ipcMain.handle('glabs:generate',async(_event,id:string,input:ImageRequest)=>{
     const root=rootFor(id);
     if(!input||input.authorized!==true)throw new Error('GLABS_EXPLICIT_AUTH_REQUIRED');
-    const confirmed=await dialog.showMessageBox({
-      type:'warning',buttons:['Cancel','Authorize ONE paid image request'],defaultId:0,cancelId:0,noLink:true,
-      title:'G-Labs paid image generation',
-      message:'Authorize a potentially paid G-Labs image-generation request?',
-      detail:'Project: '+id+'\nNative target: '+String(input.targetKey)+
-        '\nModel: '+String(input.model)+'\nRatio: '+String(input.aspectRatio)+
-        (input.acknowledgeUnknown?'\nWARNING: A previous attempt has UNKNOWN billing outcome.':'')+
-        '\nNo automatic paid retries will be performed.'
-    });
-    if(confirmed.response!==1)return null;
+    // Clicking an enabled Generate/Regenerate Image button is already the
+    // owner's explicit authorization for ONE provider request. Do not require
+    // a redundant modal for the ordinary workflow (as in YTB AI Studio).
+    // UNKNOWN recovery is exceptional: the old POST may already be charged,
+    // so preserve its distinct, deliberately acknowledged billing warning.
+    if(input.acknowledgeUnknown===true){
+      const confirmed=await dialog.showMessageBox({
+        type:'warning',buttons:['Cancel','Authorize ONE new image attempt'],defaultId:0,cancelId:0,noLink:true,
+        title:'Previous G-Labs outcome UNKNOWN',
+        message:'The previous request may already have been charged.',
+        detail:'Project: '+id+'\nNative target: '+String(input.targetKey)+
+          '\nModel: '+String(input.model)+'\nRatio: '+String(input.aspectRatio)+
+          '\nThis action can result in duplicate billing. No automatic retries.'
+      });
+      if(confirmed.response!==1)return null;
+    }
     return submitGlabsImage(app.getAppPath(),root,app.getPath('userData'),safeStorage,input,decodeGlabsImage);
   });
   ipcMain.handle('glabs:poll',(_event,id:string,jobId:string)=>pollGlabsImage(app.getAppPath(),rootFor(id),app.getPath('userData'),safeStorage,jobId,decodeGlabsImage));
