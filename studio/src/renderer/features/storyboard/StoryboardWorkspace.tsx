@@ -31,8 +31,12 @@ export function StoryboardWorkspace(){
   const refresh=async(scope=captureProjectSession())=>{
     if(!scope||!window.studio)return;
     const studio=window.studio;
-    const [nextPending,nextJobs,nextConfig,nextPrepared]=await Promise.all([
-      studio.pendingMedia(scope.projectId),
+    // Resolve the Native journal first: a rejected pendingMedia must be
+    // handled even if a later IPC method is missing or throws synchronously.
+    // Show corruption as an explicit error instead of an empty queue.
+    const nextPending=await studio.pendingMedia(scope.projectId)
+      .catch(cause=>{throw new Error('Pending media ERROR: '+message(cause));});
+    const [nextJobs,nextConfig,nextPrepared]=await Promise.all([
       studio.glabsJobs(scope.projectId),
       studio.glabsSettings(),
       studio.prepareImages?.(scope.projectId)??Promise.resolve(null)
@@ -163,7 +167,7 @@ export function StoryboardWorkspace(){
       <div className="actions"><Button disabled={!id||busy||!native?.nativeDraft} onClick={()=>void prepare()}>Prepare Images (read-only; no paid requests)</Button></div>
       {shotIds.length?<div className="shot-grid">{shotIds.map(value=><button key={value} className={shotId===value?'selected':''} onClick={()=>{setSelectedShot(value);setSelectedKey('');}}>
         <div className="scene-thumb"><strong>{value}</strong></div><div><strong>{value}</strong><small>{imageTargets.filter(t=>t.shotId===value).length} missing image layers</small></div>
-      </button>)}</div>:<div className="info">No Native DRAFT shots. Stage an approved source-grounded Native Author artifact first.</div>}
+      </button>)}</div>:<div className="info">No native shots in the current Native DRAFT. Stage an approved source-grounded Native Author artifact first.</div>}
     </Card>
     <Card>
       <CardHeader title={shotId?shotId+' · Image assets':'Image assets'} hint="Choose an image layer — style, prompt, model, ratio and technical IDs are inherited."/>
