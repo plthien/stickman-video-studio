@@ -154,12 +154,17 @@ export function ShotImageGallery({
         const job=card.job,staged=job?.staged,canApprove=eligible(card);
         const attempts=card.history;
         const active=Boolean(job&&['QUEUED','SUBMITTED','RUNNING','DOWNLOADED'].includes(job.status));
-        const unknown=Boolean(attempts.some(attempt=>attempt.status==='UNKNOWN'));
+        // Historical UNKNOWN from a previous Native token remains in History,
+        // but cannot lock an unrelated current DRAFT request.
+        const currentToken=card.spec?.draftIdentity.token??job?.token;
+        const unknown=Boolean(attempts.some(attempt=>
+          attempt.token===currentToken&&attempt.status==='UNKNOWN'));
         const mayGenerate=card.target.managed&&!card.target.fulfilled&&
           card.spec?.state==='READY'&&!active&&!unknown&&
           (!job||!['APPROVED','VALIDATED'].includes(job.status));
         const needsSync=Boolean(job?.providerCompletedAt&&job.lastSyncError);
-        const unknownForCard=attempts.filter(attempt=>attempt.status==='UNKNOWN');
+        const unknownForCard=attempts.filter(attempt=>
+          attempt.token===currentToken&&attempt.status==='UNKNOWN');
         const review=unknownReview?.targetKey===card.target.key?unknownReview:null;
         return <article className="shot-image-card" key={card.target.key}
           data-testid="shot-image-card" data-target-key={card.target.key}
