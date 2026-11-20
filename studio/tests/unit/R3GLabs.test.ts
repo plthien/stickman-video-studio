@@ -290,7 +290,7 @@ describe('R3 final repairs F01/F03/F06 — strict output, references and truthfu
     expect(approveGlabsImage(appPath,root,submitted.id,'Owner rights confirmed',decode).job.status).toBe('APPROVED');
     expect(getPendingMedia(appPath,root)!.missing).toHaveLength(0);
   });
-  it('RATIO-05 does not recover ratio-failed history if staged SHA is tampered or file is missing',async()=>{
+  it('RATIO-05 does not recover ratio-failed history if the staged PNG SHA is tampered',async()=>{
     const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport();
     const submitted=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
     const completed=await pollGlabsImage(appPath,root,dir,cipher,submitted.id,decode);
@@ -301,6 +301,30 @@ describe('R3 final repairs F01/F03/F06 — strict output, references and truthfu
     fs.writeFileSync(path.join(root,completed.staged!.path),pngAt(90,161));
     expect(reconcileGlabsJobs(appPath,root).find(row=>row.id===submitted.id)!.status).toBe('FAILED');
     expect(()=>approveGlabsImage(appPath,root,submitted.id,'Owner rights confirmed',decode)).toThrow(/NOT_VALIDATED/);
+    expect(calls.filter(x=>x.method==='POST')).toHaveLength(1);
+  });
+  it('RATIO-07 does not promote a ratio-failed job if its staged PNG is missing',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport();
+    const submitted=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    const completed=await pollGlabsImage(appPath,root,dir,cipher,submitted.id,decode);
+    const file=path.join(root,'.studio','glabs','jobs',submitted.id+'.json');
+    const stored=JSON.parse(fs.readFileSync(file,'utf8')) as Record<string,unknown>;
+    stored.status='FAILED';stored.reason='GLABS_IMAGE_ASPECT_RATIO_MISMATCH';
+    fs.writeFileSync(file,JSON.stringify(stored));
+    fs.unlinkSync(path.join(root,completed.staged!.path));
+    expect(reconcileGlabsJobs(appPath,root).find(row=>row.id===submitted.id)!.status).toBe('FAILED');
+    expect(calls.filter(x=>x.method==='POST')).toHaveLength(1);
+  });
+  it('RATIO-08 does not promote a ratio-failed image when pinned style authority has changed',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport();
+    const submitted=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    await pollGlabsImage(appPath,root,dir,cipher,submitted.id,decode);
+    const file=path.join(root,'.studio','glabs','jobs',submitted.id+'.json');
+    const stored=JSON.parse(fs.readFileSync(file,'utf8')) as Record<string,unknown>;
+    stored.status='FAILED';stored.reason='GLABS_IMAGE_ASPECT_RATIO_MISMATCH';
+    stored.styleProfileSha256='0'.repeat(64);
+    fs.writeFileSync(file,JSON.stringify(stored));
+    expect(reconcileGlabsJobs(appPath,root).find(row=>row.id===submitted.id)!.status).toBe('FAILED');
     expect(calls.filter(x=>x.method==='POST')).toHaveLength(1);
   });
   it('RATIO-06 preserves unrelated provider FAILED attempts and does not silently approve them',async()=>{
