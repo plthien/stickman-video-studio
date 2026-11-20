@@ -1,5 +1,5 @@
 import {useState} from 'react';
-import {cleanup,fireEvent,render,screen,within} from '@testing-library/react';
+import {cleanup,fireEvent,render,screen,waitFor,within} from '@testing-library/react';
 import {afterEach,describe,expect,it,vi} from 'vitest';
 import {ShotImageGallery,type GalleryCard} from '../../src/renderer/features/storyboard/ShotImageGallery';
 
@@ -103,6 +103,82 @@ describe('F09 Native Shot full-card gallery without selecting Layers',()=>{
     expect(within(all[1]).getByRole('checkbox')).toBeChecked();
     expect(within(all[2]).getByRole('checkbox')).not.toBeChecked();
     expect(approve).not.toHaveBeenCalled();
+  });
+  it('F13-UI-01 superseded APPROVED history does not appear as currently approved',()=>{
+    const old=cards[0].job!;
+    const superseded:GalleryCard={
+      ...cards[0],target:{...cards[0].target,fulfilled:false},
+      job:null,history:[{...old,status:'APPROVED'}],
+      superseded:true,currentlyBound:false,spec:{
+        targetKey:cards[0].target.key,state:'READY',prompt:'Verified creative target prompt',
+        references:[],draftIdentity:{creativeFingerprint:'f'.repeat(64)}
+      } as GalleryCard['spec']
+    };
+    render(<ShotImageGallery projectId="A" shotId="shot-1" cards={[superseded]} urls={{}}
+      previewIdentity={()=>''} previewReady={{}} previewErrors={{}}
+      busy={false} selectedIds={new Set()} onLoaded={vi.fn()} onSelect={vi.fn()}
+      onGenerate={vi.fn()} onApprove={vi.fn()} onCheck={vi.fn()}
+      onRetryPreview={vi.fn()} onInspectUnknown={vi.fn()}/>);
+    const card=screen.getByTestId('shot-image-card');
+    expect(card).toHaveTextContent('Needs Regeneration');
+    expect(within(card).queryByText('Approved')).not.toBeInTheDocument();
+    expect(within(card).getByRole('button',{
+      name:'Regenerate for Current Draft · portrait'
+    })).toBeEnabled();
+  });
+  it('F15-UI-01 extreme generated ratio remains intrinsic with contain and uncropped expansion',()=>{
+    const base=cards[0].job!;
+    const extreme:GalleryCard={
+      ...cards[0],
+      job:{...base,id:'extreme-ratio',staged:{
+        path:'assets/images/extreme.png',sha256:'e'.repeat(64),
+        width:2000,height:125
+      }},
+      history:[],
+    };
+    render(<ShotImageGallery projectId="A" shotId="shot-1" cards={[extreme]}
+      urls={{'extreme-ratio':'studio-media://A/extreme'}}
+      previewIdentity={()=>''} previewReady={{}} previewErrors={{}}
+      busy={false} selectedIds={new Set()} onLoaded={vi.fn()} onSelect={vi.fn()}
+      onGenerate={vi.fn()} onApprove={vi.fn()} onCheck={vi.fn()}
+      onRetryPreview={vi.fn()} onInspectUnknown={vi.fn()}/>);
+    const stage=screen.getByTestId('shot-image-stage');
+    expect(stage).toHaveStyle({aspectRatio:'2000 / 125'});
+    expect(within(stage).getByRole('img')).toHaveStyle({objectFit:'contain'});
+    fireEvent.click(screen.getByRole('button',{name:'Expand Preview'}));
+    expect(within(screen.getByRole('dialog',{name:'Expanded generated image'}))
+      .getByRole('img')).toHaveStyle({objectFit:'contain'});
+  });
+  it('F14-UI-01 card details edit only its source prompt and B4 approved reference',async()=>{
+    const save=vi.fn();
+    const prepared={
+      targetKey:cards[0].target.key,shotId:'shot-1',layerId:'portrait',
+      state:'READY',reason:'',prompt:'Verified creative illustration request',
+      promptSha256:'d'.repeat(64),sourceDescription:'verified source',
+      sourceRows:[],references:[],styleProfileRef:{
+        id:'B4',sha256:'b'.repeat(64),path:'references/b4-approved.md'
+      },styleAnchors:[{id:'b4-approved-1',label:'Approved B4 illustration'}],
+      draftIdentity:{token:'token-A',creativeFingerprint:'c'.repeat(64)}
+    } as NonNullable<GalleryCard['spec']>;
+    render(<ShotImageGallery projectId="A" shotId="shot-1"
+      cards={[{...cards[0],spec:prepared}]} urls={urls}
+      previewIdentity={()=>''} previewReady={{}} previewErrors={{}}
+      busy={false} selectedIds={new Set()} onLoaded={vi.fn()} onSelect={vi.fn()}
+      onGenerate={vi.fn()} onApprove={vi.fn()} onCheck={vi.fn()}
+      onRetryPreview={vi.fn()} onInspectUnknown={vi.fn()}
+      onSavePrompt={save}/>);
+    const card=screen.getByTestId('shot-image-card');
+    fireEvent.click(within(card).getByText(/Prompt · references · candidate history/));
+    const edit=await within(card).findByLabelText('Edit image prompt portrait');
+    fireEvent.change(edit,{target:{value:'Owner authored exact image description'}});
+    fireEvent.change(within(card).getByLabelText('Verified B4 reference portrait'),{
+      target:{value:'@modeb/b4/b4-approved-1'}
+    });
+    fireEvent.click(within(card).getByRole('button',{name:'Save Image Prompt & References'}));
+    await waitFor(()=>expect(save).toHaveBeenCalledWith(cards[0].target.key,
+      'Owner authored exact image description',['@modeb/b4/b4-approved-1']));
+    expect(screen.queryByLabelText('Owner-confirmed rights/source')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Layer Inspector/)).not.toBeInTheDocument();
   });
   it('F09-03 expands a current candidate without switching Shot and keeps details collapsed',()=>{
     render(<Harness/>);
