@@ -590,7 +590,10 @@ function recoverCommittedGeneratedApproval(
   if(snapshot.token!==job.token||!snapshot.fulfillments?.[job.targetKey])return null;
   const pending=getPendingMedia(appPath,root);
   if(!pending||pending.status==='STALE'||pending.token!==job.token)return null;
-  const binding=pending.fulfillments[job.targetKey];
+  // The verified pending read above checks the transaction and media bytes.
+  // Use the same synchronous journal snapshot to avoid assuming that generic
+  // script pending results have image fulfillments.
+  const binding=snapshot.fulfillments?.[job.targetKey];
   if(!binding||binding.kind!=='image'||binding.sha256!==job.staged.sha256)return null;
   const authorization='OWNER_APPROVED_GLABS_PROJECT_USE | job='+job.id+
     ' | source=G-Labs-generated | provider_license_not_verified';
