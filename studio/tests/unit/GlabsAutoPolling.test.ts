@@ -20,7 +20,7 @@ describe('Electron G-Labs read-only background polling coordinator',()=>{
     const manager=createGlabsAutoPolling({poll,onJob,intervalMs:2000});
     manager.observe('A',fakeJob('task-1'));
     expect(poll).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1);
     expect(poll).toHaveBeenCalledTimes(1);
     expect(poll).toHaveBeenCalledWith('A','task-1');
     expect(onJob).toHaveBeenCalledWith('A',expect.objectContaining({status:'VALIDATED'}));
@@ -34,12 +34,12 @@ describe('Electron G-Labs read-only background polling coordinator',()=>{
     const poll=vi.fn((_project:string,id:string)=>gates[Number(id.slice(2))].promise);
     const manager=createGlabsAutoPolling({poll,onJob:vi.fn(),concurrency:2});
     manager.observeAll('A',gates.map((_v,index)=>fakeJob('id'+index)));
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1);
     expect(poll).toHaveBeenCalledTimes(2);
     expect(manager.snapshot()).toMatchObject({tracked:200,inFlight:2});
     gates[0].resolve(fakeJob('id0','VALIDATED'));
     gates[1].resolve(fakeJob('id1','VALIDATED'));
-    await Promise.resolve();await vi.advanceTimersByTimeAsync(0);
+    await Promise.resolve();await vi.advanceTimersByTimeAsync(1);
     expect(poll).toHaveBeenCalledTimes(4);
     // Closing does not initiate more polling or provider submissions.
     manager.close();
@@ -56,7 +56,7 @@ describe('Electron G-Labs read-only background polling coordinator',()=>{
     const poll=vi.fn(async()=>fakeJob('persisted-1','VALIDATED'));
     const next=createGlabsAutoPolling({poll,onJob:vi.fn()});
     next.observeAll('A',[fakeJob('persisted-1')]);
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1);
     expect(poll).toHaveBeenCalledWith('A','persisted-1');
     next.close();
   });
@@ -67,7 +67,7 @@ describe('Electron G-Labs read-only background polling coordinator',()=>{
       fakeJob('unknown-no-provider','UNKNOWN',''),
       fakeJob('unknown-with-provider','UNKNOWN','ab12cd34')
     ]);
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1);
     expect(poll).toHaveBeenCalledTimes(1);
     expect(poll).toHaveBeenCalledWith('A','unknown-with-provider');
     manager.close();
@@ -76,7 +76,7 @@ describe('Electron G-Labs read-only background polling coordinator',()=>{
     const gate=deferred<GLabsJob>(),poll=vi.fn(()=>gate.promise);
     const manager=createGlabsAutoPolling({poll,onJob:vi.fn()});
     manager.observe('A',fakeJob('same'));
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1);
     const manual=manager.pollNow('A','same');
     expect(poll).toHaveBeenCalledTimes(1);
     gate.resolve(fakeJob('same','VALIDATED'));
@@ -87,7 +87,7 @@ describe('Electron G-Labs read-only background polling coordinator',()=>{
     const onError=vi.fn(),poll=vi.fn(async()=>{throw new Error('GET network failure');});
     const manager=createGlabsAutoPolling({poll,onJob:vi.fn(),onError,intervalMs:2000});
     manager.observe('A',fakeJob('retry-get'));
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1);
     expect(onError).toHaveBeenCalledTimes(1);
     expect(poll).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(3999);
@@ -104,7 +104,7 @@ describe('Electron G-Labs read-only background polling coordinator',()=>{
     const manager=createGlabsAutoPolling({poll,onJob});
     manager.observeAll('A',[fakeJob('image-a'),fakeJob('finished-a','VALIDATED')]);
     manager.observeAll('B',[{...fakeJob('image-b'),projectId:'B'}]);
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1);
     expect(poll).toHaveBeenCalledTimes(2);
     expect(poll).not.toHaveBeenCalledWith('A','finished-a');
     expect(onJob).toHaveBeenCalledWith('A',expect.objectContaining({id:'image-a'}));
