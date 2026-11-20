@@ -41,6 +41,33 @@ describe('StoryBoard Phase-1 source-grounded compiler and exact Native media que
     }
     expect(loadImageStyleProfile(appPath,'B4').anchors).toHaveLength(5);
   });
+  it('B4-WIN-01 verifies the pinned published B4 SHA for CRLF-only Windows checkout conversion',()=>{
+    const expected=loadImageStyleProfile(appPath,'B4');
+    const actualRead=fs.readFileSync;
+    vi.spyOn(fs,'readFileSync').mockImplementation(((...args:unknown[])=>{
+      const value=Reflect.apply(actualRead,fs,args) as Buffer|string;
+      return String(args[0]).endsWith('style-lock.txt')&&typeof value==='string'?
+        value.replace(/\r\n/g,'\n').replace(/\n/g,'\r\n'):value;
+    }) as typeof fs.readFileSync);
+    const checked=loadImageStyleProfile(appPath,'B4');
+    expect(checked.guidance).toBe(expected.guidance);
+    expect(checked.sha256).toBe(expected.sha256);
+    expect(checked.anchors).toEqual(expected.anchors);
+  });
+  it('P1-SIDECAR-01 persists the effective Native revision exactly once without mutating the draft',()=>{
+    const {root}=staged();
+    const draft=readNativeDraft(root)!;
+    const prepared=prepareNativeImages(appPath,root,true);
+    const record=JSON.parse(fs.readFileSync(
+      path.join(root,'.studio/storyboard/prepared-image-jobs-v1.json'),'utf8')) as {
+        revision:number;artifactSha256:string;draftToken:string;jobs:unknown[]
+      };
+    expect(record.revision).toBe(prepared.revision);
+    expect(record.artifactSha256).toBe(draft.sha256);
+    expect(record.draftToken).toBe(draft.token);
+    expect(record.jobs).toHaveLength(prepared.jobs.length);
+    expect(readNativeDraft(root)!.sha256).toBe(draft.sha256);
+  });
   it('P1-02 compiles exact structured asset content without hallucinating motion, caption or filenames',()=>{
     const {root}=staged(),queue=prepareNativeImages(appPath,root),job=queue.jobs[0];
     expect(job.state).toBe('READY');
