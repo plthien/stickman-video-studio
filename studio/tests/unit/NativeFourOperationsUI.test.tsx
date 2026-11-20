@@ -238,7 +238,7 @@ describe('Native four-operation UI — explicit draft/published target and sessi
 });
 
 const storyboardCandidate={
-  token:'native-pending-A',status:'WAITING_FOR_MEDIA',
+  token:'pending-A',status:'WAITING_FOR_MEDIA',
   after:{shots:[
     {id:'shot-1',title:'First shot',start:0,end:5,layers:[
       {id:'layer-1',type:'image',path:'assets/images/one.png'},
@@ -253,63 +253,90 @@ const storyboardCandidate={
   ],
   fulfillments:{}
 };
+type StoryboardCandidate=typeof storyboardCandidate;
+function preparedImages(candidate:StoryboardCandidate|null){
+  const missing=candidate?.missing??[];
+  return{status:candidate?'PRE_MEDIA_PROJECTION':'NO_NATIVE_DRAFT',style:'B1',revision:2,
+    token:candidate?.token??'',shotCount:candidate?.after.shots.length??0,imageOccurrences:missing.length,
+    uniquePaths:new Set(missing.map(item=>item.path)).size,
+    jobs:missing.map((item,index)=>({
+      assetKey:item.key,targetKeys:[item.key],expectedPaths:[item.path],
+      targetKey:item.key,shotId:item.shotId,layerId:item.layerId,path:item.path,
+      assetKind:'other',state:'READY',reason:'',
+      prompt:'Approved B1 style. Exact owner-approved image for '+item.layerId,
+      promptSha256:String(index).repeat(64),
+      sourceDescription:'Owner-approved image for '+item.layerId,
+      sourceLedger:'',sourceRows:[{shot_id:item.shotId,layer_id:item.layerId,path:item.path,
+        content:'Owner-approved image for '+item.layerId}],
+      styleProfileRef:{id:'B1',path:'references/b1-minimal-handdrawn.md',sha256:'c'.repeat(64)},
+      references:[],styleAnchors:[],
+      draftIdentity:{projectId:'A',authorTaskId:'author-A',token:candidate!.token,
+        revision:2,creativeFingerprint:String(index+1).repeat(64)},
+      occurrencesAtPath:1,ownerEdited:false
+    }))
+  };
+}
 function StoryboardHarness(){
   const {setNative}=useAppState();
   useEffect(()=>{setNative(project('A'));},[]);
   return <StoryboardWorkspace/>;
 }
-function installStoryboard(pending:unknown=storyboardCandidate){
+function installStoryboard(candidate:StoryboardCandidate|null=storyboardCandidate){
   const glabsGenerate=vi.fn(async()=>({id:'new-image-job'}));
+  const pendingMedia=vi.fn(async()=>candidate);
+  const prepareImages=vi.fn(async()=>preparedImages(candidate));
   Object.defineProperty(window,'studio',{configurable:true,value:{
-    pendingMedia:vi.fn(async()=>pending),
-    glabsSettings:vi.fn(async()=>({config:{model:'gpt-image-2',aspectRatio:'9:16'}})),
-    glabsJobs:vi.fn(async()=>[]),
-    glabsGenerate,
+    pendingMedia,prepareImages,
+    glabsSettings:vi.fn(async()=>({config:{model:'nano_banana_2',aspectRatio:'9:16'}})),
+    glabsJobs:vi.fn(async()=>[]),glabsGenerate,
     mediaUrl:vi.fn(async()=>''),projectState:vi.fn(async()=>project('A'))
   }});
-  return{glabsGenerate};
+  return{glabsGenerate,pendingMedia,prepareImages};
 }
-describe('Storyboard — visible G-Labs image generation for current Native Shot',()=>{
-  it('SB-IMG-01 shows Generate without hidden import-dropdown selection, defaults to first image and keeps paid authorization explicit',async()=>{
+describe('Storyboard — source-grounded paid image generation for current Native Shot',()=>{
+  it('SB-IMG-01 compiles first missing layer automatically; paid submission requires explicit owner click',async()=>{
     const {glabsGenerate}=installStoryboard();
     render(<AppStateProvider><StoryboardHarness/></AppStateProvider>);
-    const generate=screen.getByRole('button',{name:'Generate / Regenerate image (paid confirmation)'});
-    expect(generate).toBeInTheDocument();
-    await waitFor(()=>expect(screen.getByLabelText('Image layer to generate')).toHaveValue('image:0:layer-1'));
-    expect(generate).toBeDisabled();
-    await waitFor(()=>expect(screen.getByText(/Model: gpt-image-2/)).toBeInTheDocument());
-    fireEvent.change(screen.getByLabelText('Image prompt (owner-confirmed, not invented)'),{
-      target:{value:'A verified owner-authored image prompt for this layer'}});
-    expect(generate).toBeEnabled();
+    const generate=await screen.findByRole('button',{name:'Generate Selected (1 paid request)'});
+    await waitFor(()=>expect(generate).toBeEnabled());
+    expect(screen.getByText(/Current Project Style:/).closest('div')).toHaveTextContent('B1');
+    expect(screen.getByText(/Source image description:/).closest('div')).toHaveTextContent('layer-1');
+    expect(screen.getByText(/Approved B1 style\. Exact owner-approved image for layer-1/)).toBeInTheDocument();
+    expect(glabsGenerate).not.toHaveBeenCalled();
     fireEvent.click(generate);
     await waitFor(()=>expect(glabsGenerate).toHaveBeenCalledWith('A',expect.objectContaining({
-      targetKey:'image:0:layer-1',model:'gpt-image-2',aspectRatio:'9:16',
-      prompt:'A verified owner-authored image prompt for this layer',authorized:true
+      targetKey:'image:0:layer-1',model:'nano_banana_2',aspectRatio:'9:16',
+      preparedFingerprint:'1'.repeat(64),
+      prompt:'Approved B1 style. Exact owner-approved image for layer-1',authorized:true
     })));
   });
-  it('SB-IMG-02 switching layer or Shot clears the old prompt and cannot send it to a different image target',async()=>{
-    installStoryboard();render(<AppStateProvider><StoryboardHarness/></AppStateProvider>);
-    const select=await screen.findByLabelText('Image layer to generate');
-    const prompt=screen.getByLabelText('Image prompt (owner-confirmed, not invented)');
-    fireEvent.change(prompt,{target:{value:'First image prompt is not reusable'}});
-    fireEvent.change(select,{target:{value:'image:0:layer-2'}});
-    expect(prompt).toHaveValue('');
-    expect(select).toHaveValue('image:0:layer-2');
-    fireEvent.change(prompt,{target:{value:'Second image must be different'}});
-    fireEvent.click(screen.getByRole('button',{name:/shot-2.*Second shot/}));
-    await waitFor(()=>expect(screen.getByLabelText('Image layer to generate')).toHaveValue('image:1:layer-3'));
-    expect(screen.getByLabelText('Image prompt (owner-confirmed, not invented)')).toHaveValue('');
-    expect(screen.getByRole('button',{name:'Generate / Regenerate image (paid confirmation)'})).toBeDisabled();
+  it('SB-IMG-02 target switching isolates owner-edited prompts and never auto-posts',async()=>{
+    const {glabsGenerate}=installStoryboard();
+    render(<AppStateProvider><StoryboardHarness/></AppStateProvider>);
+    await waitFor(()=>expect(screen.getByTestId('image-queue-counts')).toHaveTextContent('READY 3'));
+    fireEvent.click(screen.getByText(/Advanced · target-specific edits/));
+    const prompt=screen.getByLabelText('Edit image prompt for current target only');
+    fireEvent.change(prompt,{target:{value:'Owner changes only first layer image pose'}});
+    expect(screen.getByText(/Save this target.s edit before paid generation/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:/Owner-approved image for layer-2/}));
+    expect(screen.getByLabelText('Edit image prompt for current target only')).toHaveValue(
+      'Approved B1 style. Exact owner-approved image for layer-2');
+    expect(screen.getByLabelText('Edit image prompt for current target only')).not.toHaveValue(
+      'Owner changes only first layer image pose');
+    fireEvent.click(screen.getByRole('button',{name:/shot-2/}));
+    expect(screen.getByText(/Source image description:/).closest('div')).toHaveTextContent('layer-3');
+    expect(glabsGenerate).not.toHaveBeenCalled();
   });
-
-  it('SB-IMG-04 reloads missing targets when a corrected Native DRAFT replaces the previous revision',async()=>{
-    const oldDraft={...storyboardCandidate,token:'draft-old',missing:[storyboardCandidate.missing[0]]};
-    const nextDraft={...storyboardCandidate,token:'draft-new',missing:[storyboardCandidate.missing[1]]};
-    const pendingMedia=vi.fn().mockResolvedValueOnce(oldDraft).mockResolvedValueOnce(nextDraft);
-    installStoryboard();
-    Object.defineProperty(window,'studio',{configurable:true,value:{
-      ...window.studio,pendingMedia
-    }});
+  it('SB-IMG-04 Native DRAFT correction refreshes exact missing target without leaking previous selection',async()=>{
+    const oldDraft={...storyboardCandidate,token:'draft-2',
+      missing:[storyboardCandidate.missing[0]]};
+    const nextDraft={...storyboardCandidate,token:'draft-3',
+      missing:[storyboardCandidate.missing[1]]};
+    const {pendingMedia}=installStoryboard(oldDraft);
+    pendingMedia.mockResolvedValueOnce(oldDraft).mockResolvedValueOnce(nextDraft);
+    const prepareImages=vi.fn().mockResolvedValueOnce(preparedImages(oldDraft))
+      .mockResolvedValueOnce(preparedImages(nextDraft));
+    Object.defineProperty(window,'studio',{configurable:true,value:{...window.studio,prepareImages}});
     function RecheckHarness(){
       const {setNative}=useAppState();
       const snapshot=(rev:number):NativeStudioState=>{
@@ -321,19 +348,18 @@ describe('Storyboard — visible G-Labs image generation for current Native Shot
         <StoryboardWorkspace/></>;
     }
     render(<AppStateProvider><RecheckHarness/></AppStateProvider>);
-    await waitFor(()=>expect(screen.getByLabelText('Image layer to generate')).toHaveValue('image:0:layer-1'));
+    await waitFor(()=>expect(screen.getByText(/Source image description:/).closest('div')).toHaveTextContent('layer-1'));
     fireEvent.click(screen.getByRole('button',{name:'Commit current corrected DRAFT'}));
     await waitFor(()=>expect(pendingMedia).toHaveBeenCalledTimes(2));
-    await waitFor(()=>expect(screen.getByLabelText('Image layer to generate')).toHaveValue('image:0:layer-2'));
-    expect(screen.queryByRole('option',{name:/one.png/})).not.toBeInTheDocument();
+    await waitFor(()=>expect(screen.getByText(/Source image description:/).closest('div')).toHaveTextContent('layer-2'));
+    expect(screen.queryByRole('button',{name:/Owner-approved image for layer-1/})).not.toBeInTheDocument();
   });
-  it('SB-IMG-03 shows the image action but blocks submission when no Native candidate exists',async()=>{
+  it('SB-IMG-03 missing Native candidate never offers a paid Generate action',async()=>{
     const {glabsGenerate}=installStoryboard(null);
     render(<AppStateProvider><StoryboardHarness/></AppStateProvider>);
     await waitFor(()=>expect(screen.getByTestId('glabs-image-unavailable')).toHaveTextContent(
-      'No current Native Author candidate is staged'));
-    const generate=screen.getByRole('button',{name:'Generate / Regenerate image (paid confirmation)'});
-    expect(generate).toBeDisabled();
+      'No Native DRAFT media candidate staged.'));
+    expect(screen.queryByRole('button',{name:/Generate Selected/})).not.toBeInTheDocument();
     expect(glabsGenerate).not.toHaveBeenCalled();
   });
 });
