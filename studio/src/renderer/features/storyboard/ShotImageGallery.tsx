@@ -26,9 +26,20 @@ export interface ShotImageGalleryProps{
   onCheck:(jobId:string)=>void;
   onRetryPreview:(jobId:string)=>void;
   onInspectUnknown:(targetKey:string)=>void;
+  onSavePrompt?:(targetKey:string,prompt:string,references:string[])=>void;
+  onCancelQueued?:(jobId:string)=>void;
+  onCheckUnknown?:(targetKey:string)=>void;
+  onConsentUnknown?:(targetKey:string,checked:boolean)=>void;
+  onAuthorizeUnknown?:(targetKey:string)=>void;
+  unknownReview?:{targetKey:string;outcome:string|null;error:string;
+    acknowledged:boolean;canAuthorize:boolean;checking:boolean};
 }
 const status=(card:GalleryCard)=>{
-  if(card.job?.status==='APPROVED'||card.target.fulfilled)return'Approved';
+  if(card.currentlyBound??(card.target.fulfilled&&card.job?.status==='APPROVED'))return'Approved';
+  if(card.target.fulfilled)return'Bound (manual)';
+  if(card.job?.lastSyncError)return'Sync failed';
+  if(card.job?.providerCompletedAt&&card.job.status!=='VALIDATED')return'Provider done — retrieving image';
+  if(card.superseded&&!card.job)return'Needs Regeneration';
   if(card.job?.status==='QUEUED')return'Queued';
   if(card.job?.status==='RUNNING'||card.job?.status==='SUBMITTED'||
     card.job?.status==='DOWNLOADED')return'Running';
@@ -66,11 +77,63 @@ function HistoryCandidate({job,projectId}:{job:ImageJob;projectId:string}){
   </details>;
 }
 
+/** Source-backed edits are local to one frozen target. Saving invokes the
+ * existing Native compiler, which independently inserts mandatory B1–B4 style
+ * authority and checks references; the card does not edit style guidance. */
+function CardPromptEditor({card,onSave}:{
+  card:GalleryCard;
+  onSave?:(key:string,prompt:string,references:string[])=>void
+}){
+  const spec=card.spec;
+  const [prompt,setPrompt]=useState(spec?.prompt??'');
+  const [references,setReferences]=useState(spec?.references.join(', ')??'');
+  useEffect(()=>{
+    setPrompt(spec?.prompt??'');
+    setReferences(spec?.references.join(', ')??'');
+  },[spec?.draftIdentity.creativeFingerprint,spec?.promptSha256,
+    spec?.references.join('|')]);
+  if(!spec)return <div className="info">No source-backed prompt is currently prepared for this target.</div>;
+  const parsed=references.split(',').map(value=>value.trim()).filter(Boolean);
+  return <div className="stack">
+    <strong>Verified Native target: {spec.shotId}/{spec.layerId}</strong>
+    <div>Style authority {spec.styleProfileRef.id} · SHA {spec.styleProfileRef.sha256}</div>
+    <label>Editable image description
+      <textarea className="textarea" aria-label={'Edit image prompt '+card.target.layerId}
+        value={prompt} onChange={event=>setPrompt(event.target.value)}/>
+    </label>
+    <label>Approved image references (comma separated)
+      <input className="input" aria-label={'Approved references '+card.target.layerId}
+        value={references} onChange={event=>setReferences(event.target.value)}/>
+    </label>
+    {spec.styleAnchors.length>0&&<label>Verified B4 style reference
+      <select className="input" aria-label={'Verified B4 reference '+card.target.layerId}
+        value={parsed.find(item=>item.startsWith('@modeb/b4/'))??''}
+        onChange={event=>{
+          const remaining=parsed.filter(item=>!item.startsWith('@modeb/b4/'));
+          setReferences([...remaining,...(event.target.value?[event.target.value]:[])].join(', '));
+        }}>
+        <option value="">Choose approved B4 reference</option>
+        {spec.styleAnchors.map(anchor=><option key={anchor.id} value={'@modeb/b4/'+anchor.id}>
+          {anchor.label}</option>)}
+      </select>
+    </label>}
+    <Button disabled={!onSave||prompt.trim().length<12||spec.state==='BLOCKED'}
+      onClick={()=>onSave?.(card.target.key,prompt.trim(),parsed)}>
+      Save Image Prompt & References
+    </Button>
+    <details><summary>Compiler source rows & immutable style</summary>
+      <pre className="prompt">{JSON.stringify(spec.sourceRows,null,2)}</pre>
+      <pre className="prompt">{spec.prompt}</pre>
+    </details>
+  </div>;
+}
+
 /** Image-first Native Shot gallery. No Layer selection or editable rights
  * input is required to see or approve an actual provider image. */
 export function ShotImageGallery({
   projectId,shotId,cards,urls,previewReady,previewErrors,previewIdentity,busy,selectedIds,
-  onLoaded,onSelect,onGenerate,onApprove,onCheck,onRetryPreview,onInspectUnknown
+  onLoaded,onSelect,onGenerate,onApprove,onCheck,onRetryPreview,onInspectUnknown,
+  onSavePrompt,onCancelQueued,onCheckUnknown,onConsentUnknown,onAuthorizeUnknown,unknownReview
 }:ShotImageGalleryProps){
   const [expanded,setExpanded]=useState<string|null>(null);
   const [openDetails,setOpenDetails]=useState<Set<string>>(new Set());
@@ -95,6 +158,9 @@ export function ShotImageGallery({
         const mayGenerate=card.target.managed&&!card.target.fulfilled&&
           card.spec?.state==='READY'&&!active&&!unknown&&
           (!job||!['APPROVED','VALIDATED'].includes(job.status));
+        const needsSync=Boolean(job?.providerCompletedAt&&job.lastSyncError);
+        const unknownForCard=attempts.filter(attempt=>attempt.status==='UNKNOWN');
+        const review=unknownReview?.targetKey===card.target.key?unknownReview:null;
         return <article className="shot-image-card" key={card.target.key}
           data-testid="shot-image-card" data-target-key={card.target.key}
           data-shot-id={card.target.shotId} data-layer-id={card.target.layerId}>
@@ -102,7 +168,7 @@ export function ShotImageGallery({
             <div><strong>{card.target.layerId}</strong><small>{card.target.shotId}</small></div>
             <span className={'shot-image-status status-'+status(card).toLowerCase().replaceAll(' ','-')}>{status(card)}</span>
           </header>
-          <div className="shot-image-card-stage"
+          <div className={'shot-image-card-stage'+(!staged?' is-placeholder':'')}
             style={{aspectRatio:staged&&staged.width>0&&staged.height>0?
               staged.width+' / '+staged.height:'9 / 16'}}
             data-testid="shot-image-stage">
@@ -117,10 +183,13 @@ export function ShotImageGallery({
               }}
               onError={()=>onLoaded(job,false)}
               style={{width:'100%',height:'100%',objectFit:'contain'}}/>:
-              <span>{active?'Generating image…':
+              <span>{needsSync?'Sync failed — Retry Sync':
+                job?.providerCompletedAt?'Provider done — retrieving image':
+                active?'Generating image…':
                 job?.status==='UNKNOWN'?'Provider outcome unverified':
                 job?.status==='FAILED'?'Image attempt failed':
-                card.target.fulfilled?'Original approved image recorded':'Not Generated'}</span>}
+                card.superseded?'Needs Regeneration · previous image in History':
+                card.target.fulfilled?'Bound image recorded':'Not Generated'}</span>}
           </div>
           <div className="shot-image-card-meta">
             <span>{staged?staged.width+' × '+staged.height+' px':'No generated dimensions'}</span>
@@ -131,7 +200,8 @@ export function ShotImageGallery({
           <div className="shot-image-card-actions">
             {job&&staged&&urls[job.id]&&<Button onClick={()=>setExpanded(job.id)}>Expand Preview</Button>}
             {mayGenerate&&<Button disabled={busy} onClick={()=>onGenerate(card.target.key)}>
-              {attempts.length?'Regenerate':'Generate'} · {card.target.layerId}
+              {card.superseded?'Regenerate for Current Draft':
+                attempts.length?'Regenerate Image':'Generate Image'} · {card.target.layerId}
             </Button>}
             {job&&job.status==='VALIDATED'&&<label className="shot-image-select">
               <input type="checkbox" aria-label={'Select '+card.target.layerId}
@@ -145,12 +215,22 @@ export function ShotImageGallery({
               Approve Image
             </Button>}
             {job&&['SUBMITTED','RUNNING','DOWNLOADED'].includes(job.status)&&
-              <span className="info">Auto-checking provider…</span>}
-            {job&&job.status==='UNKNOWN'&&<Button
-              onClick={()=>onInspectUnknown(card.target.key)}>Review UNKNOWN</Button>}
+              <span className="info">{needsSync?'Sync failed — read-only Retry Sync available':
+                job.providerCompletedAt?'Provider done — retrieving image':'Auto-checking provider…'}</span>}
+            {job&&needsSync&&<Button disabled={busy} onClick={()=>onCheck(job.id)}>
+              Retry Sync (GET only)
+            </Button>}
+            {unknownForCard.length>0&&<Button
+              onClick={()=>{
+                setOpenDetails(previous=>new Set(previous).add(card.target.key));
+                onInspectUnknown(card.target.key);
+              }}>Review UNKNOWN</Button>}
+            {job?.status==='QUEUED'&&onCancelQueued&&<Button disabled={busy}
+              onClick={()=>onCancelQueued(job.id)}>Cancel Queued</Button>}
             {job?.staged&&previewErrors[job.id]&&<Button
               onClick={()=>onRetryPreview(job.id)}>Retry Preview</Button>}
-            {job?.status==='FAILED'&&<Button onClick={()=>onCheck(job.id)}>Inspect Failure</Button>}
+            {job?.status==='FAILED'&&<Button onClick={()=>setOpenDetails(previous=>
+              new Set(previous).add(card.target.key))}>Inspect Failure</Button>}
           </div>
           <details className="shot-image-card-details"
             onToggle={event=>{
@@ -170,8 +250,16 @@ export function ShotImageGallery({
               <pre className="prompt">{card.spec.prompt}</pre>
               <pre className="prompt">{JSON.stringify(card.spec.references,null,2)}</pre>
             </>}
+            <CardPromptEditor card={card} onSave={onSavePrompt}/>
             {job&&<><div>Model {job.model} · Provider {job.providerTaskId??'not confirmed'} · Job {job.id}</div>
               {job.reason&&<div className="info error">{job.reason}</div>}
+              {job.providerCompletedAt&&<div>Provider completed {job.providerCompletedAt} ·
+                ingestion phase: {job.syncPhase??'result'}</div>}
+              {job.lastSyncError&&<div className="info error" role="status">
+                Sync error {job.lastSyncError.code} at {job.lastSyncError.stage}
+                {' · '}{job.lastSyncError.at}. Retry Sync only rechecks the existing provider task.
+              </div>}
+              {job.journalRevision!==undefined&&<div>Journal revision {job.journalRevision}</div>}
               {job.approved&&<div>Approved binding: {job.approved.path} · SHA {job.approved.sha256}</div>}
               {job.approved?.provenance&&<div className="shot-image-provenance">
                 <strong>Generated-image source:</strong> {job.approved.provenance.source}
@@ -182,10 +270,49 @@ export function ShotImageGallery({
                 <div>Provider licensing terms have not been independently verified.</div>
               </div>}
             </>}
-            {attempts.length>1&&<div className="shot-image-card-history">
-              {attempts.slice(1).map(attempt=><HistoryCandidate
-                key={attempt.id} job={attempt} projectId={projectId}/>)}
+            {card.superseded&&<div className="info">
+              Historical APPROVED image is superseded by the current Native DRAFT.
+              No current binding is claimed and no paid retry happens automatically.
             </div>}
+            {unknownForCard.length>0&&<section className="stack" data-testid="unknown-card-recovery">
+              <strong>UNKNOWN provider outcome · possible duplicate billing</strong>
+              <div>Project {projectId} · Native target {card.target.shotId}/{card.target.layerId}
+                {' · '}{card.target.key} · token {card.spec?.draftIdentity.token??job?.token??'unknown'}</div>
+              {unknownForCard.map(attempt=><div key={attempt.id} data-testid="unknown-attempt-evidence">
+                Job {attempt.id} · provider task {attempt.providerTaskId??'not confirmed'}
+                {' · '}{attempt.reason??'Paid submission outcome unverified'}
+              </div>)}
+              <Button disabled={busy||review?.checking||!onCheckUnknown}
+                onClick={()=>onCheckUnknown?.(card.target.key)}>
+                Check Existing Attempt (read-only)
+              </Button>
+              {review?.outcome&&<div data-testid="unknown-check-outcome">
+                {review.outcome} · {review.error||(
+                  review.outcome==='CHECKED_STILL_UNKNOWN'?
+                    'Prior paid request is still uncertain.':'No conclusive result.')}
+              </div>}
+              {(review?.outcome==='CHECKED_STILL_UNKNOWN'||
+                review?.outcome==='CHECK_FAILED_UNVERIFIED')&&review?.canAuthorize&&<>
+                <label className="shot-image-select">
+                  <input type="checkbox"
+                    aria-label="Acknowledge possible duplicate billing for this exact G-Labs target"
+                    checked={review.acknowledged}
+                    onChange={event=>onConsentUnknown?.(card.target.key,event.target.checked)}/>
+                  I understand the previous paid attempt may already have charged me.
+                </label>
+                <Button variant="primary" disabled={busy||!review.acknowledged||
+                  !onAuthorizeUnknown||card.spec?.state!=='READY'}
+                  onClick={()=>onAuthorizeUnknown?.(card.target.key)}>
+                  Authorize ONE New Image Attempt (paid confirmation)
+                </Button>
+              </>}
+            </section>}
+            {attempts.filter(attempt=>attempt.id!==job?.id).length>0&&
+              <div className="shot-image-card-history">
+                <strong>Candidate History</strong>
+                {attempts.filter(attempt=>attempt.id!==job?.id).map(attempt=>
+                  <HistoryCandidate key={attempt.id} job={attempt} projectId={projectId}/>)}
+              </div>}
             </>}
           </details>
         </article>;
