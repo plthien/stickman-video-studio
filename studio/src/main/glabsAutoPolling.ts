@@ -24,7 +24,9 @@ const shouldPoll=(job:GLabsJob)=>
   (job.status==='UNKNOWN'&&Boolean(job.providerTaskId));
 const keyFor=(projectId:string,id:string)=>projectId+'|'+id;
 const signatureOf=(job:GLabsJob)=>JSON.stringify([
-  job.status,job.providerTaskId??'',job.staged?.sha256??'',
+  job.status,job.journalRevision??0,job.providerTaskId??'',
+  job.providerCompletedAt??'',job.syncPhase??'',job.lastSyncError?.code??'',
+  job.lastSyncError?.at??'',job.staged?.sha256??'',
   job.reason??'',job.approved?.sha256??''
 ]);
 
