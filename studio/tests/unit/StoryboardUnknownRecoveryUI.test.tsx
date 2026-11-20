@@ -242,6 +242,7 @@ describe('F07 — UNKNOWN recovery in the primary Storyboard without automatic p
     fireEvent.click(screen.getByRole('button',{name:/shot-2/}));
     fireEvent.click(screen.getByRole('button',{name:/shot-1/}));
     resolve(unknown);
+    await openUnknown();
     await waitFor(()=>expect(screen.getByTestId('unknown-attempt-evidence')).toBeInTheDocument());
     expect(screen.queryByRole('checkbox',{name:/Acknowledge possible duplicate billing/})).not.toBeInTheDocument();
     expect(generate).not.toHaveBeenCalled();
