@@ -17,12 +17,16 @@ export interface PollCoordinatorOptions{
   onError?:(projectId:string,jobId:string,error:unknown)=>void;
 }
 interface Entry{
-  projectId:string;id:string;due:number;failures:number;
+  projectId:string;id:string;due:number;failures:number;signature:string;
 }
 const shouldPoll=(job:GLabsJob)=>
   ['SUBMITTED','RUNNING','DOWNLOADED'].includes(job.status)||
   (job.status==='UNKNOWN'&&Boolean(job.providerTaskId));
 const keyFor=(projectId:string,id:string)=>projectId+'|'+id;
+const signatureOf=(job:GLabsJob)=>JSON.stringify([
+  job.status,job.providerTaskId??'',job.staged?.sha256??'',
+  job.reason??'',job.approved?.sha256??''
+]);
 
 export function createGlabsAutoPolling(options:PollCoordinatorOptions){
   const interval=Math.max(1000,options.intervalMs??2500);
@@ -45,7 +49,6 @@ export function createGlabsAutoPolling(options:PollCoordinatorOptions){
     }
     if(!Number.isFinite(earliest))return;
     timer=setTimeout(()=>{timer=null;void runDue();},Math.max(0,earliest-Date.now()));
-    timer.unref?.();
   }
   function observe(projectId:string,job:GLabsJob,reset=false){
     const key=keyFor(projectId,job.id);
@@ -55,7 +58,8 @@ export function createGlabsAutoPolling(options:PollCoordinatorOptions){
       return;
     }
     const current=entries.get(key);
-    if(!current)entries.set(key,{projectId,id:job.id,due:Date.now()+(reset?interval:0),failures:0});
+    if(!current)entries.set(key,{projectId,id:job.id,
+      due:Date.now()+(reset?interval:0),failures:0,signature:signatureOf(job)});
     schedule();
   }
   function observeAll(projectId:string,jobs:GLabsJob[]){
@@ -75,11 +79,13 @@ export function createGlabsAutoPolling(options:PollCoordinatorOptions){
       try{
         const result=await options.poll(projectId,id);
         if(stopped)return result;
+        const previous=entries.get(key),signature=signatureOf(result);
         if(shouldPoll(result)){
-          entries.set(key,{projectId,id,due:Date.now()+interval,failures:0});
+          entries.set(key,{projectId,id,due:Date.now()+interval,failures:0,signature});
         }else entries.delete(key);
-        // Emit only persisted, read-only provider progress to renderer windows.
-        options.onJob(projectId,result);
+        // One event per actual provider transition, not hundreds of repeated
+        // RUNNING events and React rerenders during large batches.
+        if(!previous||previous.signature!==signature)options.onJob(projectId,result);
         return result;
       }catch(error){
         if(!stopped){
