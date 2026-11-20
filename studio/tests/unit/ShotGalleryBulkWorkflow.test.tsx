@@ -281,6 +281,20 @@ describe('F09–F11 Native Shot gallery + explicit bulk approval',()=>{
     expect(approved).toHaveAttribute('data-layer-id','portrait');
     expect(within(approved).getByText('Approved')).toBeInTheDocument();
   });
+  it('F09-INT-13 Shot navigation counts the complete frozen gallery after successful binding',async()=>{
+    const {approve}=install();
+    render(<AppStateProvider><Harness/></AppStateProvider>);
+    const cards=await shotCards(4);
+    expect(screen.getByRole('button',{name:/shot-1 4 images/})).toBeInTheDocument();
+    await load(cards[0]);
+    fireEvent.click(within(cards[0]).getByRole('button',{name:'Approve Image'}));
+    await waitFor(()=>expect(approve).toHaveBeenCalledTimes(1));
+    await waitFor(()=>expect(screen.getByRole('button',{name:/shot-1 4 images/}))
+      .toBeInTheDocument());
+    expect(screen.getAllByTestId('shot-image-card')).toHaveLength(4);
+    expect(within(screen.getAllByTestId('shot-image-card')[0])
+      .getByText('Approved')).toBeInTheDocument();
+  });
   it('F09-INT-10 project switch clears previous cards and approval selection',async()=>{
     install({initial:5});
     render(<AppStateProvider><Harness/></AppStateProvider>);
