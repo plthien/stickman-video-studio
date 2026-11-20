@@ -121,6 +121,15 @@ export function StoryboardWorkspace(){
     });
   },[id]);
   useEffect(()=>()=>{if(batchSession.current)batchSession.current.cancelled=true;},[]);
+  // The project-session epoch tracks project switches, NOT same-project
+  // Native DRAFT revisions. Cancel any remaining paid submissions during the
+  // revision commit (before an in-flight provider Promise may settle), rather
+  // than relying on asynchronous refresh or an unchanged pending token.
+  useLayoutEffect(()=>{
+    if(batchSession.current)batchSession.current.cancelled=true;
+    if(approvalBatch.current)approvalBatch.current.cancelled=true;
+  },[id,native?.nativeDraft?.token,native?.nativeDraft?.revision,
+    native?.external?.native?.revision]);
   useEffect(()=>{
     if(batchSession.current)batchSession.current.cancelled=true;
     if(approvalBatch.current)approvalBatch.current.cancelled=true;
@@ -839,7 +848,7 @@ export function StoryboardWorkspace(){
             setPreviewAttempts(old=>({...old,[job.id]:(old[job.id]??0)+1}));
             const scope=captureProjectSession();
             if(scope)void refresh(scope).catch(e=>{if(isCurrentProjectSession(scope))setError(message(e));});
-          }}>Retry Preview</Button>}
+          }}>Retry Inspector Preview</Button>}
           {job.status==='VALIDATED'&&<details className="storyboard-technical-details">
               <summary>Legacy optional image source note</summary>
               <Field label="Owner-confirmed rights/source"><Input value={rights}
