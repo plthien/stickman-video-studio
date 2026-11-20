@@ -288,7 +288,12 @@ export function StoryboardWorkspace(){
         if(response===null){
           stopReason='Submission was cancelled. Remaining images were not requested.';break;
         }
-        if(response&&typeof response==='object'&&'status' in response){
+        if(!response||typeof response!=='object'||!('status' in response)||
+          !('id' in response)||typeof response.id!=='string'||
+          !('targetKey' in response)||response.targetKey!==item.targetKey){
+          stopReason='Provider submission did not return a verified job for this exact target. Batch stopped safely.';break;
+        }
+        {
           const status=String(response.status);
           // An inconclusive or rejected POST must stop the queue. No retry.
           if(status==='UNKNOWN'||status==='FAILED'||status==='CANCELLED'||status==='STALE'){
@@ -296,11 +301,9 @@ export function StoryboardWorkspace(){
               '. The batch stopped without retrying or billing further targets.';
             break;
           }
-          if('id' in response&&typeof response.id==='string'&&
-            'targetKey' in response&&response.targetKey===item.targetKey&&
-            isCurrentProjectSession(scope)){
-            setJobs(previous=>[response as ImageJob,
-              ...previous.filter(job=>job.id!==(response as ImageJob).id)]);
+          if(isCurrentProjectSession(scope)){
+            const submittedJob=response as ImageJob;
+            setJobs(previous=>[submittedJob,...previous.filter(job=>job.id!==submittedJob.id)]);
           }
         }
         sent++;
@@ -359,7 +362,7 @@ export function StoryboardWorkspace(){
         <Button disabled={!id||busy||Boolean(submission)||!native?.nativeDraft} onClick={()=>void prepare()}>Refresh Images</Button>
         <Button variant="primary" disabled={busy||Boolean(submission)||!eligibleBulk.length}
           onClick={()=>void generateAll()}>
-          Generate All Ready ({eligibleBulk.length})
+          Generate All Ready ({eligibleBulk.length} requests)
         </Button>
       </div>
       {batchProgress&&<div className="storyboard-batch-progress" role="status" data-testid="image-batch-progress">
