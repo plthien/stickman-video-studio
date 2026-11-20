@@ -114,7 +114,7 @@ function registerIpc() {
     return glabsPolling.pollNow(id,jobId);
   });
   ipcMain.handle('glabs:cancelQueued',(_event,id:string,jobId:string)=>cancelQueuedGlabsImage(rootFor(id),jobId));
-  ipcMain.handle('glabs:approve',(_event,id:string,jobId:string,rights:string)=>approveGlabsImage(app.getAppPath(),rootFor(id),jobId,rights,decodeGlabsImage));
+  ipcMain.handle('glabs:approve',(_event,id:string,jobId:string,rights?:string)=>approveGlabsImage(app.getAppPath(),rootFor(id),jobId,rights,decodeGlabsImage));
   ipcMain.handle('settings:elevenlabsStatus', () => elevenLabsStatus(app.getPath('userData'),safeStorage));
   ipcMain.handle('settings:elevenlabsSave', (_event,key:string) => saveElevenLabsKey(app.getPath('userData'),safeStorage,key));
   ipcMain.handle('settings:elevenlabsClear', () => clearElevenLabsKey(app.getPath('userData'),safeStorage));
