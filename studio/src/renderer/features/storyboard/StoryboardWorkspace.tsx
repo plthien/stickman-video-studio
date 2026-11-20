@@ -90,6 +90,7 @@ export function StoryboardWorkspace(){
   useEffect(()=>{
     const scope=captureProjectSession();
     receivedJobUpdates.current.clear();
+    if(approvalBatch.current)approvalBatch.current.cancelled=true;
     setPending(null);setPrepared(null);setJobs([]);setGallery(null);setConfig(null);setUrls({});
     setSelectedApproved(new Set());setApprovalResults([]);
     setPreviewReady({});setPreviewErrors({});setPreviewAttempts({});setError('');setRights('');setBusy(false);
@@ -247,6 +248,38 @@ export function StoryboardWorkspace(){
     selectedPreview&&previewErrors[selectedPreview.id],
     selectedPreview&&previewAttempts[selectedPreview.id]]);
 
+  const galleryPreviewKey=cards.map(card=>[
+    card.job?.id??'',card.job?.staged?.path??'',
+    card.job?.staged?.sha256??''
+  ].join(':')).join('|');
+  // Fetch visible Shot candidates only (typically 3–5), not every historical
+  // attempt in a 200-image project. The existing background GET coordinator
+  // updates jobs automatically when a result is ready.
+  useEffect(()=>{
+    const scope=captureProjectSession();
+    if(!scope||!window.studio)return;
+    let active=true;
+    for(const card of cards){
+      const job=card.job;
+      if(!job?.staged||urls[job.id]||previewErrors[job.id])continue;
+      void window.studio.mediaUrl(scope.projectId,job.staged.path).then(url=>{
+        if(active&&isCurrentProjectSession(scope))
+          setUrls(previous=>({...previous,[job.id]:url}));
+      }).catch(()=>{
+        if(active&&isCurrentProjectSession(scope))
+          setPreviewErrors(previous=>({
+            ...previous,[job.id]:'Generated image preview URL is unavailable.'
+          }));
+      });
+    }
+    return()=>{active=false;};
+  },[id,shotId,galleryPreviewKey,JSON.stringify(urls),
+    JSON.stringify(previewErrors),JSON.stringify(previewAttempts)]);
+  useEffect(()=>{setSelectedApproved(new Set());},[id,shotId,pending?.token,
+    native?.nativeDraft?.revision]);
+  useEffect(()=>{
+    if(approvalBatch.current)approvalBatch.current.cancelled=true;
+  },[id,native?.nativeDraft?.token,native?.nativeDraft?.revision]);
   const prepare=async()=>{
     const scope=captureProjectSession();if(!scope||!window.studio?.prepareImages)return;
     setBusy(true);setError('');
