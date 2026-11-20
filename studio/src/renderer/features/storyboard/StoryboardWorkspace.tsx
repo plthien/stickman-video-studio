@@ -639,7 +639,7 @@ export function StoryboardWorkspace(){
       {shotIds.length?<div className="storyboard-shot-strip" aria-label="Native shots">{shotIds.map(value=><button key={value}
         className={shotId===value?'selected':''}
         onClick={()=>{recoveryEpoch.current+=1;setCheckedUnknown('');setAcknowledgedUnknown('');setSelectedShot(value);setSelectedKey('');}}>
-        {value}<small>{imageTargets.filter(item=>item.shotId===value).length} images</small>
+        {value}<small>{galleryTargets.filter(item=>item.shotId===value).length} images</small>
       </button>)}</div>:<div className="info">No native shots in the current Native DRAFT. Stage an approved source-grounded Native Author artifact first.</div>}
       <details className="storyboard-technical-details">
         <summary>Project &amp; queue details</summary>
@@ -720,6 +720,8 @@ export function StoryboardWorkspace(){
         }}
       />
     </Card>
+    <details className="storyboard-technical-details" data-testid="advanced-layer-inspector">
+      <summary>Advanced · Legacy Layer Inspector / G-Labs diagnostics</summary>
     <Card>
       <CardHeader title={shotId?shotId+' · Layer Inspector':'Layer Inspector'}/>
       <div className="storyboard-focus" data-testid="storyboard-focus">
@@ -875,6 +877,7 @@ export function StoryboardWorkspace(){
         </div>
       </div>
     </Card>
+    </details>
     <details open={advanced} onToggle={event=>setAdvanced(event.currentTarget.open)}>
       <summary>Advanced · manual Import & Bind, raw Native ledgers and diagnostics</summary>
       {advanced&&<LegacyStoryboardWorkspace/>}
