@@ -136,7 +136,8 @@ export function StoryboardWorkspace(){
         recoveryIdentityRef.current!==identity)return;
       await refresh(scope);
       if(isCurrentProjectSession(scope)&&recoveryEpoch.current===epoch&&
-        recoveryIdentityRef.current===identity&&outcomes.every(job=>job.status==='UNKNOWN'))
+        recoveryIdentityRef.current===identity&&outcomes.every(job=>
+          job!==null&&typeof job==='object'&&'status' in job&&job.status==='UNKNOWN'))
         setCheckedUnknown(identity);
     }catch(e){if(isCurrentProjectSession(scope)&&recoveryEpoch.current===epoch)
       setError('Checking existing G-Labs attempt failed: '+message(e));}
