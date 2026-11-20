@@ -172,15 +172,19 @@ function writeJob(root:string,job:GLabsJob){
   job.updatedAt=timestamp();
   atomicJson(jobFile(root,job.id),job);
 }
-function readJob(root:string,id:string):GLabsJob{
+function readJob(root:string,id:string,expectedProjectId=readState(root).project.id):GLabsJob{
   const raw=strictJson(fs.readFileSync(jobFile(root,id),'utf8')) as unknown as GLabsJob;
-  if(raw.schema!=='r3-glabs-job-v1'||raw.projectId!==readState(root).project.id||raw.id!==id)throw new Error('GLABS_JOB_IDENTITY_INVALID');
+  if(raw.schema!=='r3-glabs-job-v1'||raw.projectId!==expectedProjectId||raw.id!==id)throw new Error('GLABS_JOB_IDENTITY_INVALID');
   return raw;
 }
 export function listGlabsJobs(root:string):GLabsJob[]{
   const dir=jobsDir(root);
   if(!fs.existsSync(dir))return[];
-  return fs.readdirSync(dir).filter(name=>/^[a-f0-9-]{36}\.json$/i.test(name)).map(name=>readJob(root,name.slice(0,-5)))
+  // One validated project-state read per journal scan, not one per historical
+  // job file. Paid preflight used to repeat this I/O hundreds of times.
+  const projectId=readState(root).project.id;
+  return fs.readdirSync(dir).filter(name=>/^[a-f0-9-]{36}\.json$/i.test(name))
+    .map(name=>readJob(root,name.slice(0,-5),projectId))
     .sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
 }
 function pendingTarget(appPath:string,root:string,targetKey:string){
