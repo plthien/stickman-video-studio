@@ -267,106 +267,125 @@ export function StoryboardWorkspace(){
     }catch(e){if(isCurrentProjectSession(scope))setError(message(e));}
     finally{if(isCurrentProjectSession(scope))setBusy(false);}
   };
-  const saveOverride=async()=>{
-    const scope=captureProjectSession();if(!scope||!spec||!window.studio?.saveImagePrompt)return;
+  const unknownIdentityFor=(key:string,source=jobs)=>{
+    const target=galleryTargets.find(item=>item.key===key&&item.shotId===shotId);
+    const spec=prepared?.jobs.find(item=>item.targetKey===key);
+    const uncertain=source.filter(job=>job.token===pending?.token&&
+      job.targetKey===key&&job.status==='UNKNOWN');
+    if(!target||!spec||!pending||!uncertain.length)return'';
+    return[id??'',pending.token,shotId,target.layerId,target.path,
+      spec.draftIdentity.creativeFingerprint,spec.styleProfileRef.sha256,
+      ...uncertain.map(job=>job.id+':'+(job.providerTaskId??'')).sort()].join('|');
+  };
+  const liveUnknownReview=unknownReview&&unknownReview.identity===
+    unknownIdentityFor(unknownReview.targetKey)?unknownReview:null;
+  useLayoutEffect(()=>{
+    recoveryEpoch.current+=1;
+    setUnknownReview(null);
+  },[id,shotId,native?.nativeDraft?.token,native?.nativeDraft?.revision]);
+  const savePromptForCard=async(targetKey:string,prompt:string,references:string[])=>{
+    const scope=captureProjectSession();
+    const spec=prepared?.jobs.find(item=>item.targetKey===targetKey);
+    const target=galleryTargets.find(item=>item.key===targetKey&&item.shotId===shotId);
+    if(!scope||!window.studio?.saveImagePrompt||busy||!spec||!target||
+      spec.draftIdentity.token!==pending?.token||
+      spec.shotId!==target.shotId||spec.layerId!==target.layerId||
+      spec.path!==target.path)return;
     setBusy(true);setError('');
     try{
       const next=await window.studio.saveImagePrompt(scope.projectId,{
-        targetKey:spec.targetKey,fingerprint:spec.draftIdentity.creativeFingerprint,
-        styleSha256:spec.styleProfileRef.sha256,
-        prompt:ownerPrompt.trim(),references:refs(ownerRefs)
+        targetKey,fingerprint:spec.draftIdentity.creativeFingerprint,
+        styleSha256:spec.styleProfileRef.sha256,prompt,references
       });
       if(isCurrentProjectSession(scope))setPrepared(next);
-    }catch(e){if(isCurrentProjectSession(scope))setError(message(e));}
+    }catch(error){if(isCurrentProjectSession(scope))setError(message(error));}
     finally{if(isCurrentProjectSession(scope))setBusy(false);}
   };
-  const checkUnknownAttempts=async()=>{
-    const scope=captureProjectSession();
-    if(!scope||!window.studio||!recoveryIdentity||!unknownAttempts.length||busy)return;
-    const identity=recoveryIdentity,epoch=recoveryEpoch.current;
-    setBusy(true);setError('');setCheckedUnknown('');setAcknowledgedUnknown('');
-    setUnknownCheckOutcome(null);
+  const checkUnknownForCard=async(targetKey:string)=>{
+    const scope=captureProjectSession(),studio=window.studio;
+    const identity=unknownIdentityFor(targetKey);
+    if(!scope||!studio||!identity||busy||paidInFlight.current)return;
+    const epoch=++recoveryEpoch.current;
+    const uncertain=jobs.filter(job=>job.token===pending?.token&&
+      job.targetKey===targetKey&&job.status==='UNKNOWN');
+    setUnknownReview({targetKey,identity,checking:true,outcome:null,
+      acknowledged:false,canAuthorize:false,error:''});
+    let failed='';
+    let outcomes:unknown[]=[];
     try{
-      // Only existing read-only polling routes. Never trigger a provider POST.
-      const outcomes=await Promise.all(unknownAttempts.map(job=>
-        window.studio!.glabsPoll(scope.projectId,job.id)));
-      if(!isCurrentProjectSession(scope)||recoveryEpoch.current!==epoch||
-        recoveryIdentityRef.current!==identity)return;
-      const refreshed=await refresh(scope);
-      // A late provider response is not authoritative if the persisted job
-      // journal now says RUNNING/FAILED or the set of UNKNOWN jobs changed.
-      const previousIds=unknownAttempts.map(job=>job.id).sort();
-      const persistedIds=refreshed?.jobs.filter(job=>job.token===pending?.token&&
-        job.targetKey===target?.key&&job.status==='UNKNOWN').map(job=>job.id).sort();
-      const stillUnknown=Boolean(refreshed?.pending?.token===pending?.token&&
-        persistedIds&&JSON.stringify(persistedIds)===JSON.stringify(previousIds));
-      if(!isCurrentProjectSession(scope)||recoveryEpoch.current!==epoch||
-        recoveryIdentityRef.current!==identity)return;
-      if(stillUnknown&&outcomes.every(job=>job!==null&&typeof job==='object'&&
-        'status' in job&&job.status==='UNKNOWN')){
-        setCheckedUnknown(identity);
-        setUnknownCheckOutcome('CHECKED_STILL_UNKNOWN');
-      }else{
-        setUnknownCheckOutcome('CHECKED_RESOLVED');
-      }
-    }catch(e){if(isCurrentProjectSession(scope)&&recoveryEpoch.current===epoch&&
-      recoveryIdentityRef.current===identity){
-      setUnknownCheckOutcome('CHECK_FAILED_UNVERIFIED');
-      setError('CHECK_FAILED_UNVERIFIED: Checking existing G-Labs attempt failed: '+message(e));
-    }}
-    finally{if(isCurrentProjectSession(scope))setBusy(false);}
+      // GET-only requests; failure is NOT evidence of generation failure.
+      outcomes=await Promise.all(uncertain.map(job=>studio.glabsPoll(scope.projectId,job.id)));
+    }catch(error){failed=message(error);}
+    try{
+      // Re-read persisted evidence after a successful OR rejected provider GET.
+      const [latest,fresh]=await Promise.all([
+        studio.glabsJobs(scope.projectId),studio.pendingMedia(scope.projectId)
+      ]);
+      if(!isCurrentProjectSession(scope)||recoveryEpoch.current!==epoch)return;
+      const unchanged=fresh?.token===pending?.token&&
+        unknownIdentityFor(targetKey,latest)===identity&&
+        !latest.some(job=>job.token===pending?.token&&job.targetKey===targetKey&&
+          ['QUEUED','SUBMITTED','RUNNING','DOWNLOADED','VALIDATED'].includes(job.status));
+      const stillUnknown=unchanged&&(failed.length>0||
+        outcomes.every(outcome=>Boolean(outcome&&typeof outcome==='object'&&
+          'status' in outcome&&outcome.status==='UNKNOWN')));
+      const outcome=stillUnknown?
+        failed?'CHECK_FAILED_UNVERIFIED':'CHECKED_STILL_UNKNOWN':'CHECKED_RESOLVED';
+      setUnknownReview({targetKey,identity,checking:false,outcome,error:failed,
+        acknowledged:false,canAuthorize:Boolean(stillUnknown)});
+      if(!stillUnknown)await refresh(scope);
+    }catch(error){
+      if(isCurrentProjectSession(scope)&&recoveryEpoch.current===epoch)
+        setUnknownReview({targetKey,identity,checking:false,
+          outcome:'CHECK_FAILED_UNVERIFIED',
+          error:'Cannot verify persisted journal: '+message(error),
+          acknowledged:false,canAuthorize:false});
+    }
   };
-  const generate=async(recoverUnknown=false)=>{
-    const scope=captureProjectSession();
-    if(!scope||!window.studio||busy||paidInFlight.current||batchSession.current)return;
-    if(!target||!spec||!ready||!config||!ownerPrompt.trim()){
-      setError(spec?.reason||'Exact source-backed image requirement is not ready.');return;
-    }
-    const attempts=jobs.filter(job=>job.targetKey===target.key&&job.token===pending?.token);
-    const uncertain=attempts.some(job=>job.status==='UNKNOWN');
-    if(uncertain&&!recoverUnknown){
-      setError('GLABS_UNKNOWN_MAY_HAVE_CHARGED: check the existing attempt before authorizing another potentially paid image.');return;
-    }
-    if(recoverUnknown&&(!uncertain||!recoveryAcknowledged||
-      recoveryIdentityRef.current!==recoveryIdentity)){
-      setError('GLABS_UNKNOWN_ACK_REQUIRED: first check the existing attempt and explicitly acknowledge possible duplicate billing for this exact target.');return;
-    }
-    if(attempts.some(job=>['SUBMITTED','RUNNING','DOWNLOADED','QUEUED'].includes(job.status))){
-      setError('An image job is already active for this exact target. Resume or inspect it.');return;
-    }
-    // The clearly labeled Generate/Regenerate action is already an explicit
-    // one-request authorization. Never show a redundant browser confirmation.
-    // UNKNOWN attempts still require the separate recovery flow.
-    // Consume consent BEFORE awaiting the Electron dialog; a second click
-    // cannot reuse consent, even if the owner cancels that paid confirmation.
-    if(recoverUnknown){setCheckedUnknown('');setAcknowledgedUnknown('');}
+  const consentUnknownForCard=(targetKey:string,checked:boolean)=>{
+    setUnknownReview(previous=>previous&&previous.targetKey===targetKey&&
+      previous.identity===unknownIdentityFor(targetKey)&&previous.canAuthorize?
+      {...previous,acknowledged:checked}:previous);
+  };
+  const authorizeUnknownForCard=async(targetKey:string)=>{
+    const scope=captureProjectSession(),studio=window.studio;
+    const review=liveUnknownReview,spec=prepared?.jobs.find(item=>item.targetKey===targetKey);
+    const target=galleryTargets.find(item=>item.key===targetKey&&item.shotId===shotId);
+    if(!scope||!studio||!review||!review.acknowledged||!review.canAuthorize||
+      !pending||!spec||spec.state!=='READY'||!config||!target||
+      paidInFlight.current||batchSession.current||busy)return;
+    const epoch=recoveryEpoch.current,expected=review.identity;
     paidInFlight.current=true;
-    const selectedTargetKey=target.key;
-    setBatchProgress(null);
-    setSubmission({key:selectedTargetKey,label:target.shotId+'/'+target.layerId});
+    setSubmission({key:targetKey,label:target.shotId+'/'+target.layerId});
     setError('');
     try{
-      // One owner click = at most one paid POST, with no automatic retry.
-      // Show feedback immediately; the IPC request may take time.
-      const response=await window.studio.glabsGenerate(scope.projectId,{
-        targetKey:selectedTargetKey,prompt:ownerPrompt.trim(),
-        model:config.model,aspectRatio:config.aspectRatio,references:refs(ownerRefs),authorized:true,
-        regenerate:attempts.length>0,acknowledgeUnknown:recoverUnknown,
+      const [fresh,latest]=await Promise.all([
+        studio.pendingMedia(scope.projectId),studio.glabsJobs(scope.projectId)
+      ]);
+      if(!isCurrentProjectSession(scope)||recoveryEpoch.current!==epoch||
+        unknownIdentityFor(targetKey,latest)!==expected||
+        fresh?.token!==pending.token||
+        !fresh.missing.some(row=>row.kind==='image'&&row.key===targetKey&&
+          row.shotId===target.shotId&&row.layerId===target.layerId&&
+          row.path===target.path)||
+        latest.some(job=>job.token===pending.token&&job.targetKey===targetKey&&
+          ['QUEUED','SUBMITTED','RUNNING','DOWNLOADED','VALIDATED'].includes(job.status))){
+        setError('GLABS_UNKNOWN_STALE_CHECK: provider journal/Native DRAFT changed. No paid POST.');
+        return;
+      }
+      // Consent is single-use and consumed BEFORE Electron's paid dialog.
+      setUnknownReview(null);
+      recoveryEpoch.current+=1;
+      const result=await studio.glabsGenerate(scope.projectId,{
+        targetKey,prompt:spec.prompt,model:config.model,
+        aspectRatio:config.aspectRatio,references:[...spec.references],
+        authorized:true,regenerate:true,acknowledgeUnknown:true,
         preparedFingerprint:spec.draftIdentity.creativeFingerprint
       });
-      if(isCurrentProjectSession(scope)&&response&&typeof response==='object'&&
-        'id' in response&&typeof response.id==='string'&&
-        'targetKey' in response&&response.targetKey===selectedTargetKey&&
-        'token' in response&&response.token===pending?.token){
-        const created=response as ImageJob;
-        // No expensive full Storyboard refresh after every provider submission:
-        // one local job projection, then read-only background GET updates.
-        setJobs(previous=>[created,...previous.filter(job=>job.id!==created.id)]);
-      }else if(isCurrentProjectSession(scope)&&response!==null){
-        await refresh(scope);
-      }
-    }catch(e){if(isCurrentProjectSession(scope))setError(message(e));}
-    finally{
+      if(isCurrentProjectSession(scope)&&result!==null)await refresh(scope);
+    }catch(error){
+      if(isCurrentProjectSession(scope))setError(message(error));
+    }finally{
       paidInFlight.current=false;
       if(isCurrentProjectSession(scope))setSubmission(null);
     }
