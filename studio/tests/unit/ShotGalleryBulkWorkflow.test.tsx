@@ -80,7 +80,7 @@ function install({initial=4,rejectIndex=-1}:{
       boundPath:fulfilled.has(target.key)?'assets/images/approved.png':target.path}))
   }:{token:null,shots:[],targets:[]});
   const glabsJobs=vi.fn(async(id:string)=>id==='A'?[...records]:[]);
-  const approve=vi.fn(async(id:string,jobId:string,rights?:string)=>{
+  const approve=vi.fn(async(id:string,jobId:string,_rights?:string)=>{
     if(id!=='A')throw new Error('Cross-project approval');
     const current=records.find(record=>record.id===jobId);
     if(!current)throw new Error('Target not found');
@@ -91,7 +91,7 @@ function install({initial=4,rejectIndex=-1}:{
     records=records.map(record=>record.id===jobId?{...record,status:'APPROVED'}:record);
     return{job:{...current,status:'APPROVED'}};
   });
-  const generate=vi.fn(async(id:string,input:{targetKey:string})=>{
+  const generate=vi.fn(async(_id:string,input:{targetKey:string})=>{
     const index=targets.findIndex(t=>t.key===input.targetKey);
     const current={...job(index),id:'generated-'+index,status:'RUNNING'};
     records=[current,...records];
@@ -226,6 +226,48 @@ describe('F09–F11 Native Shot gallery + explicit bulk approval',()=>{
     complete({...job(0),status:'RUNNING'});
     await waitFor(()=>expect(screen.getByTestId('image-batch-progress')).toHaveTextContent('Batch stopped'));
     expect(generating).toHaveBeenCalledTimes(1);
+  });
+  it('F10-INT-11 repeated Generate All in Shot clicks cannot submit a second paid request while first is pending',async()=>{
+    install({initial:0});
+    let finish!:(value:ReturnType<typeof job>)=>void;
+    const gate=new Promise<ReturnType<typeof job>>(resolve=>{finish=resolve;});
+    const generate=vi.fn(async()=>gate);
+    Object.defineProperty(window,'studio',{configurable:true,value:{
+      ...window.studio,glabsGenerate:generate
+    }});
+    render(<AppStateProvider><Harness/></AppStateProvider>);
+    await shotCards(4);
+    const action=screen.getByRole('button',{name:'Generate All in Shot (4)'});
+    fireEvent.click(action);
+    await waitFor(()=>expect(generate).toHaveBeenCalledTimes(1));
+    fireEvent.click(action);
+    expect(generate).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button',{name:'Stop after current request'}));
+    finish({...job(0),status:'RUNNING'});
+    await waitFor(()=>expect(screen.getByTestId('image-batch-progress'))
+      .toHaveTextContent('Batch stopped'));
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+  it('F10-INT-12 Native DRAFT revision change cancels remaining Shot paid requests',async()=>{
+    install({initial:0});
+    let finish!:(value:ReturnType<typeof job>)=>void;
+    const gate=new Promise<ReturnType<typeof job>>(resolve=>{finish=resolve;});
+    const generate=vi.fn(async()=>gate);
+    Object.defineProperty(window,'studio',{configurable:true,value:{
+      ...window.studio,glabsGenerate:generate
+    }});
+    render(<AppStateProvider><Harness/></AppStateProvider>);
+    await shotCards(4);
+    fireEvent.click(screen.getByRole('button',{name:'Generate All in Shot (4)'}));
+    await waitFor(()=>expect(generate).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button',{name:'Revise Native DRAFT'}));
+    finish({...job(0),status:'RUNNING'});
+    // The pending session was invalidated by revision change. No new paid POST
+    // may leave the client even if the old provider request completes later.
+    await waitFor(()=>expect(screen.getByRole('button',{name:'Generate All in Shot (4)'}))
+      .toBeInTheDocument());
+    await Promise.resolve();
+    expect(generate).toHaveBeenCalledTimes(1);
   });
   it('F09-INT-09 bound Approved card remains visible after fulfillment removes missing target',async()=>{
     const {approve}=install();
