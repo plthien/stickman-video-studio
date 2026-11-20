@@ -697,9 +697,11 @@ describe('F11 crash-safe generated-image approval journal recovery',()=>{
     const imported=importMediaFile(root,path.join(root,complete.staged!.path),'image',authorization);
     const alreadyBound=fulfillMedia(appPath,root,complete.token,complete.targetKey,
       imported.path,authorization);
-    expect(alreadyBound.fulfillments[complete.targetKey]).toMatchObject({
-      sha256:complete.staged!.sha256,rights:authorization
-    });
+    expect(alreadyBound).toMatchObject({fulfillments:{
+      [complete.targetKey]:{
+        sha256:complete.staged!.sha256,rights:authorization
+      }
+    }});
     const before=readState(root),listBefore=fs.readdirSync(path.join(root,'assets','images'));
     const recovered=approveGlabsImage(appPath,root,complete.id,undefined,decode);
     expect(recovered.job.status).toBe('APPROVED');
