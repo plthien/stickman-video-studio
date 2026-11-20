@@ -28,6 +28,15 @@ export function StoryboardWorkspace(){
   const [previewAttempts,setPreviewAttempts]=useState<Record<string,number>>({});
   const [rights,setRights]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const [advanced,setAdvanced]=useState(false);
+  // A single in-flight submission or sequential owner-started batch never
+  // blocks Shot/Layer navigation. Paid requests remain one-at-a-time.
+  const paidInFlight=useRef(false);
+  const batchSession=useRef<{cancelled:boolean;projectId:string;token:string}|null>(null);
+  const [submission,setSubmission]=useState<{key:string;label:string}|null>(null);
+  const [batchProgress,setBatchProgress]=useState<{
+    state:'running'|'complete'|'stopped';total:number;sent:number;
+    current:string;reason:string
+  }|null>(null);
   // UNKNOWN consent belongs to one exact project/session/Shot/Layer/attempt
   // identity. It is neither persisted nor reused after selection changes.
   const [checkedUnknown,setCheckedUnknown]=useState('');
@@ -47,26 +56,27 @@ export function StoryboardWorkspace(){
       studio.glabsSettings(),
       studio.prepareImages?.(scope.projectId)??Promise.resolve(null)
     ]);
-    const nextUrls:Record<string,string>={},nextErrors:Record<string,string>={};
-    await Promise.all(nextJobs.filter(job=>job.staged).map(async job=>{
-      try{nextUrls[job.id]=await studio.mediaUrl(scope.projectId,job.staged!.path);}
-      catch{nextErrors[job.id]='Generated image preview URL is unavailable.';}
-    }));
+    // Avoid N image URL IPC roundtrips for projects with hundreds of jobs.
+    // Only the selected candidate's preview is resolved on demand below.
     if(!isCurrentProjectSession(scope))return;
     setPending(nextPending);setJobs(nextJobs);setConfig(nextConfig.config);
-    setPrepared(nextPrepared);setUrls(nextUrls);
-    setPreviewErrors(previous=>({...previous,...nextErrors}));
+    setPrepared(nextPrepared);
     return{pending:nextPending,jobs:nextJobs};
   };
   useEffect(()=>{
     const scope=captureProjectSession();
     setPending(null);setPrepared(null);setJobs([]);setConfig(null);setUrls({});
     setPreviewReady({});setPreviewErrors({});setPreviewAttempts({});setError('');setRights('');setBusy(false);
+    setSubmission(null);setBatchProgress(null);
     if(scope&&window.studio)void refresh(scope).catch(e=>{if(isCurrentProjectSession(scope))setError(message(e));});
     // The session guard prevents async responses from being applied to another project.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[id,native?.nativeDraft?.token,native?.nativeDraft?.revision,native?.external?.native?.revision]);
-  useEffect(()=>{setDraftPrompts({});setDraftReferences({});setSelectedShot('');setSelectedKey('');setAdvanced(false);},[id]);
+  useEffect(()=>{
+    if(batchSession.current)batchSession.current.cancelled=true;
+    setDraftPrompts({});setDraftReferences({});setSelectedShot('');setSelectedKey('');
+    setAdvanced(false);setUrls({});
+  },[id]);
   const candidateAfter=pending?.after as {shots?:unknown[]}|undefined;
   const shots=Array.isArray(candidateAfter?.shots)?candidateAfter.shots as Array<Record<string,unknown>>:[];
   const shotIds=shots.filter(row=>typeof row.id==='string').map(row=>row.id as string);
@@ -109,6 +119,25 @@ export function StoryboardWorkspace(){
   // selected target and latest candidate on the main screen.
   const visibleJobs=shotJobs.slice(0,1);
   const previousJobs=shotJobs.slice(1);
+  const selectedPreview=visibleJobs[0];
+  useEffect(()=>{
+    const scope=captureProjectSession();
+    if(!scope||!window.studio||!selectedPreview?.staged||
+      urls[selectedPreview.id]||previewErrors[selectedPreview.id])return;
+    let current=true;
+    const job=selectedPreview;
+    void window.studio.mediaUrl(scope.projectId,job.staged!.path).then(url=>{
+      if(current&&isCurrentProjectSession(scope))setUrls(previous=>({...previous,[job.id]:url}));
+    }).catch(()=>{
+      if(current&&isCurrentProjectSession(scope))setPreviewErrors(previous=>({
+        ...previous,[job.id]:'Generated image preview URL is unavailable.'
+      }));
+    });
+    return()=>{current=false};
+  },[id,selectedPreview?.id,selectedPreview?.staged?.path,
+    selectedPreview&&urls[selectedPreview.id],
+    selectedPreview&&previewErrors[selectedPreview.id],
+    selectedPreview&&previewAttempts[selectedPreview.id]]);
   const previewIdentity=(job:ImageJob)=>[id,job.id,job.token,job.staged?.sha256??'-',urls[job.id]??'-',previewAttempts[job.id]??0].join('|');
   const prepare=async()=>{
     const scope=captureProjectSession();if(!scope||!window.studio?.prepareImages)return;
@@ -161,7 +190,8 @@ export function StoryboardWorkspace(){
     finally{if(isCurrentProjectSession(scope))setBusy(false);}
   };
   const generate=async(recoverUnknown=false)=>{
-    const scope=captureProjectSession();if(!scope||!window.studio||busy)return;
+    const scope=captureProjectSession();
+    if(!scope||!window.studio||busy||paidInFlight.current||batchSession.current)return;
     if(!target||!spec||!ready||!config||!ownerPrompt.trim()){
       setError(spec?.reason||'Exact source-backed image requirement is not ready.');return;
     }
@@ -183,17 +213,23 @@ export function StoryboardWorkspace(){
     // Consume consent BEFORE awaiting the Electron dialog; a second click
     // cannot reuse consent, even if the owner cancels that paid confirmation.
     if(recoverUnknown){setCheckedUnknown('');setAcknowledgedUnknown('');}
-    setBusy(true);setError('');
+    paidInFlight.current=true;
+    const selectedTargetKey=target.key;
+    setSubmission({key:selectedTargetKey,label:target.shotId+'/'+target.layerId});
+    setError('');
     try{
-      // One click = at most ONE paid submission. Main owns the mandatory
-      // Electron warning/dialog, frozen creative/style checks and no-retry rule.
-      await window.studio.glabsGenerate(scope.projectId,{targetKey:target.key,prompt:ownerPrompt.trim(),
+      // One owner click = at most one paid POST, with no automatic retry.
+      // Show feedback immediately; the IPC request may take time.
+      await window.studio.glabsGenerate(scope.projectId,{targetKey:selectedTargetKey,prompt:ownerPrompt.trim(),
         model:config.model,aspectRatio:config.aspectRatio,references:refs(ownerRefs),authorized:true,
         regenerate:attempts.length>0,acknowledgeUnknown:recoverUnknown,
         preparedFingerprint:spec.draftIdentity.creativeFingerprint});
       if(isCurrentProjectSession(scope))await refresh(scope);
     }catch(e){if(isCurrentProjectSession(scope))setError(message(e));}
-    finally{if(isCurrentProjectSession(scope))setBusy(false);}
+    finally{
+      paidInFlight.current=false;
+      if(isCurrentProjectSession(scope))setSubmission(null);
+    }
   };
   const poll=async(jobId:string)=>{
     const scope=captureProjectSession();if(!scope||!window.studio)return;
