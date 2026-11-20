@@ -6,13 +6,14 @@ type ImageJob=Awaited<ReturnType<Studio['glabsJobs']>>[number];
 type Prepared=Awaited<ReturnType<Studio['prepareImages']>>;
 export interface GalleryTarget{
   key:string;shotId:string;layerId:string;path:string;boundPath:string;
-  fulfilled:boolean;managed:boolean;
+  boundSha256?:string;fulfilled:boolean;managed:boolean;
 }
 export interface GalleryCard{
   target:GalleryTarget;
   job:ImageJob|null;
   history:ImageJob[];
   spec:Prepared['jobs'][number]|null;
+  currentlyBound?:boolean;superseded?:boolean;hasCurrentAttempt?:boolean;
 }
 export interface ShotImageGalleryProps{
   projectId:string;shotId:string;cards:GalleryCard[];urls:Record<string,string>;
