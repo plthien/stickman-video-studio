@@ -264,7 +264,10 @@ export function StoryboardWorkspace(){
     let active=true;
     for(const card of cards){
       const job=card.job;
-      if(!job?.staged||urls[job.id]||previewErrors[job.id])continue;
+      // The legacy inspector already owns the selected candidate URL request.
+      // Never send a second identical IPC preview URL lookup for that job.
+      if(!job?.staged||job.id===selectedPreview?.id||urls[job.id]||
+        previewErrors[job.id])continue;
       void window.studio.mediaUrl(scope.projectId,job.staged.path).then(url=>{
         if(active&&isCurrentProjectSession(scope))
           setUrls(previous=>({...previous,[job.id]:url}));
@@ -531,6 +534,15 @@ export function StoryboardWorkspace(){
     try{
       for(const card of queue){
         if(batch.cancelled||!isCurrentProjectSession(scope))break;
+        const stillCurrent=await window.studio.pendingMedia(scope.projectId);
+        if(batch.cancelled||!isCurrentProjectSession(scope)||
+          stillCurrent?.token!==immutableToken){
+          results.push({jobId:card.job.id,shotId:card.target.shotId,
+            layerId:card.target.layerId,status:'failed',
+            detail:'Native DRAFT changed; remaining approvals stopped before binding.'});
+          if(isCurrentProjectSession(scope))setApprovalResults([...results]);
+          break;
+        }
         // Read-only refresh of current journal preconditions; backend verifies
         // the immutable candidate SHA, references, style and Native lineage.
         try{
