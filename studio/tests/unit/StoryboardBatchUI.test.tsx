@@ -155,6 +155,41 @@ describe('Phase-1 Storyboard viewport and owner-started safe bulk generation',()
     expect(delayed).toHaveBeenCalledTimes(1);
     expect(screen.queryByTestId('image-batch-progress')).not.toBeInTheDocument();
   });
+  it('BULK-07 a newly UNKNOWN provider outcome stops the batch before billing another target',async()=>{
+    install();
+    const generate=vi.fn(async()=>job('uncertain-first',0,'UNKNOWN'));
+    Object.defineProperty(window,'studio',{configurable:true,value:{
+      ...window.studio,glabsGenerate:generate
+    }});
+    render(<AppStateProvider><Harness/></AppStateProvider>);
+    fireEvent.click(await screen.findByRole('button',{name:'Generate All Ready (2 requests)'}));
+    await waitFor(()=>expect(screen.getByTestId('image-batch-progress')).toHaveTextContent('Batch stopped'));
+    expect(screen.getByTestId('image-batch-progress')).toHaveTextContent('UNKNOWN');
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(generate).toHaveBeenCalledWith('A',expect.objectContaining({
+      targetKey:targets[0].key,acknowledgeUnknown:false,regenerate:false
+    }));
+  });
+  it('BULK-08 changing Native DRAFT token stops the next paid POST',async()=>{
+    install();
+    let reads=0;
+    const before=window.studio!;
+    const read=vi.fn(async(id:string)=>{
+      reads++;
+      return reads>=3?{...pending(id),token:'corrected-new-token'}:pending(id);
+    });
+    Object.defineProperty(window,'studio',{configurable:true,value:{
+      ...before,pendingMedia:read
+    }});
+    render(<AppStateProvider><Harness/></AppStateProvider>);
+    fireEvent.click(await screen.findByRole('button',{name:'Generate All Ready (2 requests)'}));
+    await waitFor(()=>expect(screen.getByTestId('image-batch-progress')).toHaveTextContent('Batch stopped'));
+    expect(screen.getByTestId('image-batch-progress')).toHaveTextContent('Native DRAFT changed');
+    expect(read).toHaveBeenCalled();
+    // Only one submission happened. The second target is never authorized
+    // against the corrected Native source identity.
+    expect(vi.mocked(before.glabsGenerate)).toHaveBeenCalledTimes(1);
+  });
   it('BULK-06 while one paid submission is unresolved, UI shows progress and Shot navigation stays usable',async()=>{
     install();
     let finish!:(value:ImageJob)=>void;
