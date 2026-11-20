@@ -20,15 +20,10 @@ export interface GLabsJob {
   reason?:string;approved?:{rights:string;path:string;sha256:string};createdAt:string;updatedAt:string;
 }
 const MAX_RESPONSE=262_144,MAX_REQUEST=5_242_880,MAX_IMAGE=16*1024*1024;
-// At most 1% aspect-ratio error, further bounded by one output pixel of horizontal rounding.
-const ASPECT_TOLERANCE=0.01;
-function assertImageRatio(aspectRatio:string,width:number,height:number){
-  if(!(GLABS_RATIOS as readonly string[]).includes(aspectRatio)||!Number.isSafeInteger(width)||!Number.isSafeInteger(height)||width<1||height<1)
-    throw new Error('GLABS_IMAGE_ASPECT_RATIO_UNVERIFIED');
-  const [numerator,denominator]=aspectRatio.split(':').map(Number);
-  if(Math.abs(width/height-numerator/denominator)>Math.min(ASPECT_TOLERANCE,1/height))
-    throw new Error('GLABS_IMAGE_ASPECT_RATIO_MISMATCH');
-}
+// Keep the owner's requested aspect ratio in the G-Labs provider request.
+// The provider's returned image dimensions are not an approval constraint:
+// decoded PNG integrity, SHA, rights, frozen Native identity and image inspection
+// remain mandatory.
 const active=new Set<string>();
 const defaultSettings:GLabsSettings={endpoint:'http://127.0.0.1:8765',contract:'legacy',model:'nano_banana_2',aspectRatio:'9:16'};
 const settingsFile=(userData:string)=>path.join(userData,'glabs-config-r3.json');
@@ -259,10 +254,41 @@ export function invalidateGlabsJobsAfterNativeCorrection(appPath:string,root:str
     }
   }
 }
-/** Show current job eligibility on Storyboard refresh, without new POSTs or auto-retries. */
+/**
+ * Only legacy jobs previously rejected *solely* for output ratio are eligible
+ * for local recovery. Their PNG was already decoded and staged before the old
+ * aspect-ratio check. Verify that the exact staged bytes, SHA and recorded
+ * dimensions still match and that the original Native/style authority is
+ * current. Do not contact G-Labs or treat unrelated FAILED jobs as successes.
+ */
+function recoverLegacyRatioFailures(appPath:string,root:string){
+  for(const job of listGlabsJobs(root)){
+    if(job.status!=='FAILED'||job.reason!=='GLABS_IMAGE_ASPECT_RATIO_MISMATCH'||!job.staged)
+      continue;
+    try{
+      assertJobTarget(appPath,root,job);
+      if(job.staged.path!=='assets/images/glabs-'+job.id+'.png'||
+        job.staged.mime!=='image/png')continue;
+      const image=validatedImage(root,job.staged.path,job.staged.sha256);
+      const png=image.bytes;
+      if(image.mime!=='image/png'||png.length<33||png.toString('ascii',12,16)!=='IHDR'||
+        png.readUInt32BE(8)!==13||
+        png.readUInt32BE(16)!==job.staged.width||
+        png.readUInt32BE(20)!==job.staged.height||
+        job.staged.width<1||job.staged.height<1||
+        job.staged.width>8192||job.staged.height>8192)continue;
+      job.status='VALIDATED';
+      job.reason='Recovered from GLABS_IMAGE_ASPECT_RATIO_MISMATCH: staged PNG SHA and recorded dimensions verified. Owner must still inspect and approve this image.';
+      writeJob(root,job);
+    }catch{/* Preserve FAILED evidence if source authority, file or SHA cannot be verified. */}
+  }
+}
+/** Reconcile existing current targets and locally recover former ratio-only failures.
+ * No provider POST, retry or implicit media approval occurs here. */
 export function reconcileGlabsJobs(appPath:string,root:string):GLabsJob[]{
   // Published projects have no active DRAFT; preserve their historical approvals.
   if(!readNativeDraft(root))return listGlabsJobs(root);
+  recoverLegacyRatioFailures(appPath,root);
   invalidateGlabsJobsAfterNativeCorrection(appPath,root);
   return listGlabsJobs(root);
 }
@@ -466,12 +492,8 @@ export async function pollGlabsImage(appPath:string,root:string,userData:string,
   if(fs.existsSync(file)&&sha(fs.readFileSync(file))!==sha(decoded.png))throw new Error('GLABS_STAGING_FILE_TAMPERED');
   if(!fs.existsSync(file)){const temporary=file+'.'+randomUUID()+'.tmp';try{fs.writeFileSync(temporary,decoded.png,{flag:'wx'});fs.renameSync(temporary,file);}finally{if(fs.existsSync(temporary))fs.unlinkSync(temporary);}}
   job.staged={path:relative,sha256:sha(decoded.png),mime:'image/png',width:decoded.width,height:decoded.height};
-  try{assertImageRatio(job.aspectRatio,decoded.width,decoded.height);}
-  catch(error){
-    // Keep the bounded, decoded local PNG for diagnosis, but never authorize binding.
-    job.status='FAILED';job.reason=error instanceof Error?error.message:'GLABS_IMAGE_ASPECT_RATIO_MISMATCH';
-    writeJob(root,job);return job;
-  }
+  // Ratio mismatch is not an invalid image. Keep the original pixel dimensions
+  // and continue to owner inspection, without padding, cropping or a new POST.
   job.status='VALIDATED';writeJob(root,job);
   return job;
 }
@@ -519,7 +541,9 @@ export function approveGlabsImage(appPath:string,root:string,id:string,rights:st
     decoded.width!==job.staged.width||decoded.height!==job.staged.height||
     decoded.width<1||decoded.height<1||decoded.width>8192||decoded.height>8192)
     throw new Error('GLABS_IMAGE_APPROVAL_DECODE_MISMATCH');
-  assertImageRatio(job.aspectRatio,decoded.width,decoded.height);
+  // Do not reintroduce a ratio-only rejection at approval. The staged file
+  // must still match the original SHA and decoded dimensions, and all approved
+  // references and frozen target evidence are verified below.
   assertJobReferences(appPath,root,job,decode);
   // All output/reference checks precede importMediaFile and fulfillMedia mutation.
   const imported=importMediaFile(root,resolveProjectFile(root,job.staged.path),'image',rights.trim());
