@@ -6,6 +6,7 @@ import {deflateSync} from 'node:zlib';
 import {afterEach,describe,expect,it,vi} from 'vitest';
 import {approveGlabsImage,clearGlabsKey,glabsCredentialStatus,glabsProbe,glabsSettings,listGlabsJobs,pollGlabsImage,saveGlabsKey,saveGlabsSettings,submitGlabsImage,invalidateGlabsJobsAfterNativeCorrection,reconcileGlabsJobs} from '../../src/main/glabs';
 import {getPendingMedia,importMediaFile,readNativeDraft,publishNativeDraftCorrection} from '../../src/main/externalTasks';
+import {prepareNativeImages} from '../../src/main/imagePreparation';
 import {readState,sha,writeState} from '../../src/main/services';
 import {appPath,cleanup,fixture,importedSource,nativePayload,stageNative} from './SixIssueFixtures';
 const userFolders:string[]=[];
@@ -96,6 +97,73 @@ describe('R3 G-Labs security and lifecycle GL01–GL12',()=>{
     const checked=await pollGlabsImage(appPath,root,dir,cipher,uncertain.id,decode);
     expect(checked.status).toBe('UNKNOWN');
     expect(calls.filter(c=>c.method==='POST')).toHaveLength(1);
+  });
+  it('F07-GL01 read-only UNKNOWN polling preserves original diagnostics, no duplicate POST or billing status rewrite',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport({postError:true});
+    const first=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    expect(first.status).toBe('UNKNOWN');
+    const originalReason=first.reason!;
+    expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
+    const checked=await pollGlabsImage(appPath,root,dir,cipher,first.id,decode);
+    expect(checked.status).toBe('UNKNOWN');
+    expect(checked.reason).toContain(originalReason);
+    expect(checked.reason).toContain('no confirmed provider task ID');
+    const reopened=listGlabsJobs(root).find(job=>job.id===first.id)!;
+    expect(reopened.status).toBe('UNKNOWN');
+    expect(reopened.reason).toContain(originalReason);
+    const again=await pollGlabsImage(appPath,root,dir,cipher,first.id,decode);
+    expect(again.reason).toBe(checked.reason);
+    expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
+  });
+  it('F07-GL02 explicit UNKNOWN acknowledgement + regenerate authorizes exactly one new POST, preserving old job',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport({postError:true});
+    const first=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    const originalReason=first.reason!;
+    await expect(submitGlabsImage(appPath,root,dir,cipher,{
+      ...request(targets[0].key),regenerate:true
+    },decode)).rejects.toThrow(/UNKNOWN/);
+    expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
+    // A new manually acknowledged request may be sent only through existing
+    // backend validation; it creates a separate job and never overwrites UNKNOWN.
+    transport({captured:calls});
+    const second=await submitGlabsImage(appPath,root,dir,cipher,{
+      ...request(targets[0].key),acknowledgeUnknown:true,regenerate:true
+    },decode);
+    expect(second.id).not.toBe(first.id);
+    expect(second.status).toBe('RUNNING');
+    expect(calls.filter(call=>call.method==='POST')).toHaveLength(2);
+    const history=listGlabsJobs(root);
+    expect(history.find(job=>job.id===first.id)).toMatchObject({
+      status:'UNKNOWN',reason:originalReason
+    });
+    expect(history.find(job=>job.id===second.id)).toMatchObject({
+      status:'RUNNING',providerTaskId:'ab12cd34'
+    });
+  });
+  it('F07-GL03 changed installed style SHA blocks old prepared recovery before any paid POST',async()=>{
+    const dir=credential(),{root}=fixture();
+    const payload=nativePayload(root,{image:'early'}) as Record<string,unknown>;
+    payload.asset_needs=[{
+      shot_id:'shot-1',layer_id:'image-1',expected_path:'assets/images/missing.png',
+      content:'Source-approved white kite on empty pale background'
+    }];
+    const staged=stageNative(root,payload);
+    const target=staged.response.missing.find(item=>item.kind==='image')!;
+    const prep=prepareNativeImages(appPath,root).jobs[0];
+    expect(prep.state).toBe('READY');
+    const actual={...request(target.key),prompt:prep.prompt,preparedFingerprint:prep.draftIdentity.creativeFingerprint};
+    const {calls}=transport({postError:true});
+    const first=await submitGlabsImage(appPath,root,dir,cipher,actual,decode);
+    expect(first.status).toBe('UNKNOWN');
+    reviseApprovedB1StyleForTest();
+    await expect(submitGlabsImage(appPath,root,dir,cipher,{
+      ...actual,acknowledgeUnknown:true,regenerate:true
+    },decode)).rejects.toThrow(/PREPARED_TARGET_NOT_READY_OR_STALE/);
+    expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
+    const historical=reconcileGlabsJobs(appPath,root).find(job=>job.id===first.id)!;
+    expect(historical.status).toBe('UNKNOWN');
+    expect(historical.reason).toContain(first.reason!);
+    expect(historical.reason).toContain('STALE_STYLE_AUTHORITY');
   });
   it('GL06 ordered reference image uses exact verified file SHA',async()=>{
     const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport();
