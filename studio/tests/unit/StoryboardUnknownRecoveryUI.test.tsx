@@ -86,7 +86,8 @@ describe('F07 — UNKNOWN recovery in the primary Storyboard without automatic p
   it('F07-UI01 exposes persisted UNKNOWN, exact target, provider task and original diagnostic; normal generation stays blocked',async()=>{
     const {generate}=install();
     render(<AppStateProvider><Harness/></AppStateProvider>);
-    expect(await screen.findByText(/Original provider task timed out; billing uncertain/)).toBeInTheDocument();
+    expect(await screen.findByTestId('unknown-attempt-evidence')).toHaveTextContent(
+      'Original provider task timed out; billing uncertain');
     expect(screen.getByTestId('unknown-attempt-evidence')).toHaveTextContent('ab12cd34');
     expect(screen.getByText(/Exact Native target:/).closest('div')).toHaveTextContent('shot-1/layer-1');
     expect(screen.getByRole('button',{name:'Regenerate Selected (1 NEW paid request)'})).toBeDisabled();
@@ -137,7 +138,8 @@ describe('F07 — UNKNOWN recovery in the primary Storyboard without automatic p
       preparedFingerprint:'a'.repeat(64),model:'nano_banana_2',aspectRatio:'9:16',
       prompt:'APPROVED MODE B STYLE B2\n\nVerified painting for layer-1',references:[]
     }));
-    expect(authorize).not.toBeEnabled();
+    expect(screen.queryByRole('button',{name:'Authorize ONE New Image Attempt (paid confirmation)'}))
+      .not.toBeInTheDocument();
   });
   it('F07-UI06 Electron paid-dialog cancellation returns null without automatically repeating the request',async()=>{
     const {generate}=install({cancellation:true});
