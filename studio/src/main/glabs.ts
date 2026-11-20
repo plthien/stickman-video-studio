@@ -18,6 +18,10 @@ export interface GLabsJob {
   styleProfileId?:'B1'|'B2'|'B3'|'B4';styleProfileSha256?:string;
   prompt:string;promptSha256:string;references:Array<{path:string;sha256:string;mime:string;name:string;rightsSha256:string}>;model:string;aspectRatio:string;status:JobStatus;
   providerTaskId?:string;staged?:{path:string;sha256:string;mime:string;width:number;height:number};
+  journalRevision?:number;
+  syncPhase?:'provider'|'result'|'download'|'decode'|'stage'|'validated';
+  providerCompletedAt?:string;
+  lastSyncError?:{stage:string;code:string;at:string};
   reason?:string;approved?:{rights:string;path:string;sha256:string;provenance?:{
     source:'G-Labs generated output';projectId:string;jobId:string;providerTaskId:string|null;
     model:string;promptSha256:string;imageSha256:string;nativeToken:string;
@@ -176,8 +180,23 @@ function verifiedB4Reference(appPath:string,root:string,identifier:string){
   return{bytes,mime:'image/png',sha256:record.sha256,rightsSha256:sha(raw+'|style-only|'+identifier)};
 }
 function writeJob(root:string,job:GLabsJob){
+  const file=jobFile(root,job.id);
+  if(fs.existsSync(file)){
+    const previous=strictJson(fs.readFileSync(file,'utf8')) as GLabsJob;
+    // Do not allow an out-of-order provider GET to overwrite an already
+    // VALIDATED / APPROVED image with a delayed RUNNING state.
+    if(['VALIDATED','APPROVED'].includes(previous.status)&&
+      ['QUEUED','SUBMITTED','RUNNING','DOWNLOADED'].includes(job.status)){
+      Object.assign(job,previous);
+      return;
+    }
+    job.journalRevision=Math.max(previous.journalRevision??0,job.journalRevision??0)+1;
+  }else job.journalRevision=Math.max(0,job.journalRevision??0)+1;
   job.updatedAt=timestamp();
-  atomicJson(jobFile(root,job.id),job);
+  atomicJson(file,job);
+}
+export function readGlabsJob(root:string,id:string):GLabsJob{
+  return readJob(root,id);
 }
 function readJob(root:string,id:string,expectedProjectId=readState(root).project.id):GLabsJob{
   const raw=strictJson(fs.readFileSync(jobFile(root,id),'utf8')) as unknown as GLabsJob;
@@ -494,36 +513,54 @@ export async function pollGlabsImage(appPath:string,root:string,userData:string,
   if(!pureObject(response)||response.task_id!==task)throw new Error('GLABS_STATUS_TASK_ID_MISMATCH');
   const status=String(response.status);
   if(status==='pending'||status==='running'){
-    // Hundreds of active jobs may be checked repeatedly. Do not rewrite the
-    // persisted JSON when the provider status has not actually changed.
-    if(job.status!=='RUNNING'){job.status='RUNNING';writeJob(root,job);}
+    // A previous verified completion cannot be undone by a stale provider
+    // reply. Retain original completion evidence and retry GET-only later.
+    if(job.providerCompletedAt)return job;
+    if(job.status!=='RUNNING'){job.status='RUNNING';job.syncPhase='provider';writeJob(root,job);}
     return job;
   }
   if(status==='failed'){job.status='FAILED';job.reason='Provider reported failure (no automatic retry).';writeJob(root,job);return job;}
   if(status!=='completed')throw new Error('GLABS_STATUS_UNRECOGNIZED');
-  const resolved=await requestJson(config,userData,cipher,'GET','api/result/'+task);
-  if(!currentJobTarget(appPath,root,job))return job;
-  if(!pureObject(resolved)||resolved.task_id!==task||resolved.status!=='completed'||
-    !Array.isArray(resolved.results)||!resolved.results.length||typeof resolved.results[0]!=='string')
-    throw new Error('GLABS_RESULT_CONTRACT_INVALID');
-  job.status='DOWNLOADED';writeJob(root,job);
-  const image=await downloadImage(config,resolved.results[0],userData,cipher);
-  if(!currentJobTarget(appPath,root,job))return job;
-  const decoded=decode(image.data);
-  if(!decoded||!Buffer.isBuffer(decoded.png)||imageMime(decoded.png)!=='image/png'||
-    !Number.isSafeInteger(decoded.width)||!Number.isSafeInteger(decoded.height)||
-    decoded.width<1||decoded.height<1||decoded.width>8192||decoded.height>8192)
-    throw new Error('GLABS_IMAGE_DECODE_INVALID');
-  if(decoded.png.length>MAX_IMAGE)throw new Error('GLABS_DECODED_IMAGE_OVERSIZE');
-  const relative='assets/images/glabs-'+job.id+'.png',file=resolveProjectFile(root,relative);
-  fs.mkdirSync(path.dirname(file),{recursive:true});
-  if(fs.existsSync(file)&&sha(fs.readFileSync(file))!==sha(decoded.png))throw new Error('GLABS_STAGING_FILE_TAMPERED');
-  if(!fs.existsSync(file)){const temporary=file+'.'+randomUUID()+'.tmp';try{fs.writeFileSync(temporary,decoded.png,{flag:'wx'});fs.renameSync(temporary,file);}finally{if(fs.existsSync(temporary))fs.unlinkSync(temporary);}}
-  job.staged={path:relative,sha256:sha(decoded.png),mime:'image/png',width:decoded.width,height:decoded.height};
-  // Ratio mismatch is not an invalid image. Keep the original pixel dimensions
-  // and continue to owner inspection, without padding, cropping or a new POST.
-  job.status='VALIDATED';writeJob(root,job);
-  return job;
+  // Provider completion is independently durable evidence. Errors below are
+  // result-ingestion errors, never a failed/chargeable generation or new POST.
+  if(!job.providerCompletedAt){
+    job.providerCompletedAt=timestamp();job.syncPhase='result';writeJob(root,job);
+  }
+  try{
+    const resolved=await requestJson(config,userData,cipher,'GET','api/result/'+task);
+    if(!currentJobTarget(appPath,root,job))return job;
+    if(!pureObject(resolved)||resolved.task_id!==task||resolved.status!=='completed'||
+      !Array.isArray(resolved.results)||!resolved.results.length||typeof resolved.results[0]!=='string')
+      throw new Error('GLABS_RESULT_CONTRACT_INVALID');
+    job.status='DOWNLOADED';job.syncPhase='download';writeJob(root,job);
+    const image=await downloadImage(config,resolved.results[0],userData,cipher);
+    if(!currentJobTarget(appPath,root,job))return job;
+    job.syncPhase='decode';writeJob(root,job);
+    const decoded=decode(image.data);
+    if(!decoded||!Buffer.isBuffer(decoded.png)||imageMime(decoded.png)!=='image/png'||
+      !Number.isSafeInteger(decoded.width)||!Number.isSafeInteger(decoded.height)||
+      decoded.width<1||decoded.height<1||decoded.width>8192||decoded.height>8192)
+      throw new Error('GLABS_IMAGE_DECODE_INVALID');
+    if(decoded.png.length>MAX_IMAGE)throw new Error('GLABS_DECODED_IMAGE_OVERSIZE');
+    job.syncPhase='stage';writeJob(root,job);
+    const relative='assets/images/glabs-'+job.id+'.png',file=resolveProjectFile(root,relative);
+    fs.mkdirSync(path.dirname(file),{recursive:true});
+    if(fs.existsSync(file)&&sha(fs.readFileSync(file))!==sha(decoded.png))throw new Error('GLABS_STAGING_FILE_TAMPERED');
+    if(!fs.existsSync(file)){const temporary=file+'.'+randomUUID()+'.tmp';try{fs.writeFileSync(temporary,decoded.png,{flag:'wx'});fs.renameSync(temporary,file);}finally{if(fs.existsSync(temporary))fs.unlinkSync(temporary);}}
+    job.staged={path:relative,sha256:sha(decoded.png),mime:'image/png',width:decoded.width,height:decoded.height};
+    job.status='VALIDATED';job.syncPhase='validated';delete job.lastSyncError;
+    writeJob(root,job);
+    return job;
+  }catch(error){
+    // currentJobTarget can mark this attempt STALE during an awaited GET.
+    // Never resurrect an outdated Native image to RUNNING.
+    if(job.status==='STALE'||job.status==='CANCELLED')return job;
+    const code=error instanceof Error&&/^GLABS_[A-Z0-9_]+$/.test(error.message)?
+      error.message:'GLABS_SYNC_READ_FAILED';
+    job.lastSyncError={stage:job.syncPhase??'result',code,at:timestamp()};
+    writeJob(root,job);
+    throw error;
+  }
 }
 function assertJobReferences(appPath:string,root:string,job:GLabsJob,decode:GLabsDecoder){
   if(!Array.isArray(job.references))throw new Error('GLABS_REFERENCE_EVIDENCE_MISSING');
