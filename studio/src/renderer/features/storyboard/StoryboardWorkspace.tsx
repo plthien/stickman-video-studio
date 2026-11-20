@@ -257,6 +257,7 @@ export function StoryboardWorkspace(){
     // Selection/approval intent is scoped to the visible Native Shot.
     // Navigating away stops remaining approvals after the current mutation.
     if(approvalBatch.current)approvalBatch.current.cancelled=true;
+    if(batchSession.current)batchSession.current.cancelled=true;
   },[id,shotId,native?.nativeDraft?.token,native?.nativeDraft?.revision]);
   const prepare=async()=>{
     const scope=captureProjectSession();if(!scope||!window.studio?.prepareImages)return;
@@ -482,12 +483,13 @@ export function StoryboardWorkspace(){
       setError('Exact frozen Native image target is not READY.');return;
     }
     const attempts=jobs.filter(job=>job.token===pending.token&&job.targetKey===targetKey);
-    if(attempts.some(job=>['QUEUED','SUBMITTED','RUNNING','DOWNLOADED','UNKNOWN','APPROVED'].includes(job.status))){
-      setError('Existing active, UNKNOWN or approved image requires a separate explicit review. No duplicate POST.');return;
+    if(attempts.some(job=>['QUEUED','SUBMITTED','RUNNING','DOWNLOADED','UNKNOWN'].includes(job.status))){
+      setError('Existing active or UNKNOWN image may already be charged. No duplicate POST.');return;
     }
-    const key=[id??'',pending.token,entry.draftIdentity.creativeFingerprint,entry.targetKey].join('|');
-    if(draftPrompts[key]!==undefined||draftReferences[key]!==undefined){
-      setError('Save the edited prompt/references before generating this image.');return;
+    if(attempts.some(job=>job.status==='APPROVED'&&
+      job.targetCreativeSha256===entry.draftIdentity.creativeFingerprint&&
+      job.styleProfileSha256===entry.styleProfileRef.sha256)){
+      setError('This exact Native target was already approved. No paid POST.');return;
     }
     paidInFlight.current=true;
     setBatchProgress(null);setSubmission({key:targetKey,label:entry.shotId+'/'+entry.layerId});setError('');
@@ -570,23 +572,6 @@ export function StoryboardWorkspace(){
     catch(e){if(isCurrentProjectSession(scope))setError(message(e));}
     finally{if(isCurrentProjectSession(scope))setBusy(false);}
   };
-  const approve=async(jobId:string)=>{
-    const scope=captureProjectSession();if(!scope||!window.studio)return;
-    const job=jobs.find(item=>item.id===jobId);
-    if(!job||job.status!=='VALIDATED'||!job.staged||!urls[job.id]||previewReady[job.id]!==previewIdentity(job)){
-      setError('GLABS_PREVIEW_NOT_VERIFIED: inspect the exact current image before approval.');return;
-    }
-    if(!window.confirm('I have inspected the displayed current image. Approve this exact image revision and bind only its Native target?'))return;
-    setBusy(true);setError('');
-    try{
-      await window.studio.glabsApprove(scope.projectId,jobId,rights.trim()||undefined);
-      if(!isCurrentProjectSession(scope))return;
-      await refresh(scope);
-      const next=await window.studio.projectState(scope.projectId);
-      if(setNativeIfSessionCurrent(scope,next))showNotice('Inspected image approved and bound to exact Native target.');
-    }catch(e){if(isCurrentProjectSession(scope))setError(message(e));}
-    finally{if(isCurrentProjectSession(scope))setBusy(false);}
-  };
   const counts={ready:prepared?.jobs.filter(j=>j.state==='READY').length??0,
     review:prepared?.jobs.filter(j=>j.state==='NEEDS_OWNER_REVIEW').length??0,
     blocked:prepared?.jobs.filter(j=>j.state==='BLOCKED').length??0};
@@ -627,7 +612,7 @@ export function StoryboardWorkspace(){
       </div>}
       {shotIds.length?<div className="storyboard-shot-strip" aria-label="Native shots">{shotIds.map(value=><button key={value}
         className={shotId===value?'selected':''}
-        onClick={()=>{recoveryEpoch.current+=1;setCheckedUnknown('');setAcknowledgedUnknown('');setSelectedShot(value);setSelectedKey('');}}>
+        onClick={()=>{recoveryEpoch.current+=1;setUnknownReview(null);setSelectedShot(value);}}>
         {value}<small>{galleryTargets.filter(item=>item.shotId===value).length} images</small>
       </button>)}</div>:<div className="info">No native shots in the current Native DRAFT. Stage an approved source-grounded Native Author artifact first.</div>}
       <details className="storyboard-technical-details">
