@@ -79,7 +79,7 @@ describe('Native four-operation UI — explicit draft/published target and sessi
     fireEvent.click(screen.getByRole('button',{name:'Build Task'}));
     await waitFor(()=>expect(freeze).toHaveBeenCalledWith('A','native','review',
       expect.objectContaining({targetContext:'DRAFT'}),false));
-    expect(screen.getByTestId('external-task-prompt')).toHaveTextContent('Frozen DRAFT Native mission');
+    await waitFor(()=>expect(screen.getByTestId('external-task-prompt')).toHaveTextContent('Frozen DRAFT Native mission'));
   });
   it('N05-UI-02 selecting Published never silently freezes draft content',async()=>{
     const{freeze}=install();
@@ -139,7 +139,7 @@ describe('Native four-operation UI — explicit draft/published target and sessi
     fireEvent.click(screen.getByRole('button',{name:'Rebuild Task'}));
     await waitFor(()=>expect(freeze).toHaveBeenCalledWith('A','native','review',
       expect.objectContaining({targetContext:'PUBLISHED'}),true));
-    expect(screen.getByTestId('external-task-prompt')).toHaveTextContent('Frozen PUBLISHED Native mission');
+    await waitFor(()=>expect(screen.getByTestId('external-task-prompt')).toHaveTextContent('Frozen PUBLISHED Native mission'));
   });
   it('RF01-13: narrowing finding IDs removes only auto-inferred rights from unselected findings',async()=>{
     const {freeze}=install();
