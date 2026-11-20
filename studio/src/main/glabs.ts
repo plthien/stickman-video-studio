@@ -555,6 +555,64 @@ function assertJobReferences(appPath:string,root:string,job:GLabsJob,decode:GLab
       throw new Error('GLABS_REFERENCE_IMAGE_UNDECODABLE');
   }
 }
+function generatedApprovalProvenance(job:GLabsJob){
+  if(!job.staged||!job.styleProfileSha256)throw new Error('GLABS_APPROVAL_PROVENANCE_INCOMPLETE');
+  return{
+    source:'G-Labs generated output' as const,projectId:job.projectId,
+    jobId:job.id,providerTaskId:job.providerTaskId??null,model:job.model,
+    promptSha256:job.promptSha256,imageSha256:job.staged.sha256,
+    nativeToken:job.token,targetKey:job.targetKey,shotId:job.shotId,
+    layerId:job.layerId,targetPath:job.targetPath,styleSha256:job.styleProfileSha256,
+    approvedAt:timestamp(),ownerAuthorizedProjectUse:true as const,
+    providerLicenseVerified:false as const
+  };
+}
+/**
+ * Recover only a fully committed, exact same-job native binding when the
+ * process was interrupted after fulfillMedia committed pending.json/state.json
+ * but BEFORE the APPROVED job journal was written.
+ *
+ * Nothing is imported or rebound; mismatched project/style/creative identity,
+ * rights provenance, source SHA or original PNG fail closed.
+ */
+function recoverCommittedGeneratedApproval(
+  appPath:string,root:string,job:GLabsJob,decode:GLabsDecoder
+){
+  if(job.status!=='VALIDATED'||!job.staged||!job.styleProfileId||
+    !job.styleProfileSha256||!job.targetCreativeSha256)return null;
+  const pending=getPendingMedia(appPath,root);
+  if(!pending||pending.token!==job.token)return null;
+  const binding=pending.fulfillments[job.targetKey];
+  if(!binding||binding.kind!=='image'||binding.sha256!==job.staged.sha256)return null;
+  const authorization='OWNER_APPROVED_GLABS_PROJECT_USE | job='+job.id+
+    ' | source=G-Labs-generated | provider_license_not_verified';
+  if(binding.rights!==authorization)return null;
+  const state=readState(root),draft=readNativeDraft(root,state);
+  if(!draft||state.project.id!==job.projectId||draft.token!==job.token||
+    draft.authorTaskId!==job.authorTaskId||
+    draft.revision!==job.draftRevisionAtSubmission||
+    state.project.style!==job.styleProfileId||
+    loadImageStyleProfile(appPath,job.styleProfileId).sha256!==job.styleProfileSha256)return null;
+  const creative=nativeImageTargetIdentity(root,job.targetKey);
+  if(creative.fingerprint!==job.targetCreativeSha256||
+    creative.shotId!==job.shotId||creative.layerId!==job.layerId||
+    creative.path!==job.targetPath)return null;
+  const mapped=state.media?.find(row=>row.kind==='image'&&row.path===binding.relative&&
+    row.sha256===binding.sha256&&row.rights===authorization&&
+    row.shotId===job.shotId&&row.layerId===job.layerId);
+  if(!mapped||!state.imports?.includes(binding.relative))return null;
+  const source=validatedImage(root,job.staged.path,job.staged.sha256);
+  const imported=validatedImage(root,binding.relative,binding.sha256);
+  if(source.mime!=='image/png'||imported.mime!=='image/png')return null;
+  const decoded=decode(source.bytes);
+  if(!decoded||!Buffer.isBuffer(decoded.png)||imageMime(decoded.png)!=='image/png'||
+    decoded.width!==job.staged.width||decoded.height!==job.staged.height)return null;
+  assertJobReferences(appPath,root,job,decode);
+  job.approved={rights:authorization,path:binding.relative,
+    sha256:binding.sha256,provenance:generatedApprovalProvenance(job)};
+  job.status='APPROVED';writeJob(root,job);
+  return{job,pending};
+}
 // All approved Native fulfillment writes happen synchronously under this
 // per-project lock. Concurrent IPC approval cannot interleave pending.json
 // mutations; a repeated approval of the same job is an idempotent read.
@@ -570,6 +628,10 @@ export function approveGlabsImage(appPath:string,root:string,id:string,rights:st
       return{job,pending:getPendingMedia(appPath,root)};
     }
     if(job.status!=='VALIDATED'||!job.staged)throw new Error('GLABS_IMAGE_NOT_VALIDATED');
+    // Crash-safe idempotency: only the exact same generated job can recover its
+    // already committed binding; there must never be a second import.
+    const recovered=recoverCommittedGeneratedApproval(appPath,root,job,decode);
+    if(recovered)return recovered;
     // Undefined is the new G-Labs project-use approval. A legacy explicit
     // empty string still fails rather than masquerading as authorization.
     if(rights!==undefined&&(typeof rights!=='string'||rights.trim().length<5))
@@ -585,15 +647,7 @@ export function approveGlabsImage(appPath:string,root:string,id:string,rights:st
       decoded.width<1||decoded.height<1||decoded.width>8192||decoded.height>8192)
       throw new Error('GLABS_IMAGE_APPROVAL_DECODE_MISMATCH');
     assertJobReferences(appPath,root,job,decode);
-    const provenance={
-      source:'G-Labs generated output' as const,projectId:job.projectId,
-      jobId:job.id,providerTaskId:job.providerTaskId??null,model:job.model,
-      promptSha256:job.promptSha256,imageSha256:job.staged.sha256,
-      nativeToken:job.token,targetKey:job.targetKey,shotId:job.shotId,
-      layerId:job.layerId,targetPath:job.targetPath,styleSha256:job.styleProfileSha256!,
-      approvedAt:timestamp(),ownerAuthorizedProjectUse:true as const,
-      providerLicenseVerified:false as const
-    };
+    const provenance=generatedApprovalProvenance(job);
     // Media core still requires a nonempty rights string. This is a factual
     // owner-authorization provenance marker, NOT an independently verified
     // third-party license. Manual uploads keep their ordinary rights check.
