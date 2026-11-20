@@ -61,7 +61,7 @@ describe('Storyboard P1: real renderer queue and paid-action isolation',()=>{
     expect(screen.getByText(/Creative review:/)).toHaveTextContent('REVIEWED_WITH_FINDINGS');
     expect(screen.getByText(/Current Project Style:/).closest('div')).toHaveTextContent('B2');
     expect(generate).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button',{name:'Prepare Images (read-only; no paid requests)'}));
+    fireEvent.click(screen.getByRole('button',{name:'Refresh Images'}));
     await waitFor(()=>expect(prepare).toHaveBeenCalledTimes(2));
     expect(generate).not.toHaveBeenCalled();
   });
@@ -72,17 +72,17 @@ describe('Storyboard P1: real renderer queue and paid-action isolation',()=>{
     fireEvent.click(screen.getByText(/Advanced · target-specific edits/));
     const input=screen.getByLabelText('Edit image prompt for current target only');
     fireEvent.change(input,{target:{value:'Owner custom red kite pose and no caption'}});
-    expect(screen.getByText(/Save this target's edit before paid generation/)).toBeInTheDocument();
+    expect(screen.getByText(/Save the edited prompt/references before generating this image/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button',{name:/sh-b/}));
     expect(screen.getAllByText(/A blue backpack/).length).toBeGreaterThan(0);
     const selected=screen.getByText(/Source image description:/).closest('div');
     expect(selected).toHaveTextContent('A blue backpack');
     expect(generate).not.toHaveBeenCalled();
   });
-  it('UI-03 only explicit Generate Selected calls existing one-target paid confirmation contract',async()=>{
+  it('UI-03 explicit Generate Image immediately calls the one-target authorized IPC contract',async()=>{
     const {generate}=install();
     render(<AppStateProvider><Harness/></AppStateProvider>);
-    const button=await screen.findByRole('button',{name:'Generate Selected (1 paid request)'});
+    const button=await screen.findByRole('button',{name:'Generate Image'});
     await waitFor(()=>expect(button).toBeEnabled());
     fireEvent.click(button);
     await waitFor(()=>expect(generate).toHaveBeenCalledTimes(1));
@@ -99,7 +99,7 @@ describe('Storyboard P1: real renderer queue and paid-action isolation',()=>{
     fireEvent.click(screen.getByRole('button',{name:'Switch project B'}));
     await waitFor(()=>expect(screen.getByText(/Current Project Style:/).closest('div')).toHaveTextContent('B2'));
     await waitFor(()=>expect(screen.getByTestId('image-queue-counts')).toHaveTextContent('READY 2'));
-    fireEvent.click(screen.getByRole('button',{name:'Generate Selected (1 paid request)'}));
+    fireEvent.click(screen.getByRole('button',{name:'Generate Image'}));
     await waitFor(()=>expect(generate).toHaveBeenCalled());
     expect(generate).toHaveBeenLastCalledWith('B',expect.objectContaining({targetKey:'image:0:layer-a'}));
   });
@@ -115,11 +115,11 @@ describe('Storyboard P1: real renderer queue and paid-action isolation',()=>{
       }]
     }});
     render(<AppStateProvider><Harness/></AppStateProvider>);
-    await waitFor(()=>expect(screen.getByText(/Prior G-Labs job has UNKNOWN billing status/)).toBeInTheDocument());
-    expect(screen.getByRole('button',{name:'Regenerate Selected (1 NEW paid request)'})).toBeDisabled();
+    await waitFor(()=>expect(screen.getByText(/UNKNOWN image attempt · owner recovery/)).toBeInTheDocument());
+    expect(screen.getByRole('button',{name:'Regenerate Image'})).toBeDisabled();
     expect(generate).not.toHaveBeenCalled();
   });
-  it('UI-07 regenerate asks explicit owner permission before another paid POST',async()=>{
+  it('UI-07 Regenerate Image itself authorizes exactly one new attempt without a redundant browser confirmation',async()=>{
     const {generate}=install();
     const current=window.studio!;
     Object.defineProperty(window,'studio',{configurable:true,value:{
@@ -132,11 +132,14 @@ describe('Storyboard P1: real renderer queue and paid-action isolation',()=>{
     const confirm=vi.fn(()=>false);
     vi.stubGlobal('confirm',confirm);
     render(<AppStateProvider><Harness/></AppStateProvider>);
-    const button=await screen.findByRole('button',{name:'Regenerate Selected (1 NEW paid request)'});
+    const button=await screen.findByRole('button',{name:'Regenerate Image'});
     await waitFor(()=>expect(button).toBeEnabled());
     fireEvent.click(button);
-    expect(confirm).toHaveBeenCalledTimes(1);
-    expect(generate).not.toHaveBeenCalled();
+    await waitFor(()=>expect(generate).toHaveBeenCalledTimes(1));
+    expect(generate).toHaveBeenCalledWith('A',expect.objectContaining({
+      targetKey:'image:0:layer-a',authorized:true,regenerate:true,acknowledgeUnknown:false
+    }));
+    expect(confirm).not.toHaveBeenCalled();
   });
   it('UI-05 original manual Import & Bind remains available only on demand',async()=>{
     install();render(<AppStateProvider><Harness/></AppStateProvider>);
