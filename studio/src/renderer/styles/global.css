@@ -101,7 +101,10 @@
 .shot-image-status.status-approved{color:#74e2b7;border-color:#287958}
 .shot-image-status.status-validated{color:#96d9ff;border-color:#346f91}
 .shot-image-status.status-failed,.shot-image-status.status-unknown{color:#ffb4b4;border-color:#915558}
-.shot-image-card-stage{position:relative;width:100%;max-height:min(66dvh,460px);min-height:190px;border-radius:7px;border:1px solid #2b4553;background:repeating-conic-gradient(#0e2838 0 25%,#0b2130 0 50%) 50%/24px 24px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.shot-image-card-stage{position:relative;width:100%;height:auto;min-height:0;max-height:none;border-radius:7px;border:1px solid #2b4553;background:repeating-conic-gradient(#0e2838 0 25%,#0b2130 0 50%) 50%/24px 24px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.shot-image-card-stage.is-placeholder{aspect-ratio:9 / 16;min-height:160px}
+.shot-image-card-stage img{width:100%;height:100%;object-fit:contain}
+.shot-image-gallery-grid{align-items:start}
 .shot-image-card-stage img{max-width:100%;max-height:100%;object-fit:contain;display:block}
 .shot-image-card-stage span{font-size:11px;color:#a3b7c3;padding:18px;text-align:center}
 .shot-image-card-meta{display:flex;justify-content:space-between;align-items:center;gap:6px;color:var(--muted);font-size:10px;overflow:hidden}
@@ -118,4 +121,4 @@
 .shot-image-lightbox{position:fixed;z-index:100;inset:0;background:#03101beE;display:flex;align-items:center;justify-content:center;padding:22px;overflow:auto}
 .shot-image-lightbox-inner{display:flex;flex-direction:column;gap:8px;align-items:center;justify-content:center;max-width:100%;max-height:100%}
 .shot-image-lightbox-inner img{max-height:80dvh;object-fit:contain}
-@media(max-width:700px){.shot-image-gallery-grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,175px),1fr))}.shot-image-card-stage{min-height:150px}}
+@media(max-width:700px){.shot-image-gallery-grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,175px),1fr))}.shot-image-card-stage.is-placeholder{min-height:130px}}
