@@ -118,7 +118,7 @@ export function StoryboardWorkspace(){
     !submission&&!batchSession.current);
   // A bulk click covers only never-attempted, source-backed READY targets.
   // FAILED/UNKNOWN/staged/approved jobs are excluded; none is retried.
-  const eligibleBulk=prepared?.token===pending?.token&&config?
+  const eligibleBulk=prepared&&pending&&prepared.token===pending.token&&config?
     prepared.jobs.filter(item=>item.state==='READY'&&Boolean(item.prompt.trim())&&
       imageTargets.some(candidate=>candidate.key===item.targetKey&&
         candidate.shotId===item.shotId&&candidate.layerId===item.layerId&&
