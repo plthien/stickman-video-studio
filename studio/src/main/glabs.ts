@@ -589,14 +589,17 @@ function recoverCommittedGeneratedApproval(
   };
   if(snapshot.token!==job.token||!snapshot.fulfillments?.[job.targetKey])return null;
   const pending=getPendingMedia(appPath,root);
-  if(!pending||pending.token!==job.token)return null;
+  if(!pending||pending.status==='STALE'||pending.token!==job.token)return null;
   const binding=pending.fulfillments[job.targetKey];
   if(!binding||binding.kind!=='image'||binding.sha256!==job.staged.sha256)return null;
   const authorization='OWNER_APPROVED_GLABS_PROJECT_USE | job='+job.id+
     ' | source=G-Labs-generated | provider_license_not_verified';
   if(binding.rights!==authorization)return null;
   const state=readState(root),draft=readNativeDraft(root,state);
-  if(!draft||state.project.id!==job.projectId||draft.token!==job.token||
+  if(!draft||state.project.id!==job.projectId||
+    state.tasks?.native?.revision!==job.nativeRevision||
+    job.promptSha256!==sha(job.prompt)||
+    draft.token!==job.token||
     draft.authorTaskId!==job.authorTaskId||
     draft.revision!==job.draftRevisionAtSubmission||
     state.project.style!==job.styleProfileId||
