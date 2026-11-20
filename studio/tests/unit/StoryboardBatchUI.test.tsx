@@ -1,5 +1,5 @@
 import {useEffect} from 'react';
-import {cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react';
+import {act,cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react';
 import {afterEach,describe,expect,it,vi} from 'vitest';
 import {AppStateProvider,useAppState} from '../../src/renderer/app/AppState';
 import {StoryboardWorkspace} from '../../src/renderer/features/storyboard/StoryboardWorkspace';
@@ -207,6 +207,52 @@ describe('Phase-1 Storyboard viewport and owner-started safe bulk generation',()
     finish(job('single-finished',0));
     await waitFor(()=>expect(screen.queryByTestId('image-submitting')).not.toBeInTheDocument());
     expect(delayed).toHaveBeenCalledTimes(1);
+  });
+  it('AUTO-UI-01 provider completion event displays the generated image without a manual Check Now click',async()=>{
+    const running=job('provider-running',0,'RUNNING');
+    const {generate,mediaUrl}=install([running]);
+    let notify!: (change:{projectId:string;job:ImageJob})=>void;
+    const unsubscribe=vi.fn();
+    Object.defineProperty(window,'studio',{configurable:true,value:{
+      ...window.studio,onGlabsJobChanged:(listener:typeof notify)=>{
+        notify=listener;
+        return unsubscribe;
+      }
+    }});
+    const view=render(<AppStateProvider><Harness/></AppStateProvider>);
+    await screen.findByText('Checking provider automatically');
+    const completed={...running,status:'VALIDATED',staged:{
+      path:'assets/images/completed.png',sha256:'f'.repeat(64),width:768,height:1376
+    }};
+    await act(async()=>{notify({projectId:'A',job:completed});});
+    const image=await screen.findByRole('img',{name:'G-Labs candidate for sh-a/layer-a'});
+    await waitFor(()=>expect(image).toHaveAttribute(
+      'src','studio-media://A/assets/images/completed.png'));
+    expect(screen.getByTestId('storyboard-selected-image')).toHaveTextContent('Ready to review');
+    expect(mediaUrl).toHaveBeenCalledWith('A','assets/images/completed.png');
+    expect(generate).not.toHaveBeenCalled();
+    view.unmount();
+    expect(unsubscribe).toHaveBeenCalled();
+  });
+  it('AUTO-UI-02 a late image event from project A cannot appear in project B',async()=>{
+    install([job('running-a',0)]);
+    let notify!: (change:{projectId:string;job:ImageJob})=>void;
+    Object.defineProperty(window,'studio',{configurable:true,value:{
+      ...window.studio,onGlabsJobChanged:(listener:typeof notify)=>{
+        notify=listener;return()=>undefined;
+      }
+    }});
+    render(<AppStateProvider><Harness/></AppStateProvider>);
+    await screen.findByText('Checking provider automatically');
+    fireEvent.click(screen.getByRole('button',{name:'Switch B'}));
+    await waitFor(()=>expect(screen.getByTestId('storyboard-empty-preview')).toBeInTheDocument());
+    await act(async()=>{notify({projectId:'A',job:{
+      ...job('running-a',0,'VALIDATED'),staged:{
+        path:'assets/images/old-A.png',sha256:'a'.repeat(64),width:768,height:1376
+      }
+    }});});
+    expect(screen.queryByRole('img',{name:'G-Labs candidate for sh-a/layer-a'})).not.toBeInTheDocument();
+    expect(screen.getByTestId('storyboard-empty-preview')).toBeInTheDocument();
   });
   it('PERF-01 on-demand preview URL resolves only selected candidate, not every staged job',async()=>{
     const a={...job('candidate-a',0,'VALIDATED'),staged:{
