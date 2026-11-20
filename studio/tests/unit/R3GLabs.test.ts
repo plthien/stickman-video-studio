@@ -668,6 +668,23 @@ describe('NF02 — effective per-target Native image identity across corrections
 });
 
 describe('F11 crash-safe generated-image approval journal recovery',()=>{
+  it('F11-IDEMP-02 a forged prompt hash cannot recover an already committed binding',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport();
+    const created=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    const ready=await pollGlabsImage(appPath,root,dir,cipher,created.id,decode);
+    const authorization='OWNER_APPROVED_GLABS_PROJECT_USE | job='+ready.id+
+      ' | source=G-Labs-generated | provider_license_not_verified';
+    const imported=importMediaFile(root,path.join(root,ready.staged!.path),'image',authorization);
+    fulfillMedia(appPath,root,ready.token,ready.targetKey,imported.path,authorization);
+    const file=path.join(root,'.studio','glabs','jobs',ready.id+'.json');
+    const persisted=JSON.parse(fs.readFileSync(file,'utf8')) as Record<string,unknown>;
+    persisted.promptSha256='0'.repeat(64);
+    fs.writeFileSync(file,JSON.stringify(persisted));
+    expect(()=>approveGlabsImage(appPath,root,ready.id,undefined,decode))
+      .toThrow(/GLABS_TARGET_NOT_FROZEN_OR_ALREADY_FULFILLED|GLABS_JOB_STALE/);
+    expect(listGlabsJobs(root).find(item=>item.id===ready.id)?.status).toBe('VALIDATED');
+    expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
+  });
   it('F11-IDEMP-01 recovers the exact already-bound G-Labs candidate without another import, mapping or provider POST',async()=>{
     const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport();
     const submitted=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
