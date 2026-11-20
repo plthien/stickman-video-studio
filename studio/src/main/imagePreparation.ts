@@ -192,7 +192,7 @@ export function prepareNativeImages(appPath:string,root:string,persist=false){
     uniquePaths:new Set(image.map(target=>target.path)).size};
   if(persist)atomicJson(resolveProjectFile(root,'.studio/storyboard/prepared-image-jobs-v1.json'),{
     schema:'storyboard-prepared-image-jobs-v1',projectId:state.project.id,authorTaskId:draft.authorTaskId,
-    draftToken:draft.token,revision:draft.revision,artifactSha256:draft.sha256,
+    draftToken:draft.token,artifactSha256:draft.sha256,
     preparedAt:new Date().toISOString(),...result
   });
   return result;
