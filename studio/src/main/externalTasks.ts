@@ -475,11 +475,18 @@ function imageTargetIdentity(
   return {fingerprint,authorTaskId,draftRevision,targetKey,
     shotId:reference.shotId,layerId:reference.layerId,path:reference.path};
 }
+/** Compute target identity from a snapshot already verified by readNativeDraft.
+ * Avoid rereading the full project and Native DRAFT once per image target. */
+export function nativeImageTargetIdentityFromSnapshot(
+  state:StudioState,draft:NonNullable<ReturnType<typeof readNativeDraft>>,targetKey:string
+){
+  return imageTargetIdentity(state,draft.authorTaskId,draft.token,draft.revision,draft.artifact,targetKey);
+}
 /** Current project-owned draft identity, including immutable Author provenance. */
 export function nativeImageTargetIdentity(root:string,targetKey:string){
   const state=readState(root),draft=readNativeDraft(root,state);
   if(!draft)throw new Error('GLABS_NATIVE_DRAFT_REQUIRED');
-  return imageTargetIdentity(state,draft.authorTaskId,draft.token,draft.revision,draft.artifact,targetKey);
+  return nativeImageTargetIdentityFromSnapshot(state,draft,targetKey);
 }
 /** Publish an immutable corrected draft revision without touching original Author
  * response, published project.json or unrelated accepted media. */
