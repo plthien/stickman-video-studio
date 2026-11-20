@@ -59,31 +59,44 @@ export function normalizeNativeImageRequirement(value:unknown):NativeImageRequir
     return create(value,'unsupported',{});
   return create(value,'legacy-positional',{path:cells[1],content:cells[2]});
 }
+/**
+ * Apply every declared dimension conjunctively. This is shared by prompt
+ * preparation and creative fingerprinting; missing dimensions never act as
+ * wildcard authority for an explicitly mismatched path/Shot/Layer.
+ */
+const agreesOnDeclaredIdentity=(row:NativeImageRequirement,target:ImageRequirementTarget)=>
+  (!row.shotId||row.shotId===target.shotId)&&
+  (!row.layerId||row.layerId===target.layerId)&&
+  (!row.path||row.path===target.path);
 export function imageRequirementsForTarget(rows:unknown[],target:ImageRequirementTarget){
   const matching:NativeImageRequirement[]=[];
   const conflicting:NativeImageRequirement[]=[];
   const partial:NativeImageRequirement[]=[];
   const global:NativeImageRequirement[]=[];
+  // Effective source order matters for provenance, instruction order and SHA.
+  const effective:NativeImageRequirement[]=[];
   for(const source of rows){
     const row=normalizeNativeImageRequirement(source);
-    if(row.scope==='global'){global.push(row);continue;}
+    if(row.scope==='global'){global.push(row);effective.push(row);continue;}
     if(row.scope==='target'){
-      if(row.shotId===target.shotId&&row.layerId===target.layerId){
-        if(row.path&&row.path!==target.path)conflicting.push(row);
-        else matching.push(row);
+      if(agreesOnDeclaredIdentity(row,target)){
+        matching.push(row);effective.push(row);
+      }else if(row.shotId===target.shotId&&row.layerId===target.layerId){
+        // An exact Shot+Layer declaring the wrong expected_path is a source
+        // conflict for THIS identity, not a source for a different target.
+        conflicting.push(row);effective.push(row);
       }
-    }else if(row.scope==='path'&&row.path===target.path){
-      // Shared description: one exact path requirement can describe many
-      // occurrences; each occurrence keeps its own Shot/Layer binding.
-      matching.push(row);
-    }else if(row.scope==='partial'&&
-      ((row.path&&row.path===target.path)||(row.shotId&&row.shotId===target.shotId))){
-      partial.push(row);
+    }else if(row.scope==='path'&&agreesOnDeclaredIdentity(row,target)){
+      // Path-only requirements are intentionally shared by real occurrences.
+      matching.push(row);effective.push(row);
+    }else if(row.scope==='partial'&&agreesOnDeclaredIdentity(row,target)){
+      // Partial ownership is review-only, never an exact source description.
+      partial.push(row);effective.push(row);
     }
+    // Unsupported/unparseable rows are never silently global.
   }
-  return{matching,conflicting,partial,global};
+  return{matching,conflicting,partial,global,effective};
 }
 export function imageRequirementFingerprintSources(rows:unknown[],target:ImageRequirementTarget):unknown[]{
-  const {matching,conflicting,partial,global}=imageRequirementsForTarget(rows,target);
-  return[...matching,...conflicting,...partial,...global].map(row=>row.source);
+  return imageRequirementsForTarget(rows,target).effective.map(row=>row.source);
 }
