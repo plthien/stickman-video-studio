@@ -83,13 +83,14 @@ export function StoryboardWorkspace(){
   const selectedAttempts=jobs.filter(job=>job.targetKey===target?.key&&job.token===pending?.token);
   const unknownAttempts=selectedAttempts.filter(job=>job.status==='UNKNOWN');
   const hasUncertainAttempt=unknownAttempts.length>0;
-  const recoveryIdentity=hasUncertainAttempt&&spec?[
-    id??'',pending?.token??'',spec.shotId,spec.layerId,spec.path,
-    spec.draftIdentity.creativeFingerprint,spec.styleProfileRef.sha256,
+  const recoveryIdentity=hasUncertainAttempt&&target?[
+    id??'',pending?.token??'',target.shotId,target.layerId,target.path,
+    spec?.draftIdentity.creativeFingerprint??'NO_PREPARED_FINGERPRINT',
+    spec?.styleProfileRef.sha256??'NO_STYLE_AUTHORITY',
     ...unknownAttempts.map(job=>job.id+':'+(job.providerTaskId??'')).sort()
   ].join('|'):'';
-  recoveryIdentityRef.current=recoveryIdentity;
   useEffect(()=>{
+    recoveryIdentityRef.current=recoveryIdentity;
     recoveryEpoch.current+=1;
     setCheckedUnknown('');
     setAcknowledgedUnknown('');
