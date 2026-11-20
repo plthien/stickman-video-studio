@@ -12,6 +12,7 @@ export interface ImageJobSpec {
   assetKey:string;targetKeys:string[];expectedPaths:string[];
   shotId:string;layerId:string;targetKey:string;path:string;assetKind:string;
   state:PreparedState;reason:string;prompt:string;promptSha256:string;
+  effectivePrompt:string;effectivePromptSha256:string;
   sourceDescription:string;sourceLedger:string;sourceRows:unknown[];
   styleProfileRef:{id:Style;path:string;sha256:string};
   references:string[];styleAnchors:Array<{id:string;label:string;sha256:string}>;
@@ -189,7 +190,11 @@ export function compileImageJobSpecs(input:{
     // even when Native asset_needs contains no global rows.
     const authoritativeStyle='APPROVED MODE B STYLE '+style+' ['+
       profile.path+'; SHA256 '+profile.sha256+']\n\n'+profile.guidance;
-    const prompt=validOwner?[
+    // Keep the owner-edited description as the editable field. Compile the
+    // provider payload separately: owner text cannot delete style authority.
+    // Both hashes are retained so the submitted provider prompt is auditable.
+    const prompt=validOwner?ownerText:computed;
+    const effectivePrompt=validOwner?[
       authoritativeStyle,
       ownerText.includes(authoritativeStyle)?
         ownerText.replace(authoritativeStyle,'').trim():ownerText,
@@ -208,6 +213,7 @@ export function compileImageJobSpecs(input:{
       assetKey:target.key,targetKeys:[target.key],expectedPaths:[target.path],
       targetKey:target.key,shotId:target.shotId??'',layerId:target.layerId??'',path:target.path,assetKind:declaredKind,
       state,reason,prompt,promptSha256:prompt?sha(prompt):'',
+      effectivePrompt,effectivePromptSha256:effectivePrompt?sha(effectivePrompt):'',
       sourceDescription,sourceLedger,sourceRows:requirements.effective.map(row=>row.source),
       styleProfileRef:{id:style,path:profile.path,sha256:profile.sha256},
       references:validOwner&&Array.isArray(owner?.references)?owner.references:[],
