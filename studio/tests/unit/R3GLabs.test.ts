@@ -692,6 +692,24 @@ describe('F17 durable provider completion and read-only ingestion recovery',()=>
     expect(calls.filter(c=>c.method==='POST')).toHaveLength(1);
     expect(calls.filter(c=>c.route==='/api/status/ab12cd34').length).toBe(2);
   });
+  it('F17-03 persisted DONE evidence resumes image download even when provider status later regresses to running',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls,stub}=transport({resultFailures:1});
+    const created=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    await expect(pollGlabsImage(appPath,root,dir,cipher,created.id,decode)).rejects.toThrow();
+    const afterFailure=listGlabsJobs(root).find(item=>item.id===created.id)!;
+    expect(afterFailure.providerCompletedAt).toBeTruthy();
+    vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL,options?:RequestInit)=>{
+      if(new URL(String(input)).pathname==='/api/status/ab12cd34')
+        return response({task_id:'ab12cd34',status:'running'});
+      return stub(input,options);
+    }));
+    const result=await pollGlabsImage(appPath,root,dir,cipher,created.id,decode);
+    expect(result.status).toBe('VALIDATED');
+    expect(result.providerCompletedAt).toBe(afterFailure.providerCompletedAt);
+    expect(result.lastSyncError).toBeUndefined();
+    expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
+    expect(calls.filter(call=>call.route==='/api/result/ab12cd34')).toHaveLength(2);
+  });
   it('F17-02 download failure is a recoverable ingestion issue, not another paid generation',async()=>{
     const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport({downloadFailures:1});
     const submitted=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
