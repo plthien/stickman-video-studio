@@ -6,7 +6,7 @@ type ImageJob=Awaited<ReturnType<Studio['glabsJobs']>>[number];
 type Prepared=Awaited<ReturnType<Studio['prepareImages']>>;
 export interface GalleryTarget{
   key:string;shotId:string;layerId:string;path:string;boundPath:string;
-  boundSha256?:string;fulfilled:boolean;managed:boolean;
+  boundSha256?:string;creativeFingerprint?:string;fulfilled:boolean;managed:boolean;
 }
 export interface GalleryCard{
   target:GalleryTarget;
