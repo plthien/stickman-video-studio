@@ -69,20 +69,21 @@ describe('Storyboard P1: real renderer queue and paid-action isolation',()=>{
     const {generate}=install();
     render(<AppStateProvider><Harness/></AppStateProvider>);
     await waitFor(()=>expect(screen.getByTestId('image-queue-counts')).toHaveTextContent('READY 2'));
-    fireEvent.click(screen.getByText(/Advanced · target-specific edits/));
-    const input=screen.getByLabelText('Edit image prompt for current target only');
+    const card=(await screen.findAllByTestId('shot-image-card'))[0];
+    fireEvent.click(card.querySelector('summary')!);
+    const input=await screen.findByLabelText('Edit image prompt layer-a');
     fireEvent.change(input,{target:{value:'Owner custom red kite pose and no caption'}});
-    expect(screen.getByText(/Save the edited prompt\/references before generating this image\./)).toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'Save Image Prompt & References'})).toBeEnabled();
     fireEvent.click(screen.getByRole('button',{name:/sh-b/}));
-    expect(screen.getAllByText(/A blue backpack/).length).toBeGreaterThan(0);
-    const selected=screen.getByText(/Image:/).closest('div');
-    expect(selected).toHaveTextContent('A blue backpack');
+    const second=(await screen.findAllByTestId('shot-image-card'))[0];
+    expect(second).toHaveTextContent('A blue backpack');
+    expect(second).not.toHaveTextContent('Owner custom red kite pose');
     expect(generate).not.toHaveBeenCalled();
   });
   it('UI-03 explicit Generate Image immediately calls the one-target authorized IPC contract',async()=>{
     const {generate}=install();
     render(<AppStateProvider><Harness/></AppStateProvider>);
-    const button=await screen.findByRole('button',{name:'Generate Image'});
+    const button=await screen.findByRole('button',{name:'Generate Image · layer-a'});
     await waitFor(()=>expect(button).toBeEnabled());
     const confirm=vi.fn(()=>false);
     vi.stubGlobal('confirm',confirm);
@@ -102,7 +103,7 @@ describe('Storyboard P1: real renderer queue and paid-action isolation',()=>{
     fireEvent.click(screen.getByRole('button',{name:'Switch project B'}));
     await waitFor(()=>expect(screen.getByText(/Current Project Style:/).closest('div')).toHaveTextContent('B2'));
     await waitFor(()=>expect(screen.getByTestId('image-queue-counts')).toHaveTextContent('READY 2'));
-    fireEvent.click(screen.getByRole('button',{name:'Generate Image'}));
+    fireEvent.click(screen.getByRole('button',{name:'Generate Image · layer-a'}));
     await waitFor(()=>expect(generate).toHaveBeenCalled());
     expect(generate).toHaveBeenLastCalledWith('B',expect.objectContaining({targetKey:'image:0:layer-a'}));
   });
@@ -118,8 +119,9 @@ describe('Storyboard P1: real renderer queue and paid-action isolation',()=>{
       }]
     }});
     render(<AppStateProvider><Harness/></AppStateProvider>);
-    await waitFor(()=>expect(screen.getByText(/UNKNOWN image attempt · owner recovery/)).toBeInTheDocument());
-    expect(screen.getByRole('button',{name:'Regenerate Image'})).toBeDisabled();
+    expect(await screen.findByRole('button',{name:'Review UNKNOWN'})).toBeEnabled();
+    expect(screen.queryByRole('button',{name:'Generate Image · layer-a'})).not.toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:'Regenerate Image · layer-a'})).not.toBeInTheDocument();
     expect(generate).not.toHaveBeenCalled();
   });
   it('UI-07 Regenerate Image itself authorizes exactly one new attempt without a redundant browser confirmation',async()=>{
@@ -135,7 +137,7 @@ describe('Storyboard P1: real renderer queue and paid-action isolation',()=>{
     const confirm=vi.fn(()=>false);
     vi.stubGlobal('confirm',confirm);
     render(<AppStateProvider><Harness/></AppStateProvider>);
-    const button=await screen.findByRole('button',{name:'Regenerate Image'});
+    const button=await screen.findByRole('button',{name:'Regenerate Image · layer-a'});
     await waitFor(()=>expect(button).toBeEnabled());
     fireEvent.click(button);
     await waitFor(()=>expect(generate).toHaveBeenCalledTimes(1));
@@ -159,11 +161,13 @@ describe('Storyboard P1: real renderer queue and paid-action isolation',()=>{
       mediaUrl:async()=> 'studio-media://test/glabs-image.png'
     }});
     render(<AppStateProvider><Harness/></AppStateProvider>);
-    const preview=await screen.findByTestId('storyboard-selected-image');
-    expect(preview).toHaveTextContent('Image generated · validation failed');
-    await waitFor(()=>expect(preview.querySelector('img')).toHaveAttribute('src','studio-media://test/glabs-image.png'));
-    expect(screen.getByText('Job details').closest('details')).not.toHaveAttribute('open');
-    const retry=screen.getByRole('button',{name:'Regenerate Image'});
+    const preview=(await screen.findAllByTestId('shot-image-card'))[0];
+    expect(preview).toHaveTextContent('Failed');
+    await waitFor(()=>expect(preview.querySelector('img'))
+      .toHaveAttribute('src','studio-media://test/glabs-image.png'));
+    expect(preview.querySelector('img')).toHaveStyle({objectFit:'contain'});
+    expect(preview.querySelector('details')).not.toHaveAttribute('open');
+    const retry=screen.getByRole('button',{name:'Regenerate Image · layer-a'});
     expect(retry).toBeEnabled();
     expect(generate).not.toHaveBeenCalled();
   });
