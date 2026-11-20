@@ -50,7 +50,10 @@ export function loadImageStyleProfile(appPath:string,style:Style):StyleProfile{
     const manifestPath=path.join(skill,'assets/b4/approved-style.json');
     const authority=path.join(skill,'assets/b4/style-lock.txt');
     const manifest=strictJson(fs.readFileSync(manifestPath,'utf8')) as Row;
-    const prompt=fs.readFileSync(authority,'utf8');
+    // The published B4 manifest pins the LF-canonical text. Windows Git
+    // checkouts may convert only line endings to CRLF; normalize that exact
+    // representation before SHA verification, never bypass the pinned hash.
+    const prompt=fs.readFileSync(authority,'utf8').replace(/\r\n/g,'\n');
     if(manifest.style!=='B4'||!object(manifest.prompt)||manifest.prompt.sha256!==sha(prompt))
       throw new Error('B4_STYLE_LOCK_INTEGRITY_FAILED');
     const references=manifest.references;
