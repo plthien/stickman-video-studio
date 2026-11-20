@@ -80,12 +80,14 @@ function install(options:{blocked?:boolean;pollResult?:'UNKNOWN'|'RUNNING'|'FAIL
   Object.defineProperty(window,'studio',{configurable:true,value:studio});
   return{generate,poll,readJobs};
 }
+async function openUnknown(){
+  fireEvent.click(await screen.findByRole('button',{name:'Review UNKNOWN'}));
+  return screen.findByRole('button',{name:'Check Existing Attempt (read-only)'});
+}
 async function afterCheck(){
-  const check=await screen.findByRole('button',{name:'Check Existing Attempt (read-only)'});
-  fireEvent.click(check);
-  const checkbox=await screen.findByRole('checkbox',{
+  fireEvent.click(await openUnknown());
+  return screen.findByRole('checkbox',{
     name:'Acknowledge possible duplicate billing for this exact G-Labs target'});
-  return checkbox;
 }
 afterEach(()=>{cleanup();vi.restoreAllMocks();Object.defineProperty(window,'studio',{configurable:true,value:undefined})});
 
@@ -93,11 +95,12 @@ describe('F07 — UNKNOWN recovery in the primary Storyboard without automatic p
   it('F07-UI01 exposes persisted UNKNOWN, exact target, provider task and original diagnostic; normal generation stays blocked',async()=>{
     const {generate}=install();
     render(<AppStateProvider><Harness/></AppStateProvider>);
+    await openUnknown();
     expect(await screen.findByTestId('unknown-attempt-evidence')).toHaveTextContent(
       'Original provider task timed out; billing uncertain');
     expect(screen.getByTestId('unknown-attempt-evidence')).toHaveTextContent('ab12cd34');
-    expect(screen.getByText(/Exact Native target:/).closest('div')).toHaveTextContent('shot-1/layer-1');
-    expect(screen.getByRole('button',{name:'Regenerate Image'})).toBeDisabled();
+    expect(screen.getByTestId('unknown-card-recovery')).toHaveTextContent('shot-1/layer-1');
+    expect(screen.queryByRole('button',{name:/Regenerate Image/})).not.toBeInTheDocument();
     expect(screen.queryByRole('button',{name:'Authorize ONE New Image Attempt (paid confirmation)'})).not.toBeInTheDocument();
     expect(generate).not.toHaveBeenCalled();
   });
@@ -108,19 +111,22 @@ describe('F07 — UNKNOWN recovery in the primary Storyboard without automatic p
     expect(poll).toHaveBeenCalledTimes(1);
     expect(poll).toHaveBeenCalledWith('A',unknown.id);
     expect(generate).not.toHaveBeenCalled();
-    expect(screen.getByTestId('unknown-recovery-confirmation')).toHaveTextContent('duplicate billing');
+    expect(screen.getByTestId('unknown-card-recovery')).toHaveTextContent('duplicate billing');
   });
-  it('F12-UNKNOWN-01 rejected provider GET is CHECK_FAILED_UNVERIFIED, not CHECKED_STILL_UNKNOWN',async()=>{
+  it('F16-UNKNOWN-01 rejected provider GET keeps billing uncertainty and requires explicit consent before recovery',async()=>{
     const {poll,generate}=install({pollRejected:true});
     render(<AppStateProvider><Harness/></AppStateProvider>);
-    fireEvent.click(await screen.findByRole('button',{name:'Check Existing Attempt (read-only)'}));
+    fireEvent.click(await openUnknown());
     await waitFor(()=>expect(screen.getByTestId('unknown-check-outcome'))
       .toHaveTextContent('CHECK_FAILED_UNVERIFIED'));
-    expect(screen.getByTestId('unknown-attempt-evidence')).toHaveTextContent('UNKNOWN');
-    expect(screen.queryByTestId('unknown-recovery-confirmation')).not.toBeInTheDocument();
-    expect(screen.queryByRole('checkbox',{
+    expect(screen.getByTestId('unknown-attempt-evidence')).toHaveTextContent('ab12cd34');
+    const checkbox=screen.getByRole('checkbox',{
       name:'Acknowledge possible duplicate billing for this exact G-Labs target'
-    })).not.toBeInTheDocument();
+    });
+    expect(checkbox).not.toBeChecked();
+    expect(screen.getByRole('button',{
+      name:'Authorize ONE New Image Attempt (paid confirmation)'
+    })).toBeDisabled();
     expect(poll).toHaveBeenCalledTimes(1);
     expect(generate).not.toHaveBeenCalled();
   });
@@ -132,6 +138,7 @@ describe('F07 — UNKNOWN recovery in the primary Storyboard without automatic p
     await waitFor(()=>expect(screen.getByRole('button',{name:'Authorize ONE New Image Attempt (paid confirmation)'})).toBeEnabled());
     view.unmount();
     render(<AppStateProvider><Harness/></AppStateProvider>);
+    await openUnknown();
     expect(await screen.findByTestId('unknown-attempt-evidence')).toHaveTextContent('ab12cd34');
     expect(screen.queryByRole('checkbox',{name:/Acknowledge possible duplicate billing/})).not.toBeInTheDocument();
     expect(generate).not.toHaveBeenCalled();
@@ -181,6 +188,7 @@ describe('F07 — UNKNOWN recovery in the primary Storyboard without automatic p
     fireEvent.click(screen.getByRole('button',{name:/shot-2/}));
     expect(screen.queryByRole('button',{name:'Authorize ONE New Image Attempt (paid confirmation)'})).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button',{name:/shot-1/}));
+    await openUnknown();
     expect(await screen.findByTestId('unknown-attempt-evidence')).toBeInTheDocument();
     expect(screen.queryByRole('checkbox',{name:/Acknowledge possible duplicate billing/})).not.toBeInTheDocument();
     fireEvent.click(await afterCheck());
@@ -188,6 +196,7 @@ describe('F07 — UNKNOWN recovery in the primary Storyboard without automatic p
     await screen.findByText(/Current Project Style:/);
     expect(screen.queryByRole('button',{name:'Authorize ONE New Image Attempt (paid confirmation)'})).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button',{name:'Reopen project A'}));
+    await openUnknown();
     expect(await screen.findByTestId('unknown-attempt-evidence')).toBeInTheDocument();
     expect(screen.queryByRole('checkbox',{name:/Acknowledge possible duplicate billing/})).not.toBeInTheDocument();
     expect(generate).not.toHaveBeenCalled();
@@ -202,7 +211,7 @@ describe('F07 — UNKNOWN recovery in the primary Storyboard without automatic p
   it('F07-UI09 provider RUNNING result removes UNKNOWN recovery and never sends a paid request',async()=>{
     const {generate,poll}=install({pollResult:'RUNNING'});
     render(<AppStateProvider><Harness/></AppStateProvider>);
-    fireEvent.click(await screen.findByRole('button',{name:'Check Existing Attempt (read-only)' }));
+    fireEvent.click(await openUnknown());
     await waitFor(()=>expect(poll).toHaveBeenCalledTimes(1));
     await waitFor(()=>expect(screen.queryByTestId('unknown-attempt-evidence')).not.toBeInTheDocument());
     expect(screen.queryByRole('button',{name:'Authorize ONE New Image Attempt (paid confirmation)'})).not.toBeInTheDocument();
@@ -211,11 +220,11 @@ describe('F07 — UNKNOWN recovery in the primary Storyboard without automatic p
   it('F07-UI11 an old UNKNOWN poll reply cannot authorize a new paid attempt when persisted history is RUNNING',async()=>{
     const {generate,poll}=install({journalAdvancesDuringPoll:true});
     render(<AppStateProvider><Harness/></AppStateProvider>);
-    const check=await screen.findByRole('button',{name:'Check Existing Attempt (read-only)'});
+    const check=await openUnknown();
     fireEvent.click(check);
     await waitFor(()=>expect(poll).toHaveBeenCalledWith('A',unknown.id));
-    await waitFor(()=>expect(screen.getByTestId('storyboard-selected-image')).toHaveTextContent('Generating image…'));
-    await waitFor(()=>expect(screen.queryByTestId('unknown-recovery-confirmation')).not.toBeInTheDocument());
+    await waitFor(()=>expect(screen.getByTestId('shot-image-gallery')).toHaveTextContent('Generating image…'));
+    await waitFor(()=>expect(screen.queryByTestId('unknown-card-recovery')).not.toBeInTheDocument());
     expect(screen.queryByRole('checkbox',{
       name:'Acknowledge possible duplicate billing for this exact G-Labs target'
     })).not.toBeInTheDocument();
@@ -229,7 +238,7 @@ describe('F07 — UNKNOWN recovery in the primary Storyboard without automatic p
       ...window.studio,glabsPoll:vi.fn(()=>gate)
     }});
     render(<AppStateProvider><Harness/></AppStateProvider>);
-    fireEvent.click(await screen.findByRole('button',{name:'Check Existing Attempt (read-only)'}));
+    fireEvent.click(await openUnknown());
     fireEvent.click(screen.getByRole('button',{name:/shot-2/}));
     fireEvent.click(screen.getByRole('button',{name:/shot-1/}));
     resolve(unknown);
