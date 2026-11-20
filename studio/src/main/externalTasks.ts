@@ -606,7 +606,7 @@ export function getPendingMedia(appPath:string,root:string) {
  * Exact key/Shot/Layer/path derive from the validated Native DRAFT manifest.
  * The pending projection supplies committed fulfillment paths separately.
  */
-export function getNativeImageGallery(appPath:string,root:string){
+export function getNativeImageGallery(_appPath:string,root:string){
   const state=readState(root),draft=readNativeDraft(root,state);
   if(!draft)return{token:null,shots:[],targets:[]};
   // Gallery is a READ ONLY inventory: the caller already validates the
