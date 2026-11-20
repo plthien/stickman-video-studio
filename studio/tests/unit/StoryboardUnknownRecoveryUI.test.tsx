@@ -54,10 +54,16 @@ function Harness(){
     <StoryboardWorkspace/></>;
 }
 function install(options:{blocked?:boolean;pollResult?:'UNKNOWN'|'RUNNING'|'FAILED';
-  cancellation?:boolean}={}){
+  journalAdvancesDuringPoll?:boolean;cancellation?:boolean}={}){
   let persisted=[unknown];
   const generate=vi.fn(async()=>options.cancellation?null:{id:'22222222-2222-4222-8222-222222222222'});
   const poll=vi.fn(async()=>{
+    if(options.journalAdvancesDuringPoll){
+      // Simulate an older poll returning UNKNOWN while persisted job history
+      // has already advanced to RUNNING in a separate read-only reconciliation.
+      persisted=[{...unknown,status:'RUNNING'}];
+      return unknown;
+    }
     if(options.pollResult&&options.pollResult!=='UNKNOWN')
       persisted=[{...unknown,status:options.pollResult}];
     return persisted[0];
@@ -185,6 +191,19 @@ describe('F07 — UNKNOWN recovery in the primary Storyboard without automatic p
     await waitFor(()=>expect(poll).toHaveBeenCalledTimes(1));
     await waitFor(()=>expect(screen.queryByTestId('unknown-attempt-evidence')).not.toBeInTheDocument());
     expect(screen.queryByRole('button',{name:'Authorize ONE New Image Attempt (paid confirmation)'})).not.toBeInTheDocument();
+    expect(generate).not.toHaveBeenCalled();
+  });
+  it('F07-UI11 an old UNKNOWN poll reply cannot authorize a new paid attempt when persisted history is RUNNING',async()=>{
+    const {generate,poll,readJobs}=install({journalAdvancesDuringPoll:true});
+    render(<AppStateProvider><Harness/></AppStateProvider>);
+    const check=await screen.findByRole('button',{name:'Check Existing Attempt (read-only)'});
+    fireEvent.click(check);
+    await waitFor(()=>expect(poll).toHaveBeenCalledWith('A',unknown.id));
+    await waitFor(()=>expect(readJobs).toHaveBeenCalledTimes(2));
+    await waitFor(()=>expect(screen.queryByTestId('unknown-recovery-confirmation')).not.toBeInTheDocument());
+    expect(screen.queryByRole('checkbox',{
+      name:'Acknowledge possible duplicate billing for this exact G-Labs target'
+    })).not.toBeInTheDocument();
     expect(generate).not.toHaveBeenCalled();
   });
   it('F07-UI10 a late UNKNOWN polling result after target switch/back cannot grant recovery',async()=>{
