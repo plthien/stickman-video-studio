@@ -12,6 +12,21 @@ type ImageJob=Awaited<ReturnType<Studio['glabsJobs']>>[number];
 type Gallery=Awaited<ReturnType<NonNullable<Studio['galleryImages']>>>;
 const message=(error:unknown)=>error instanceof Error?error.message:String(error);
 const refs=(raw:string)=>raw.split(',').map(v=>v.trim()).filter(Boolean);
+type JobView=Awaited<ReturnType<NonNullable<Window['studio']>['glabsJobs']>>[number];
+const legacyStatusRank=(status:string)=>({
+  QUEUED:0,SUBMITTED:1,RUNNING:2,DOWNLOADED:3,UNKNOWN:4,
+  FAILED:5,VALIDATED:6,APPROVED:7,CANCELLED:8,STALE:9
+} as Record<string,number>)[status]??0;
+/** Persisted journal revision is authoritative over timing of IPC delivery.
+ * For pre-migration/test jobs without revisions, never regress a terminal
+ * candidate to a transient RUNNING event. */
+function newerImageJob(current:JobView,incoming:JobView):JobView{
+  if(current.id!==incoming.id||current.token!==incoming.token||
+    current.targetKey!==incoming.targetKey)return current;
+  const left=current.journalRevision??0,right=incoming.journalRevision??0;
+  if(right!==left)return right>left?incoming:current;
+  return legacyStatusRank(incoming.status)>=legacyStatusRank(current.status)?incoming:current;
+}
 
 /** Owner-friendly single-target queue; the unchanged manual workflow is available in Advanced. */
 export function StoryboardWorkspace(){
@@ -77,9 +92,7 @@ export function StoryboardWorkspace(){
     const updates=receivedJobUpdates.current;
     const merged=nextJobs.map(job=>{
       const newer=updates.get(job.id);
-      // A fresh backend terminal state always wins over prior UI events.
-      if(['APPROVED','STALE','CANCELLED'].includes(job.status))return job;
-      return newer&&newer.token===job.token?newer:job;
+      return newer?newerImageJob(job,newer):job;
     });
     for(const newer of updates.values()){
       if(newer.token===nextPending?.token&&!merged.some(job=>job.id===newer.id))
@@ -112,11 +125,14 @@ export function StoryboardWorkspace(){
         !isCurrentProjectSession(scope)||!change.job||
         change.job.projectId!==scope.projectId)return;
       const updated=change.job;
-      receivedJobUpdates.current.set(updated.id,updated);
+      const buffered=receivedJobUpdates.current.get(updated.id);
+      receivedJobUpdates.current.set(updated.id,buffered?
+        newerImageJob(buffered,updated):updated);
       setJobs(previous=>{
         const index=previous.findIndex(job=>job.id===updated.id);
         if(index<0)return[updated,...previous];
-        return previous.map(job=>job.id===updated.id?updated:job);
+        return previous.map(job=>job.id===updated.id?
+          newerImageJob(job,updated):job);
       });
     });
   },[id]);
