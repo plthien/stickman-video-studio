@@ -301,7 +301,7 @@ describe('Storyboard — source-grounded paid image generation for current Nativ
     await waitFor(()=>expect(generate).toBeEnabled());
     expect(screen.getByText(/Current Project Style:/).closest('div')).toHaveTextContent('B1');
     expect(screen.getByText(/Source image description:/).closest('div')).toHaveTextContent('layer-1');
-    expect(screen.getByText(/Approved B1 style\. Exact owner-approved image for layer-1/)).toBeInTheDocument();
+    expect(screen.getByText('Approved B1 style. Exact owner-approved image for layer-1', {selector:'pre'})).toBeInTheDocument();
     expect(glabsGenerate).not.toHaveBeenCalled();
     fireEvent.click(generate);
     await waitFor(()=>expect(glabsGenerate).toHaveBeenCalledWith('A',expect.objectContaining({
