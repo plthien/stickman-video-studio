@@ -19,7 +19,6 @@ export interface PollCoordinatorOptions{
 interface Entry{
   projectId:string;id:string;due:number;failures:number;
 }
-const terminal=new Set(['VALIDATED','APPROVED','FAILED','STALE','CANCELLED']);
 const shouldPoll=(job:GLabsJob)=>
   ['SUBMITTED','RUNNING','DOWNLOADED'].includes(job.status)||
   (job.status==='UNKNOWN'&&Boolean(job.providerTaskId));
@@ -76,7 +75,6 @@ export function createGlabsAutoPolling(options:PollCoordinatorOptions){
       try{
         const result=await options.poll(projectId,id);
         if(stopped)return result;
-        const previous=entries.get(key);
         if(shouldPoll(result)){
           entries.set(key,{projectId,id,due:Date.now()+interval,failures:0});
         }else entries.delete(key);
