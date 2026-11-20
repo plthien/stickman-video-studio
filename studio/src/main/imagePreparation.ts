@@ -184,10 +184,16 @@ export function compileImageJobSpecs(input:{
     // present. Existing complete compiled owner prompts are not duplicated.
     const missingOwnerGlobals=validOwner?
       globalSections.filter(section=>!ownerText.includes(section)):[];
+    // Style authority is a separate immutable compiler section, never an
+    // editable image description. Every owner override retains B1–B4 guidance
+    // even when Native asset_needs contains no global rows.
+    const authoritativeStyle='APPROVED MODE B STYLE '+style+' ['+
+      profile.path+'; SHA256 '+profile.sha256+']\n\n'+profile.guidance;
     const prompt=validOwner?[
-      ...(globals.length&&!ownerText.includes(profile.guidance)?
-        ['APPROVED MODE B STYLE '+style+' ['+profile.path+'; SHA256 '+profile.sha256+']',profile.guidance]:[]),
-      ownerText,...missingOwnerGlobals
+      authoritativeStyle,
+      ownerText.includes(authoritativeStyle)?
+        ownerText.replace(authoritativeStyle,'').trim():ownerText,
+      ...missingOwnerGlobals
     ].filter(Boolean).join('\n\n'):computed;
     // Owner edits can resolve a missing/conflicting description, but never a
     // structural blocker or a missing/integrity-failed style authority.
