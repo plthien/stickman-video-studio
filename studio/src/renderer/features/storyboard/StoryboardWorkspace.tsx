@@ -192,12 +192,14 @@ export function StoryboardWorkspace(){
         (right.createdAt??'').localeCompare(left.createdAt??''));
     const spec=prepared?.jobs.find(value=>value.targetKey===item.key)??null;
     const sameAuthority=(job:ImageJob)=>(
-      (!job.targetCreativeSha256||
-        ((spec?.draftIdentity.creativeFingerprint??item.creativeFingerprint)===
-          job.targetCreativeSha256))&&
-      (!job.styleProfileSha256||
-        (spec?.styleProfileRef.sha256??gallery?.styleProfileSha256)===
-          job.styleProfileSha256)&&
+      // Authoritative fields, when available, MUST match. A historical
+      // approval without frozen creative/style proof cannot be called current.
+      (!(spec?.draftIdentity.creativeFingerprint??item.creativeFingerprint)||
+        job.targetCreativeSha256===
+          (spec?.draftIdentity.creativeFingerprint??item.creativeFingerprint))&&
+      (!(spec?.styleProfileRef.sha256??gallery?.styleProfileSha256)||
+        job.styleProfileSha256===
+          (spec?.styleProfileRef.sha256??gallery?.styleProfileSha256))&&
       (!job.styleProfileId||!native?.project.style||
         job.styleProfileId===native.project.style)
     );
