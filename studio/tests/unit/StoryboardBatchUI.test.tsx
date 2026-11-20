@@ -86,17 +86,17 @@ describe('Phase-1 Storyboard viewport and owner-started safe bulk generation',()
   it('BULK-01 shows eligible request count and starts no paid request on mount or refresh',async()=>{
     const {generate}=install();
     render(<AppStateProvider><Harness/></AppStateProvider>);
-    expect(await screen.findByRole('button',{name:'Generate All Ready (2 requests)'})).toBeEnabled();
+    expect(await screen.findByRole('button',{name:'Generate All Ready (2 paid attempts)'})).toBeEnabled();
     expect(generate).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button',{name:'Refresh Images'}));
-    await screen.findByTestId('storyboard-focus');
+    await screen.findByTestId('shot-image-gallery');
     expect(generate).not.toHaveBeenCalled();
-    expect(screen.getByTestId('storyboard-empty-preview')).toHaveTextContent('Generated image will appear here.');
+    expect(screen.getByTestId('shot-image-gallery')).toHaveTextContent('Not Generated');
   });
   it('BULK-02 explicit Generate All queues only two exact unattempted targets sequentially',async()=>{
     const {generate,records}=install();
     render(<AppStateProvider><Harness/></AppStateProvider>);
-    const button=await screen.findByRole('button',{name:'Generate All Ready (2 requests)'});
+    const button=await screen.findByRole('button',{name:'Generate All Ready (2 paid attempts)'});
     fireEvent.click(button);
     await waitFor(()=>expect(generate).toHaveBeenCalledTimes(2));
     expect(generate.mock.calls.map(call=>call[1].targetKey)).toEqual(targets.map(t=>t.key));
@@ -107,18 +107,19 @@ describe('Phase-1 Storyboard viewport and owner-started safe bulk generation',()
     }
     expect(records()).toHaveLength(2);
     expect(await screen.findByTestId('image-batch-progress')).toHaveTextContent('2 / 2 requests submitted');
-    expect(screen.getByRole('button',{name:'Generate All Ready (0 requests)'})).toBeDisabled();
+    expect(screen.getByRole('button',{name:'Generate All Ready (0 paid attempts)'})).toBeDisabled();
   });
   it('BULK-03 a prior UNKNOWN attempt is excluded from bulk and never acknowledged',async()=>{
     const {generate}=install([job('uncertain-1',0,'UNKNOWN')]);
     render(<AppStateProvider><Harness/></AppStateProvider>);
-    const button=await screen.findByRole('button',{name:'Generate All Ready (1 requests)'});
+    const button=await screen.findByRole('button',{name:'Generate All Ready (1 paid attempts)'});
     fireEvent.click(button);
     await waitFor(()=>expect(generate).toHaveBeenCalledTimes(1));
     expect(generate).toHaveBeenCalledWith('A',expect.objectContaining({
       targetKey:targets[1].key,acknowledgeUnknown:false,regenerate:false
     }));
-    expect(screen.getByTestId('unknown-attempt-evidence')).toHaveTextContent('UNKNOWN');
+    fireEvent.click(screen.getByRole('button',{name:'Review UNKNOWN'}));
+    expect(screen.getByTestId('unknown-attempt-evidence')).toHaveTextContent('uncertain-1');
   });
   it('BULK-04 Stop after current request never posts a second image',async()=>{
     const {generate}=install();
@@ -129,7 +130,7 @@ describe('Phase-1 Storyboard viewport and owner-started safe bulk generation',()
       ...window.studio,glabsGenerate:delayed
     }});
     render(<AppStateProvider><Harness/></AppStateProvider>);
-    fireEvent.click(await screen.findByRole('button',{name:'Generate All Ready (2 requests)'}));
+    fireEvent.click(await screen.findByRole('button',{name:'Generate All Ready (2 paid attempts)'}));
     await waitFor(()=>expect(delayed).toHaveBeenCalledTimes(1));
     expect(screen.getByTestId('image-batch-progress')).toHaveTextContent('sh-a/layer-a');
     fireEvent.click(screen.getByRole('button',{name:'Stop after current request'}));
@@ -147,7 +148,7 @@ describe('Phase-1 Storyboard viewport and owner-started safe bulk generation',()
       ...window.studio,glabsGenerate:delayed
     }});
     render(<AppStateProvider><Harness/></AppStateProvider>);
-    fireEvent.click(await screen.findByRole('button',{name:'Generate All Ready (2 requests)'}));
+    fireEvent.click(await screen.findByRole('button',{name:'Generate All Ready (2 paid attempts)'}));
     await waitFor(()=>expect(delayed).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole('button',{name:'Switch B'}));
     finish(job('completed-a',0));
@@ -162,7 +163,7 @@ describe('Phase-1 Storyboard viewport and owner-started safe bulk generation',()
       ...window.studio,glabsGenerate:generate
     }});
     render(<AppStateProvider><Harness/></AppStateProvider>);
-    fireEvent.click(await screen.findByRole('button',{name:'Generate All Ready (2 requests)'}));
+    fireEvent.click(await screen.findByRole('button',{name:'Generate All Ready (2 paid attempts)'}));
     await waitFor(()=>expect(screen.getByTestId('image-batch-progress')).toHaveTextContent('Batch stopped'));
     expect(screen.getByTestId('image-batch-progress')).toHaveTextContent('UNKNOWN');
     expect(generate).toHaveBeenCalledTimes(1);
@@ -182,7 +183,7 @@ describe('Phase-1 Storyboard viewport and owner-started safe bulk generation',()
       ...before,pendingMedia:read
     }});
     render(<AppStateProvider><Harness/></AppStateProvider>);
-    fireEvent.click(await screen.findByRole('button',{name:'Generate All Ready (2 requests)'}));
+    fireEvent.click(await screen.findByRole('button',{name:'Generate All Ready (2 paid attempts)'}));
     await waitFor(()=>expect(screen.getByTestId('image-batch-progress')).toHaveTextContent('Batch stopped'));
     expect(screen.getByTestId('image-batch-progress')).toHaveTextContent('Native DRAFT changed');
     expect(read).toHaveBeenCalled();
@@ -199,10 +200,10 @@ describe('Phase-1 Storyboard viewport and owner-started safe bulk generation',()
       ...window.studio,glabsGenerate:delayed
     }});
     render(<AppStateProvider><Harness/></AppStateProvider>);
-    fireEvent.click(await screen.findByRole('button',{name:'Generate Image'}));
+    fireEvent.click(await screen.findByRole('button',{name:'Generate Image · layer-a'}));
     expect(await screen.findByTestId('image-submitting')).toHaveTextContent('Submitting image sh-a/layer-a');
     fireEvent.click(screen.getByRole('button',{name:/sh-b 1 images/}));
-    expect(screen.getByTestId('storyboard-empty-preview')).toHaveTextContent('sh-b / layer-b');
+    expect(screen.getByTestId('shot-image-gallery')).toHaveTextContent('layer-b');
     expect(delayed).toHaveBeenCalledTimes(1);
     finish(job('single-finished',0));
     await waitFor(()=>expect(screen.queryByTestId('image-submitting')).not.toBeInTheDocument());
@@ -220,15 +221,15 @@ describe('Phase-1 Storyboard viewport and owner-started safe bulk generation',()
       }
     }});
     const view=render(<AppStateProvider><Harness/></AppStateProvider>);
-    await screen.findByText('Checking provider automatically');
+    await screen.findByText('Auto-checking provider…');
     const completed={...running,status:'VALIDATED',staged:{
       path:'assets/images/completed.png',sha256:'f'.repeat(64),width:768,height:1376
     }};
     await act(async()=>{notify({projectId:'A',job:completed});});
-    const image=await screen.findByRole('img',{name:'G-Labs candidate for sh-a/layer-a'});
+    const image=await screen.findByRole('img',{name:'Shot gallery sh-a/layer-a'});
     await waitFor(()=>expect(image).toHaveAttribute(
       'src','studio-media://A/assets/images/completed.png'));
-    expect(screen.getByTestId('storyboard-selected-image')).toHaveTextContent('Ready to review');
+    expect(screen.getByTestId('shot-image-gallery')).toHaveTextContent('Ready to approve');
     expect(mediaUrl).toHaveBeenCalledWith('A','assets/images/completed.png');
     expect(generate).not.toHaveBeenCalled();
     view.unmount();
@@ -251,10 +252,10 @@ describe('Phase-1 Storyboard viewport and owner-started safe bulk generation',()
     }};
     await act(async()=>{notify({projectId:'A',job:complete});});
     finishPrepare(prepared('A'));
-    const image=await screen.findByRole('img',{name:'G-Labs candidate for sh-a/layer-a'});
+    const image=await screen.findByRole('img',{name:'Shot gallery sh-a/layer-a'});
     await waitFor(()=>expect(image).toHaveAttribute(
       'src','studio-media://A/assets/images/early-completed.png'));
-    expect(screen.getByTestId('storyboard-selected-image')).toHaveTextContent('Ready to review');
+    expect(screen.getByTestId('shot-image-gallery')).toHaveTextContent('Ready to approve');
   });
   it('AUTO-UI-02 a late image event from project A cannot appear in project B',async()=>{
     install([job('running-a',0)]);
@@ -265,16 +266,16 @@ describe('Phase-1 Storyboard viewport and owner-started safe bulk generation',()
       }
     }});
     render(<AppStateProvider><Harness/></AppStateProvider>);
-    await screen.findByText('Checking provider automatically');
+    await screen.findByText('Auto-checking provider…');
     fireEvent.click(screen.getByRole('button',{name:'Switch B'}));
-    await waitFor(()=>expect(screen.getByTestId('storyboard-empty-preview')).toBeInTheDocument());
+    await waitFor(()=>expect(screen.getByTestId('shot-image-gallery')).toBeInTheDocument());
     await act(async()=>{notify({projectId:'A',job:{
       ...job('running-a',0,'VALIDATED'),staged:{
         path:'assets/images/old-A.png',sha256:'a'.repeat(64),width:768,height:1376
       }
     }});});
-    expect(screen.queryByRole('img',{name:'G-Labs candidate for sh-a/layer-a'})).not.toBeInTheDocument();
-    expect(screen.getByTestId('storyboard-empty-preview')).toBeInTheDocument();
+    expect(screen.queryByRole('img',{name:'Shot gallery sh-a/layer-a'})).not.toBeInTheDocument();
+    expect(screen.getByTestId('shot-image-gallery')).toBeInTheDocument();
   });
   it('PERF-01 on-demand preview URL resolves only selected candidate, not every staged job',async()=>{
     const a={...job('candidate-a',0,'VALIDATED'),staged:{
@@ -285,11 +286,11 @@ describe('Phase-1 Storyboard viewport and owner-started safe bulk generation',()
     }};
     const {mediaUrl}=install([a,b]);
     render(<AppStateProvider><Harness/></AppStateProvider>);
-    await screen.findByRole('img',{name:'G-Labs candidate for sh-a/layer-a'});
+    await screen.findByRole('img',{name:'Shot gallery sh-a/layer-a'});
     await waitFor(()=>expect(mediaUrl).toHaveBeenCalledTimes(1));
     expect(mediaUrl).toHaveBeenLastCalledWith('A','assets/images/a-staged.png');
     fireEvent.click(screen.getByRole('button',{name:/sh-b 1 images/}));
-    await screen.findByRole('img',{name:'G-Labs candidate for sh-b/layer-b'});
+    await screen.findByRole('img',{name:'Shot gallery sh-b/layer-b'});
     await waitFor(()=>expect(mediaUrl).toHaveBeenCalledTimes(2));
     expect(mediaUrl).toHaveBeenLastCalledWith('A','assets/images/b-staged.png');
   });
