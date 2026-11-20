@@ -605,6 +605,13 @@ export function StoryboardWorkspace(){
       {submission&&!batchProgress&&<div className="storyboard-batch-progress" role="status" data-testid="image-submitting">
         Submitting image {submission.label} to G-Labs… Shot and Layer navigation stays available.
       </div>}
+      {approvalResults.length>0&&<div className="info" role="status" data-testid="bulk-approval-results">
+        <strong>Approval results: {approvalResults.filter(row=>row.status==='approved').length} approved ·
+          {' '+approvalResults.filter(row=>row.status==='failed').length} failed</strong>
+        {approvalResults.map(row=><div key={row.jobId}>
+          {row.shotId}/{row.layerId} · {row.status.toUpperCase()} · {row.detail}
+        </div>)}
+      </div>}
       {shotIds.length?<div className="storyboard-shot-strip" aria-label="Native shots">{shotIds.map(value=><button key={value}
         className={shotId===value?'selected':''}
         onClick={()=>{recoveryEpoch.current+=1;setCheckedUnknown('');setAcknowledgedUnknown('');setSelectedShot(value);setSelectedKey('');}}>
@@ -618,7 +625,79 @@ export function StoryboardWorkspace(){
       </details>
     </Card>
     <Card>
-      <CardHeader title={shotId?shotId+' · Images':'Images'}/>
+      <CardHeader title={shotId?shotId+' · Shot Image Gallery':'Shot Image Gallery'}/>
+      <div className="storyboard-compact-toolbar">
+        <Button variant="primary" disabled={busy||Boolean(submission)||
+          !eligibleBulk.some(item=>item.shotId===shotId)}
+          onClick={()=>void generateAll(shotId)}>
+          Generate All in Shot ({eligibleBulk.filter(item=>item.shotId===shotId).length})
+        </Button>
+        <Button disabled={busy||!inspectedReadyCards.some(card=>
+          card.target.shotId===shotId&&selectedApproved.has(card.job.id))}
+          onClick={()=>void approveCandidates(inspectedReadyCards.filter(card=>
+            card.target.shotId===shotId&&selectedApproved.has(card.job.id)).map(card=>card.job.id))}>
+          Approve Selected ({inspectedReadyCards.filter(card=>
+            card.target.shotId===shotId&&selectedApproved.has(card.job.id)).length})
+        </Button>
+        <Button disabled={busy||!inspectedReadyCards.some(card=>card.target.shotId===shotId)}
+          onClick={()=>void approveCandidates(inspectedReadyCards.filter(card=>
+            card.target.shotId===shotId).map(card=>card.job.id))}>
+          Approve All Ready in Shot ({inspectedReadyCards.filter(card=>
+            card.target.shotId===shotId).length})
+        </Button>
+        <Button disabled={busy||!inspectedReadyCards.length}
+          onClick={()=>void approveCandidates(inspectedReadyCards.map(card=>card.job.id))}>
+          Approve All Ready ({inspectedReadyCards.length})
+        </Button>
+      </div>
+      <div className="info">Only inspected, successfully loaded VALIDATED images can be approved.
+        Other Shots must be visually reviewed before project-wide approval.
+        G-Labs provenance is recorded automatically; external licensing is not independently verified.
+        Each Generate request may incur a separate charge.</div>
+      <ShotImageGallery shotId={shotId} cards={cards} urls={urls}
+        previewReady={previewReady} previewErrors={previewErrors}
+        previewIdentity={previewIdentity}
+        busy={busy||Boolean(submission)||Boolean(batchSession.current)}
+        selectedIds={selectedApproved}
+        onLoaded={(job,valid)=>{
+          if(valid){
+            setPreviewReady(previous=>({...previous,[job.id]:previewIdentity(job)}));
+            setPreviewErrors(previous=>{
+              const next={...previous};delete next[job.id];return next;
+            });
+          }else{
+            setPreviewReady(previous=>{
+              const next={...previous};delete next[job.id];return next;
+            });
+            setPreviewErrors(previous=>({
+              ...previous,[job.id]:'Generated image preview failed to load or decode.'
+            }));
+          }
+        }}
+        onSelect={(jobId,selected)=>setSelectedApproved(previous=>{
+          const next=new Set(previous);
+          if(selected)next.add(jobId);else next.delete(jobId);
+          return next;
+        })}
+        onGenerate={key=>void generateForGallery(key)}
+        onApprove={jobId=>void approveCandidates([jobId])}
+        onCheck={jobId=>void poll(jobId)}
+        onRetryPreview={jobId=>{
+          setPreviewReady(previous=>{
+            const next={...previous};delete next[jobId];return next;
+          });
+          setPreviewErrors(previous=>{
+            const next={...previous};delete next[jobId];return next;
+          });
+          setPreviewAttempts(previous=>({...previous,[jobId]:(previous[jobId]??0)+1}));
+        }}
+        onInspectUnknown={key=>{
+          setSelectedKey(key);setCheckedUnknown('');setAcknowledgedUnknown('');
+        }}
+      />
+    </Card>
+    <Card>
+      <CardHeader title={shotId?shotId+' · Layer Inspector':'Layer Inspector'}/>
       <div className="storyboard-focus" data-testid="storyboard-focus">
         <div className="storyboard-focus-controls">
       {shotTargets.length?<div className="storyboard-layer-strip" aria-label="Native image asset list">{shotTargets.map(item=>{
