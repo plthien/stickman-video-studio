@@ -1,7 +1,7 @@
 /** Phase-1 Native image prompt projection. No paid requests and no Native mutation. */
 import fs from 'node:fs';
 import path from 'node:path';
-import {getPendingMedia,nativeImageTargetIdentity,readNativeDraft} from './externalTasks.js';
+import {getPendingMedia,nativeImageTargetIdentity,nativeImageTargetIdentityFromSnapshot,readNativeDraft} from './externalTasks.js';
 import {imageRequirementsForTarget} from './imageRequirements.js';
 import {nativeSkillRoot,readState,resolveProjectFile,sha,atomicJson,strictJson} from './services.js';
 
@@ -227,7 +227,7 @@ export function prepareNativeImages(appPath:string,root:string,persist=false){
   const image=pending.missing.filter(item=>item.kind==='image');
   const fingerprints:Record<string,string>={};
   for(const target of image){
-    try{fingerprints[target.key]=nativeImageTargetIdentity(root,target.key).fingerprint;}
+    try{fingerprints[target.key]=nativeImageTargetIdentityFromSnapshot(state,draft,target.key).fingerprint;}
     catch{fingerprints[target.key]='';}
   }
   const profile=loadImageStyleProfile(appPath,style);
@@ -242,6 +242,30 @@ export function prepareNativeImages(appPath:string,root:string,persist=false){
     preparedAt:new Date().toISOString(),...result
   });
   return result;
+}
+/**
+ * Resolve only ONE frozen target for paid-request preflight.
+ * Full Storyboard preparation remains available for the UI, but a single
+ * Generate must not reparse/fingerprint all 100–200 image occurrences.
+ */
+export function prepareNativeImageTarget(appPath:string,root:string,targetKey:string):ImageJobSpec|null{
+  const state=readState(root),draft=readNativeDraft(root,state);
+  if(!draft)return null;
+  const pending=getPendingMedia(appPath,root);
+  if(!pending||pending.token!==draft.token)return null;
+  const target=pending.missing.find(item=>item.key===targetKey&&item.kind==='image');
+  if(!target)return null;
+  let fingerprint='';
+  try{fingerprint=nativeImageTargetIdentityFromSnapshot(state,draft,targetKey).fingerprint;}
+  catch{return null;}
+  const style=state.project.style as Style,profile=loadImageStyleProfile(appPath,style);
+  const overrides=readOverrides(root,state.project.id);
+  const selectedPending={...pending,missing:[target]};
+  return compileImageJobSpecs({
+    projectId:state.project.id,style,authorTaskId:draft.authorTaskId,
+    draftRevision:draft.revision,token:draft.token,pending:selectedPending,profile,
+    fingerprints:{[targetKey]:fingerprint},overrides:overrides.items
+  })[0]??null;
 }
 export function saveNativeImagePrompt(appPath:string,root:string,input:{
   targetKey:string;fingerprint:string;styleSha256?:string;prompt:string;references:string[]
