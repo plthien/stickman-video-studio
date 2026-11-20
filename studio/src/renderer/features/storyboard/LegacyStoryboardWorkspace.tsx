@@ -87,14 +87,21 @@ export function LegacyStoryboardWorkspace(){
     if(!imagePrompt.trim()){setGlabsError('Confirm the exact native/creative image prompt before submitting.');return;}
     const sameTarget=glabsJobs.filter(item=>item.targetKey===imageTarget.key&&item.token===pending?.token);
     const unknown=sameTarget.some(item=>item.status==='UNKNOWN');
-    // Electron main owns the mandatory paid-request confirmation, including UNKNOWN billing warnings.
-    // No renderer-only boolean can bypass that native dialog.
+    if(unknown){
+      // Never automatically acknowledge a potentially charged prior POST from
+      // the legacy manual screen. Recovery belongs to the explicit, scoped
+      // Check Existing Attempt flow in the primary Storyboard UI.
+      setGlabsError('GLABS_UNKNOWN_MAY_HAVE_CHARGED: use Storyboard image recovery to check the existing attempt and explicitly acknowledge duplicate-billing risk.');
+      return;
+    }
+    // Generate is itself explicit authorization; Electron shows an additional
+    // warning only for deliberate UNKNOWN recovery via the primary UI.
     setGlabsBusy(true);setGlabsError('');
     try{
       await window.studio.glabsGenerate(scope.projectId,{targetKey:imageTarget.key,prompt:imagePrompt.trim(),
         model:glabsConfig.model,aspectRatio:glabsConfig.aspectRatio,
         references:referencePaths.split(',').map(value=>value.trim()).filter(Boolean),authorized:true,
-        regenerate:sameTarget.length>0,acknowledgeUnknown:unknown});
+        regenerate:sameTarget.length>0,acknowledgeUnknown:false});
       if(isCurrentProjectSession(scope))await refreshImages(scope);
     }catch(e){if(isCurrentProjectSession(scope))setGlabsError(String(e));}
     finally{if(isCurrentProjectSession(scope))setGlabsBusy(false);}
