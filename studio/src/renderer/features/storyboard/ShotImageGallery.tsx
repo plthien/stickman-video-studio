@@ -41,14 +41,15 @@ const status=(card:GalleryCard)=>{
 
 function HistoryCandidate({job,projectId}:{job:ImageJob;projectId:string}){
   const [expanded,setExpanded]=useState(false),[url,setUrl]=useState('');
+  const stagedPath=job.staged?.path;
   useEffect(()=>{
-    if(!expanded||!job.staged||!window.studio)return;
+    if(!expanded||!stagedPath||!window.studio)return;
     let current=true;
-    void window.studio.mediaUrl(projectId,job.staged.path).then(value=>{
+    void window.studio.mediaUrl(projectId,stagedPath).then(value=>{
       if(current)setUrl(value);
     }).catch(()=>{if(current)setUrl('');});
     return()=>{current=false};
-  },[expanded,projectId,job.id,job.staged?.path]);
+  },[expanded,projectId,stagedPath]);
   return <details onToggle={event=>setExpanded(event.currentTarget.open)}>
     <summary>{job.status} · {job.id}
       {job.staged?' · '+job.staged.width+' × '+job.staged.height:''}
