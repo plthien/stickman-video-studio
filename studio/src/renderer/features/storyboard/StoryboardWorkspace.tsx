@@ -352,16 +352,17 @@ export function StoryboardWorkspace(){
       if(isCurrentProjectSession(scope))setSubmission(null);
     }
   };
-  const generateAll=async()=>{
+  const generateAll=async(shotFilter?:string)=>{
     const scope=captureProjectSession();
     if(!scope||!window.studio||!pending||!config||!eligibleBulk.length||
       busy||paidInFlight.current||batchSession.current)return;
     // The button displays the exact number of individually billed requests.
     // It is the owner's explicit one-time authorization for this frozen queue.
+    const queue=eligibleBulk.filter(item=>!shotFilter||item.shotId===shotFilter);
+    if(!queue.length)return;
     const batch={cancelled:false,projectId:scope.projectId,token:pending.token};
     batchSession.current=batch;
     paidInFlight.current=true;
-    const queue=[...eligibleBulk];
     const selectedConfig={...config};
     let sent=0;
     let stopReason='';
@@ -429,6 +430,90 @@ export function StoryboardWorkspace(){
       }
       paidInFlight.current=false;
       if(batchSession.current===batch)batchSession.current=null;
+    }
+  };
+  const generateForGallery=async(targetKey:string)=>{
+    const scope=captureProjectSession();
+    if(!scope||!window.studio||!prepared||!pending||!config||
+      paidInFlight.current||batchSession.current||busy)return;
+    const entry=prepared.jobs.find(item=>item.targetKey===targetKey);
+    const nativeTarget=imageTargets.find(item=>item.key===targetKey);
+    if(!entry||entry.state!=='READY'||!entry.prompt.trim()||!nativeTarget||
+      entry.path!==nativeTarget.path||entry.shotId!==nativeTarget.shotId||
+      entry.layerId!==nativeTarget.layerId){
+      setError('Exact frozen Native image target is not READY.');return;
+    }
+    const attempts=jobs.filter(job=>job.token===pending.token&&job.targetKey===targetKey);
+    if(attempts.some(job=>['QUEUED','SUBMITTED','RUNNING','DOWNLOADED','UNKNOWN','APPROVED'].includes(job.status))){
+      setError('Existing active, UNKNOWN or approved image requires a separate explicit review. No duplicate POST.');return;
+    }
+    const key=[id??'',pending.token,entry.draftIdentity.creativeFingerprint,entry.targetKey].join('|');
+    if(draftPrompts[key]!==undefined||draftReferences[key]!==undefined){
+      setError('Save the edited prompt/references before generating this image.');return;
+    }
+    paidInFlight.current=true;
+    setBatchProgress(null);setSubmission({key:targetKey,label:entry.shotId+'/'+entry.layerId});setError('');
+    try{
+      const result=await window.studio.glabsGenerate(scope.projectId,{
+        targetKey:entry.targetKey,prompt:entry.prompt,model:config.model,
+        aspectRatio:config.aspectRatio,references:[...entry.references],
+        authorized:true,regenerate:attempts.length>0,acknowledgeUnknown:false,
+        preparedFingerprint:entry.draftIdentity.creativeFingerprint
+      });
+      if(isCurrentProjectSession(scope)&&result&&typeof result==='object'&&
+        'id' in result&&typeof result.id==='string'&&'targetKey' in result&&
+        result.targetKey===targetKey&&'token' in result&&result.token===pending.token){
+        const submitted=result as ImageJob;
+        setJobs(previous=>[submitted,...previous.filter(job=>job.id!==submitted.id)]);
+      }else if(isCurrentProjectSession(scope)&&result!==null)await refresh(scope);
+    }catch(e){if(isCurrentProjectSession(scope))setError(message(e));}
+    finally{
+      paidInFlight.current=false;
+      if(isCurrentProjectSession(scope))setSubmission(null);
+    }
+  };
+  const approveCandidates=async(requestedIds:string[])=>{
+    const scope=captureProjectSession();
+    if(!scope||!window.studio||!pending||approving.current||busy||!requestedIds.length)return;
+    const immutableToken=pending.token;
+    const queue=inspectedReadyCards.filter(card=>requestedIds.includes(card.job.id));
+    if(queue.length!==new Set(requestedIds).size){
+      setError('GLABS_PREVIEW_NOT_VERIFIED: every requested candidate must be VALIDATED and visibly loaded.');return;
+    }
+    approving.current=true;
+    const batch={cancelled:false};approvalBatch.current=batch;
+    setBusy(true);setError('');setApprovalResults([]);
+    const results:Array<{jobId:string;shotId:string;layerId:string;status:'approved'|'failed';detail:string}>=[];
+    try{
+      for(const card of queue){
+        if(batch.cancelled||!isCurrentProjectSession(scope))break;
+        // Read-only refresh of current journal preconditions; backend verifies
+        // the immutable candidate SHA, references, style and Native lineage.
+        try{
+          await window.studio.glabsApprove(scope.projectId,card.job.id);
+          results.push({jobId:card.job.id,shotId:card.target.shotId,
+            layerId:card.target.layerId,status:'approved',detail:'Approved & bound'});
+        }catch(e){
+          results.push({jobId:card.job.id,shotId:card.target.shotId,
+            layerId:card.target.layerId,status:'failed',detail:message(e)});
+          // Keep successful earlier approvals. Other independently validated
+          // targets can still continue; no automatic paid retry occurs.
+        }
+        if(isCurrentProjectSession(scope))setApprovalResults([...results]);
+      }
+      if(isCurrentProjectSession(scope)){
+        await refresh(scope);
+        const latest=await window.studio.projectState(scope.projectId);
+        if(setNativeIfSessionCurrent(scope,latest))
+          showNotice(results.filter(row=>row.status==='approved').length+
+            ' image(s) approved and bound. Review per-image results.');
+        setSelectedApproved(new Set());
+      }
+    }catch(e){if(isCurrentProjectSession(scope))setError(message(e));}
+    finally{
+      approving.current=false;
+      if(approvalBatch.current===batch)approvalBatch.current=null;
+      if(isCurrentProjectSession(scope))setBusy(false);
     }
   };
   const poll=async(jobId:string)=>{
