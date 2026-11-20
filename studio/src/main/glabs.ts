@@ -159,7 +159,9 @@ function verifiedB4Reference(appPath:string,root:string,identifier:string){
   const raw=fs.readFileSync(path.join(dir,'approved-style.json'),'utf8');
   const manifest=strictJson(raw) as Record<string,unknown>;
   const pinnedPrompt=manifest.prompt as Record<string,unknown>|undefined;
-  if(manifest.style!=='B4'||pinnedPrompt?.sha256!==sha(fs.readFileSync(path.join(dir,'style-lock.txt'))))
+  // Match the published LF-pinned source even when Windows converts text EOL.
+  const canonicalLock=fs.readFileSync(path.join(dir,'style-lock.txt'),'utf8').replace(/\r\n/g,'\n');
+  if(manifest.style!=='B4'||pinnedPrompt?.sha256!==sha(canonicalLock))
     throw new Error('GLABS_B4_STYLE_LOCK_INVALID');
   if(!Array.isArray(manifest.references))throw new Error('GLABS_B4_REFERENCE_MANIFEST_INVALID');
   const record=manifest.references.find(value=>value&&typeof value==='object'&&(value as Record<string,unknown>).id===parsed[1]) as Record<string,unknown>|undefined;
@@ -294,7 +296,7 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
     !Array.isArray(shots)||shots.some(item=>!pureObject(item)||typeof item.end!=='number'||item.end>=300))
     throw new Error('GLABS_R3_SCOPE_INVALID: only verified B1–B4 portrait Native candidates below 300 seconds.');
   if(state.project.style==='B4'){
-    const locked=fs.readFileSync(path.join(nativeSkillRoot(appPath).root,'assets','b4','style-lock.txt'),'utf8').trim();
+    const locked=loadImageStyleProfile(appPath,'B4').guidance;
     if(!input.prompt.includes(locked))throw new Error('GLABS_B4_STYLE_LOCK_REQUIRED');
     if(!input.references.some(ref=>typeof ref==='string'&&ref.startsWith('@modeb/b4/')))
       throw new Error('GLABS_B4_APPROVED_REFERENCE_REQUIRED');
