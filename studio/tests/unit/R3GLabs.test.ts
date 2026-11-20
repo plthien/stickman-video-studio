@@ -5,7 +5,7 @@ import path from 'node:path';
 import {deflateSync} from 'node:zlib';
 import {afterEach,describe,expect,it,vi} from 'vitest';
 import {approveGlabsImage,clearGlabsKey,glabsCredentialStatus,glabsProbe,glabsSettings,listGlabsJobs,pollGlabsImage,saveGlabsKey,saveGlabsSettings,submitGlabsImage,invalidateGlabsJobsAfterNativeCorrection,reconcileGlabsJobs} from '../../src/main/glabs';
-import {getPendingMedia,getNativeImageGallery,importMediaFile,readNativeDraft,publishNativeDraftCorrection} from '../../src/main/externalTasks';
+import {getPendingMedia,getNativeImageGallery,importMediaFile,fulfillMedia,readNativeDraft,publishNativeDraftCorrection} from '../../src/main/externalTasks';
 import {prepareNativeImages} from '../../src/main/imagePreparation';
 import {readState,sha,writeState} from '../../src/main/services';
 import {appPath,cleanup,fixture,importedSource,nativePayload,stageNative} from './SixIssueFixtures';
@@ -664,5 +664,39 @@ describe('NF02 — effective per-target Native image identity across corrections
     expect((await pollGlabsImage(appPath,root,dir,cipher,job.id,decode)).status).toBe('STALE');
     expect(()=>approveGlabsImage(appPath,root,job.id,'Owner licensed',decode)).toThrow(/NOT_VALIDATED/);
     expect(readState(root).media!.filter(row=>row.shotId==='shot-1')).toHaveLength(0);
+  });
+});
+
+describe('F11 crash-safe generated-image approval journal recovery',()=>{
+  it('F11-IDEMP-01 recovers the exact already-bound G-Labs candidate without another import, mapping or provider POST',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport();
+    const submitted=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    const complete=await pollGlabsImage(appPath,root,dir,cipher,submitted.id,decode);
+    expect(complete.status).toBe('VALIDATED');
+    const authorization='OWNER_APPROVED_GLABS_PROJECT_USE | job='+complete.id+
+      ' | source=G-Labs-generated | provider_license_not_verified';
+    // Reproduce process termination between native fulfillment commit and the
+    // APPROVED job JSON write. Both native files are already committed.
+    const imported=importMediaFile(root,path.join(root,complete.staged!.path),'image',authorization);
+    const alreadyBound=fulfillMedia(appPath,root,complete.token,complete.targetKey,
+      imported.path,authorization);
+    expect(alreadyBound.fulfillments[complete.targetKey]).toMatchObject({
+      sha256:complete.staged!.sha256,rights:authorization
+    });
+    const before=readState(root),listBefore=fs.readdirSync(path.join(root,'assets','images'));
+    const recovered=approveGlabsImage(appPath,root,complete.id,undefined,decode);
+    expect(recovered.job.status).toBe('APPROVED');
+    expect(recovered.job.approved?.provenance).toMatchObject({
+      projectId:complete.projectId,jobId:complete.id,
+      promptSha256:complete.promptSha256,imageSha256:complete.staged!.sha256,
+      ownerAuthorizedProjectUse:true,providerLicenseVerified:false
+    });
+    expect(readState(root).media).toEqual(before.media);
+    expect(readState(root).imports).toEqual(before.imports);
+    expect(fs.readdirSync(path.join(root,'assets','images'))).toEqual(listBefore);
+    expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
+    const again=approveGlabsImage(appPath,root,complete.id,undefined,decode);
+    expect(again.job.status).toBe('APPROVED');
+    expect(readState(root).media).toEqual(before.media);
   });
 });
