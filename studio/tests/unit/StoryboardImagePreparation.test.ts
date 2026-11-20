@@ -151,6 +151,26 @@ describe('StoryBoard Phase-1 source-grounded compiler and exact Native media que
     expect(()=>saveNativeImagePrompt(appPath,root,{targetKey:first.targetKey,fingerprint:'0'.repeat(64),
       prompt:'not allowed on stale target',references:[]})).toThrow(/STALE_TARGET/);
   });
+  it('F12-STYLE-01 editing B1–B4 descriptions never removes the selected style authority from the provider payload',()=>{
+    for(const style of ['B1','B2','B3','B4'] as const){
+      const {root}=staged(style),before=prepareNativeImages(appPath,root),job=before.jobs[0];
+      const owner='Owner verified isolated object, exact narrow hand-drawn silhouette.';
+      const selected=style==='B4'?['@modeb/b4/'+job.styleAnchors[0].id]:[];
+      const saved=saveNativeImagePrompt(appPath,root,{
+        targetKey:job.targetKey,fingerprint:job.draftIdentity.creativeFingerprint,
+        styleSha256:job.styleProfileRef.sha256,prompt:owner,references:selected
+      }).jobs[0];
+      const profile=loadImageStyleProfile(appPath,style);
+      expect(saved.ownerEdited).toBe(true);
+      expect(saved.effectivePrompt).toContain(profile.guidance);
+      expect(saved.effectivePrompt).toContain('APPROVED MODE B STYLE '+style);
+      expect(saved.effectivePrompt).toContain(owner);
+      expect(saved.effectivePromptSha256).toBe(sha(saved.effectivePrompt));
+      expect(saved.styleProfileRef.sha256).toBe(profile.sha256);
+      // Editable description cannot override or replace compiled style.
+      expect(saved.prompt).toBe(owner);
+    }
+  });
   it('P1-09 switching projects never shares overrides, token, rights or prompt',()=>{
     const a=staged(),b=staged();
     const aa=prepareNativeImages(appPath,a.root),bb=prepareNativeImages(appPath,b.root);
