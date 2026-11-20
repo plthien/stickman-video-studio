@@ -32,8 +32,9 @@ function pngAt(width:number,height:number){
     chunk('IDAT',deflateSync(Buffer.alloc(height*(1+width*4)))),chunk('IEND',Buffer.alloc(0))]);
 }
 const portraitPng=pngAt(90,160);
-function transport(opts:{postError?:boolean;maliciousFile?:boolean;image?:Buffer;healthStatus?:number;authStatus?:number;captured?:Array<{method:string;route:string;body:unknown}>}={}){
+function transport(opts:{postError?:boolean;maliciousFile?:boolean;image?:Buffer;healthStatus?:number;authStatus?:number;resultFailures?:number;downloadFailures?:number;captured?:Array<{method:string;route:string;body:unknown}>}={}){
   const calls=opts.captured??[];
+  let resultFailures=opts.resultFailures??0,downloadFailures=opts.downloadFailures??0;
   const stub=vi.fn(async(input:RequestInfo|URL,options?:RequestInit)=>{
     const url=new URL(String(input)),route=url.pathname,method=options?.method??'GET',body=options?.body?JSON.parse(String(options.body)) as unknown:null;
     calls.push({method,route,body});
@@ -44,8 +45,14 @@ function transport(opts:{postError?:boolean;maliciousFile?:boolean;image?:Buffer
       return response({task_id:'ab12cd34',status:'pending'},202);
     }
     if(method==='GET'&&route==='/api/status/ab12cd34')return response({task_id:'ab12cd34',status:'completed'});
-    if(method==='GET'&&route==='/api/result/ab12cd34')return response({task_id:'ab12cd34',status:'completed',results:[opts.maliciousFile?'http://evil.example/api/files/out.png':'http://127.0.0.1:8765/api/files/out.png']});
-    if(method==='GET'&&route==='/api/files/out.png')return new Response(new Uint8Array(opts.image??portraitPng),{status:200,headers:{'Content-Type':'image/png'}});
+    if(method==='GET'&&route==='/api/result/ab12cd34'){
+      if(resultFailures-->0)throw new Error('Injected result GET connection drop');
+      return response({task_id:'ab12cd34',status:'completed',results:[opts.maliciousFile?'http://evil.example/api/files/out.png':'http://127.0.0.1:8765/api/files/out.png']});
+    }
+    if(method==='GET'&&route==='/api/files/out.png'){
+      if(downloadFailures-->0)throw new Error('Injected image download failure');
+      return new Response(new Uint8Array(opts.image??portraitPng),{status:200,headers:{'Content-Type':'image/png'}});
+    }
     throw new Error('Unexpected mock route '+method+' '+route);
   });
   vi.stubGlobal('fetch',stub);
@@ -667,6 +674,40 @@ describe('NF02 — effective per-target Native image identity across corrections
   });
 });
 
+describe('F17 durable provider completion and read-only ingestion recovery',()=>{
+  it('F17-01 provider completed + failed result GET records sync error then retries the SAME task without new POST',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport({resultFailures:1});
+    const submitted=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    await expect(pollGlabsImage(appPath,root,dir,cipher,submitted.id,decode)).rejects.toThrow();
+    const failed=listGlabsJobs(root).find(item=>item.id===submitted.id)!;
+    expect(failed.status).not.toBe('FAILED');
+    expect(failed.providerTaskId).toBe('ab12cd34');
+    expect(failed.providerCompletedAt).toEqual(expect.any(String));
+    expect(failed.syncPhase).toBe('result');
+    expect(failed.lastSyncError).toMatchObject({stage:'result'});
+    const ready=await pollGlabsImage(appPath,root,dir,cipher,submitted.id,decode);
+    expect(ready).toMatchObject({status:'VALIDATED',syncPhase:'validated'});
+    expect(ready.lastSyncError).toBeUndefined();
+    expect(ready.journalRevision).toBeGreaterThan(failed.journalRevision!);
+    expect(calls.filter(c=>c.method==='POST')).toHaveLength(1);
+    expect(calls.filter(c=>c.route==='/api/status/ab12cd34').length).toBe(2);
+  });
+  it('F17-02 download failure is a recoverable ingestion issue, not another paid generation',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport({downloadFailures:1});
+    const submitted=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    await expect(pollGlabsImage(appPath,root,dir,cipher,submitted.id,decode)).rejects.toThrow();
+    const persisted=listGlabsJobs(root).find(item=>item.id===submitted.id)!;
+    expect(persisted.lastSyncError).toMatchObject({
+      stage:'download',code:'GLABS_DOWNLOAD_UNKNOWN'
+    });
+    expect(persisted.providerCompletedAt).toEqual(expect.any(String));
+    const fixed=await pollGlabsImage(appPath,root,dir,cipher,submitted.id,decode);
+    expect(fixed.status).toBe('VALIDATED');
+    expect(fixed.staged?.sha256).toBe(sha(portraitPng));
+    expect(calls.filter(c=>c.method==='POST')).toHaveLength(1);
+    expect(calls.filter(c=>c.route==='/api/files/out.png')).toHaveLength(2);
+  });
+});
 describe('F11 crash-safe generated-image approval journal recovery',()=>{
   it('F11-INTEGRITY-03 rejects a forged generated-image prompt SHA before any Native binding',async()=>{
     const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport();
