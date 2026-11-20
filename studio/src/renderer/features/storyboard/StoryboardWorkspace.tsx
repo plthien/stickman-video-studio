@@ -676,7 +676,7 @@ export function StoryboardWorkspace(){
         Other Shots must be visually reviewed before project-wide approval.
         G-Labs provenance is recorded automatically; external licensing is not independently verified.
         Each Generate request may incur a separate charge.</div>
-      <ShotImageGallery shotId={shotId} cards={cards} urls={urls}
+      <ShotImageGallery projectId={id??''} shotId={shotId} cards={cards} urls={urls}
         previewReady={previewReady} previewErrors={previewErrors}
         previewIdentity={previewIdentity}
         busy={busy||Boolean(submission)||Boolean(batchSession.current)}
