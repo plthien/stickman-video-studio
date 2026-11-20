@@ -668,6 +668,23 @@ describe('NF02 — effective per-target Native image identity across corrections
 });
 
 describe('F11 crash-safe generated-image approval journal recovery',()=>{
+  it('F11-INTEGRITY-03 rejects a forged generated-image prompt SHA before any Native binding',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport();
+    const created=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    const completed=await pollGlabsImage(appPath,root,dir,cipher,created.id,decode);
+    expect(completed.status).toBe('VALIDATED');
+    const file=path.join(root,'.studio','glabs','jobs',completed.id+'.json');
+    const persisted=JSON.parse(fs.readFileSync(file,'utf8')) as Record<string,unknown>;
+    persisted.promptSha256='0'.repeat(64);
+    fs.writeFileSync(file,JSON.stringify(persisted));
+    expect(()=>approveGlabsImage(appPath,root,completed.id,undefined,decode))
+      .toThrow(/GLABS_JOB_STALE_PROMPT_EVIDENCE/);
+    expect(listGlabsJobs(root).find(item=>item.id===completed.id)?.status).toBe('VALIDATED');
+    expect(getPendingMedia(appPath,root)?.missing).toHaveLength(1);
+    expect(readState(root).media!.filter(row=>row.shotId===completed.shotId))
+      .toHaveLength(0);
+    expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
+  });
   it('F11-IDEMP-02 a forged prompt hash cannot recover an already committed binding',async()=>{
     const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport();
     const created=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
