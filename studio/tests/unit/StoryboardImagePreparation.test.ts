@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {afterEach,describe,expect,it,vi} from 'vitest';
-import {prepareNativeImages,saveNativeImagePrompt,loadImageStyleProfile,compileImageJobSpecs} from '../../src/main/imagePreparation';
+import {prepareNativeImages,prepareNativeImageTarget,saveNativeImagePrompt,loadImageStyleProfile,compileImageJobSpecs} from '../../src/main/imagePreparation';
 import {readNativeDraft,nativeImageTargetIdentity,publishNativeDraftCorrection} from '../../src/main/externalTasks';
 import {readState,sha} from '../../src/main/services';
 import {appPath,cleanup,fixture,nativePayload,stageNative} from './SixIssueFixtures';
@@ -67,6 +67,22 @@ describe('StoryBoard Phase-1 source-grounded compiler and exact Native media que
     expect(record.draftToken).toBe(draft.token);
     expect(record.jobs).toHaveLength(prepared.jobs.length);
     expect(readNativeDraft(root)!.sha256).toBe(draft.sha256);
+  });
+  it('PERF-02 frozen single-target preflight has exactly the same creative fingerprint, source, prompt and style as full compilation',()=>{
+    const {root}=staged('B1',true);
+    const full=prepareNativeImages(appPath,root);
+    expect(full.jobs).toHaveLength(2);
+    for(const job of full.jobs){
+      const targeted=prepareNativeImageTarget(appPath,root,job.targetKey);
+      expect(targeted).toMatchObject({
+        targetKey:job.targetKey,shotId:job.shotId,layerId:job.layerId,
+        path:job.path,state:job.state,reason:job.reason,prompt:job.prompt,
+        sourceRows:job.sourceRows,promptSha256:job.promptSha256,
+        draftIdentity:job.draftIdentity,styleProfileRef:job.styleProfileRef,
+        references:job.references
+      });
+    }
+    expect(prepareNativeImageTarget(appPath,root,'image:no-such-target')).toBeNull();
   });
   it('P1-02 compiles exact structured asset content without hallucinating motion, caption or filenames',()=>{
     const {root}=staged(),queue=prepareNativeImages(appPath,root),job=queue.jobs[0];
