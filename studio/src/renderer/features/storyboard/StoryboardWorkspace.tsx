@@ -60,7 +60,7 @@ export function StoryboardWorkspace(){
   useEffect(()=>{
     const scope=captureProjectSession();
     setPending(null);setPrepared(null);setJobs([]);setConfig(null);setUrls({});
-    setPreviewReady({});setPreviewErrors({});setPreviewAttempts({});setError('');setRights('');
+    setPreviewReady({});setPreviewErrors({});setPreviewAttempts({});setError('');setRights('');setBusy(false);
     if(scope&&window.studio)void refresh(scope).catch(e=>{if(isCurrentProjectSession(scope))setError(message(e));});
     // The session guard prevents async responses from being applied to another project.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -140,7 +140,7 @@ export function StoryboardWorkspace(){
         setCheckedUnknown(identity);
     }catch(e){if(isCurrentProjectSession(scope)&&recoveryEpoch.current===epoch)
       setError('Checking existing G-Labs attempt failed: '+message(e));}
-    finally{if(isCurrentProjectSession(scope)&&recoveryEpoch.current===epoch)setBusy(false);}
+    finally{if(isCurrentProjectSession(scope))setBusy(false);}
   };
   const generate=async(recoverUnknown=false)=>{
     const scope=captureProjectSession();if(!scope||!window.studio||busy)return;
