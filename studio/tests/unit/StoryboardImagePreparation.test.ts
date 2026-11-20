@@ -275,6 +275,137 @@ describe('StoryBoard Phase-1 source-grounded compiler and exact Native media que
       job.draftIdentity.creativeFingerprint!==before.jobs[index].draftIdentity.creativeFingerprint)).toBe(true);
     expect(after.jobs.every(job=>job.prompt.includes('revised to yellow color'))).toBe(true);
   });
+  it('F05-06 wrong-path/wrong-Shot partial Native requirement contaminates neither target nor fingerprint',()=>{
+    const {root,payload}=staged('B1',true);
+    const bad={shot_id:'shot-1',expected_path:'assets/images/late.png',content:'This is not for either real target'};
+    payload.asset_needs.push(bad);
+    const before=prepareNativeImages(appPath,root);
+    const draft=readNativeDraft(root)!;
+    publishNativeDraftCorrection(appPath,root,draft.sha256,payload,{
+      correctTaskId:'strict-partial',reviewTaskId:'review',
+      editableIds:['shot-1'],editablePaths:[],findingIds:['P1']
+    });
+    const after=prepareNativeImages(appPath,root);
+    expect(after.jobs.map(job=>job.state)).toEqual(['READY','READY']);
+    expect(after.jobs[0].sourceRows).not.toContainEqual(bad);
+    expect(after.jobs[1].sourceRows).not.toContainEqual(bad);
+    expect(after.jobs[0].draftIdentity.creativeFingerprint).toBe(before.jobs[0].draftIdentity.creativeFingerprint);
+    expect(after.jobs[1].draftIdentity.creativeFingerprint).toBe(before.jobs[1].draftIdentity.creativeFingerprint);
+  });
+  it('F05-07 same Shot/path with unspecified Layer stays review-only, not a fabricated exact description',()=>{
+    const {root,payload}=staged();
+    const partial={shot_id:'shot-1',expected_path:'assets/images/missing.png',content:'Undecided layer state'};
+    payload.asset_needs.push(partial);
+    const draft=readNativeDraft(root)!;
+    publishNativeDraftCorrection(appPath,root,draft.sha256,payload,{
+      correctTaskId:'layer-ambiguous',reviewTaskId:'review',
+      editableIds:['shot-1'],editablePaths:[],findingIds:['P1']
+    });
+    const job=prepareNativeImages(appPath,root).jobs[0];
+    expect(job.state).toBe('NEEDS_OWNER_REVIEW');
+    expect(job.reason).toMatch(/Partial/);
+    expect(job.sourceRows).toContainEqual(partial);
+    expect(job.prompt).toBe('');
+  });
+  it('F06-01 global directives appear in every applicable compiled prompt and ordered source provenance',()=>{
+    const {root,payload}=staged('B1',true);
+    const globalOne={scope:'global',content:'Use restrained texture throughout all image assets.'};
+    const globalTwo={global:true,content:'Keep all raster illustration backgrounds clean of baked-in title text.'};
+    payload.asset_needs=[globalOne,payload.asset_needs[0],globalTwo,payload.asset_needs[1]];
+    const draft=readNativeDraft(root)!;
+    publishNativeDraftCorrection(appPath,root,draft.sha256,payload,{
+      correctTaskId:'global-directives',reviewTaskId:'review',
+      editableIds:['shot-1','shot-2'],editablePaths:[],findingIds:['P1']
+    });
+    const result=prepareNativeImages(appPath,root);
+    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs.map(job=>job.state)).toEqual(['READY','READY']);
+    for(const job of result.jobs){
+      expect(job.prompt).toContain(globalOne.content);
+      expect(job.prompt).toContain(globalTwo.content);
+      expect(job.prompt.indexOf(globalOne.content)).toBeLessThan(job.prompt.indexOf(globalTwo.content));
+      expect(job.prompt).toContain('APPROVED MODE B STYLE B1');
+      expect(job.sourceRows).toContainEqual(globalOne);
+      expect(job.sourceRows).toContainEqual(globalTwo);
+      expect(job.sourceDescription).not.toContain(globalOne.content);
+    }
+    expect(result.jobs[0].sourceRows).toEqual([globalOne,payload.asset_needs[1],globalTwo]);
+    expect(result.jobs[1].sourceRows).toEqual([globalOne,globalTwo,payload.asset_needs[3]]);
+  });
+  it('F06-02 changing global source invalidates both fingerprints and a previously saved owner override',()=>{
+    const {root,payload}=staged('B1',true);
+    const global={scope:'global',content:'Global original approved white line weight.'};
+    payload.asset_needs.push(global);
+    let draft=readNativeDraft(root)!;
+    publishNativeDraftCorrection(appPath,root,draft.sha256,payload,{
+      correctTaskId:'global-before',reviewTaskId:'review',
+      editableIds:['shot-1','shot-2'],editablePaths:[],findingIds:['P1']
+    });
+    const before=prepareNativeImages(appPath,root);
+    saveNativeImagePrompt(appPath,root,{targetKey:before.jobs[0].targetKey,
+      fingerprint:before.jobs[0].draftIdentity.creativeFingerprint,
+      prompt:'Owner verified specific red kite design with two visible edges',references:[]});
+    const saved=prepareNativeImages(appPath,root).jobs[0];
+    expect(saved.ownerEdited).toBe(true);
+    expect(saved.prompt).toContain(global.content);
+    expect(saved.prompt).toContain('APPROVED MODE B STYLE B1');
+    draft=readNativeDraft(root)!;
+    const revised=structuredClone(draft.artifact) as typeof payload;
+    revised.asset_needs[2]={scope:'global',content:'Global revised approved thin black stroke weight.'};
+    publishNativeDraftCorrection(appPath,root,draft.sha256,revised,{
+      correctTaskId:'global-after',reviewTaskId:'review',
+      editableIds:['shot-1','shot-2'],editablePaths:[],findingIds:['P1']
+    });
+    const after=prepareNativeImages(appPath,root);
+    expect(after.jobs.every((job,index)=>
+      job.draftIdentity.creativeFingerprint!==before.jobs[index].draftIdentity.creativeFingerprint)).toBe(true);
+    expect(after.jobs[0].ownerEdited).toBe(false);
+    expect(after.jobs.every(job=>job.prompt.includes('Global revised approved'))).toBe(true);
+  });
+  it('F06-03 unsupported unscoped lines never become global or contaminate prompts',()=>{
+    const {root,payload}=staged('B1',true);
+    payload.asset_needs.push('Reminder: edit unrelated video later');
+    const draft=readNativeDraft(root)!;
+    const before=prepareNativeImages(appPath,root);
+    publishNativeDraftCorrection(appPath,root,draft.sha256,payload,{
+      correctTaskId:'unsupported-row',reviewTaskId:'review',
+      editableIds:['shot-2'],editablePaths:[],findingIds:['P1']
+    });
+    const after=prepareNativeImages(appPath,root);
+    expect(after.jobs.every(job=>!job.prompt.includes('Reminder:'))).toBe(true);
+    expect(after.jobs.every(job=>!job.sourceRows.includes('Reminder: edit unrelated video later'))).toBe(true);
+    expect(after.jobs.map(job=>job.draftIdentity.creativeFingerprint)).toEqual(
+      before.jobs.map(job=>job.draftIdentity.creativeFingerprint));
+  });
+  it('F06-04 incompatible global orientation versus exact target is blocked, not silently combined',()=>{
+    const {root,payload}=staged();
+    payload.asset_needs.push({scope:'global',orientation:'horizontal square canvas',
+      content:'Global illustration orientation requirement'});
+    const draft=readNativeDraft(root)!;
+    publishNativeDraftCorrection(appPath,root,draft.sha256,payload,{
+      correctTaskId:'global-orientation-conflict',reviewTaskId:'review',
+      editableIds:['shot-1'],editablePaths:[],findingIds:['P1']
+    });
+    const job=prepareNativeImages(appPath,root).jobs[0];
+    expect(job.state).toBe('BLOCKED');
+    expect(job.reason).toMatch(/Conflicting global/);
+    expect(job.prompt).toBe('');
+    expect(job.sourceRows.some(row=>typeof row==='object'&&row!==null&&
+      (row as Record<string,unknown>).scope==='global')).toBe(true);
+  });
+  it('F06-05 a global row with no expressible instruction blocks instead of silently disappearing',()=>{
+    const {root,payload}=staged();
+    payload.asset_needs.push({scope:'global',metadata:'Unrenderable arbitrary payload'});
+    const draft=readNativeDraft(root)!;
+    publishNativeDraftCorrection(appPath,root,draft.sha256,payload,{
+      correctTaskId:'inexpressible-global',reviewTaskId:'review',
+      editableIds:['shot-1'],editablePaths:[],findingIds:['P1']
+    });
+    const job=prepareNativeImages(appPath,root).jobs[0];
+    expect(job.state).toBe('BLOCKED');
+    expect(job.reason).toMatch(/no expressible creative instruction/);
+    expect(job.prompt).toBe('');
+  });
   it('F04-01 revised installed B1 authority invalidates override but never mutates Native DRAFT',()=>{
     const {root}=staged();
     const before=prepareNativeImages(appPath,root).jobs[0];
