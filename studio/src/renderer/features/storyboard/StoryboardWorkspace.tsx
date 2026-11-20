@@ -222,10 +222,7 @@ export function StoryboardWorkspace(){
         candidate.shotId===item.shotId&&candidate.layerId===item.layerId&&
         candidate.path===item.path)&&
       !jobs.some(job=>job.token===pending?.token&&job.targetKey===item.targetKey)&&
-      draftPrompts[[id??'',pending?.token??'',item.draftIdentity.creativeFingerprint,
-        item.targetKey].join('|')]===undefined&&
-      draftReferences[[id??'',pending?.token??'',item.draftIdentity.creativeFingerprint,
-        item.targetKey].join('|')]===undefined):[];
+      true):[];
   const galleryPreviewKey=cards.map(card=>[
     card.job?.id??'',card.job?.staged?.path??'',
     card.job?.staged?.sha256??''
