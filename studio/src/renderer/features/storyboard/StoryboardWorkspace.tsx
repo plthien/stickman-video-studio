@@ -72,6 +72,23 @@ export function StoryboardWorkspace(){
     // The session guard prevents async responses from being applied to another project.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[id,native?.nativeDraft?.token,native?.nativeDraft?.revision,native?.external?.native?.revision]);
+  // Electron's independent GET-only coordinator pushes each persisted provider
+  // transition. A selected completed job immediately resolves its image URL
+  // using the existing lazy-preview effect: no manual "Check Status" required.
+  useEffect(()=>{
+    const scope=captureProjectSession(),token=pending?.token;
+    if(!scope||!token||!window.studio?.onGlabsJobChanged)return;
+    return window.studio.onGlabsJobChanged(change=>{
+      if(!change||change.projectId!==scope.projectId||
+        !isCurrentProjectSession(scope)||change.job?.token!==token)return;
+      const updated=change.job;
+      setJobs(previous=>{
+        const index=previous.findIndex(job=>job.id===updated.id);
+        if(index<0)return[updated,...previous];
+        return previous.map(job=>job.id===updated.id?updated:job);
+      });
+    });
+  },[id,pending?.token]);
   useEffect(()=>()=>{if(batchSession.current)batchSession.current.cancelled=true;},[]);
   useEffect(()=>{
     if(batchSession.current)batchSession.current.cancelled=true;
@@ -235,11 +252,23 @@ export function StoryboardWorkspace(){
     try{
       // One owner click = at most one paid POST, with no automatic retry.
       // Show feedback immediately; the IPC request may take time.
-      await window.studio.glabsGenerate(scope.projectId,{targetKey:selectedTargetKey,prompt:ownerPrompt.trim(),
+      const response=await window.studio.glabsGenerate(scope.projectId,{
+        targetKey:selectedTargetKey,prompt:ownerPrompt.trim(),
         model:config.model,aspectRatio:config.aspectRatio,references:refs(ownerRefs),authorized:true,
         regenerate:attempts.length>0,acknowledgeUnknown:recoverUnknown,
-        preparedFingerprint:spec.draftIdentity.creativeFingerprint});
-      if(isCurrentProjectSession(scope))await refresh(scope);
+        preparedFingerprint:spec.draftIdentity.creativeFingerprint
+      });
+      if(isCurrentProjectSession(scope)&&response&&typeof response==='object'&&
+        'id' in response&&typeof response.id==='string'&&
+        'targetKey' in response&&response.targetKey===selectedTargetKey&&
+        'token' in response&&response.token===pending?.token){
+        const created=response as ImageJob;
+        // No expensive full Storyboard refresh after every provider submission:
+        // one local job projection, then read-only background GET updates.
+        setJobs(previous=>[created,...previous.filter(job=>job.id!==created.id)]);
+      }else if(isCurrentProjectSession(scope)&&response!==null){
+        await refresh(scope);
+      }
     }catch(e){if(isCurrentProjectSession(scope))setError(message(e));}
     finally{
       paidInFlight.current=false;
@@ -417,7 +446,7 @@ export function StoryboardWorkspace(){
           {spec.styleAnchors.map(anchor=><option key={anchor.id} value={'@modeb/b4/'+anchor.id}>{anchor.id} · {anchor.label.slice(0,85)}</option>)}
         </Select></Field>}
         {dirty&&<div className="info">Save the edited prompt/references before generating this image.</div>}
-        {hasActiveAttempt&&<div className="info">Generation in progress. Use Check Status rather than submitting again.</div>}
+        {hasActiveAttempt&&<div className="info">Generation in progress · status and finished image update automatically.</div>}
         {!hasPreviousAttempt&&<div className="actions">
           <Button variant="primary" disabled={busy||!config||!canSubmit||!ownerPrompt.trim()} onClick={()=>void generate(false)}>
             Generate Image
@@ -512,7 +541,10 @@ export function StoryboardWorkspace(){
               disabled={busy||!config||!canSubmit||!ownerPrompt.trim()} onClick={()=>void generate(false)}>
               Regenerate Image
             </Button>}
-            {['SUBMITTED','RUNNING','DOWNLOADED'].includes(job.status)&&<Button disabled={busy} onClick={()=>void poll(job.id)}>Check Status</Button>}
+            {['SUBMITTED','RUNNING','DOWNLOADED'].includes(job.status)&&<>
+              <span className="info">Checking provider automatically</span>
+              <Button disabled={busy} onClick={()=>void poll(job.id)}>Check Now</Button>
+            </>}
             {job.status==='VALIDATED'&&<Button variant="primary" disabled={busy||!rights.trim()||!urls[job.id]||previewReady[job.id]!==previewIdentity(job)} onClick={()=>void approve(job.id)}>Approve Image &amp; Bind</Button>}
             {job.status==='QUEUED'&&<Button disabled={busy} onClick={async()=>{
               const scope=captureProjectSession();if(!scope||!window.studio||!window.confirm('Cancel this queued request before paid submission?'))return;
