@@ -100,7 +100,11 @@ export function StoryboardWorkspace(){
   const hasActiveAttempt=selectedAttempts.some(job=>['SUBMITTED','RUNNING','DOWNLOADED','QUEUED'].includes(job.status));
   const hasPreviousAttempt=selectedAttempts.length>0;
   const canSubmit=Boolean(ready&&!hasUncertainAttempt&&!hasActiveAttempt);
-  const shotJobs=jobs.filter(job=>job.shotId===shotId);
+  const shotJobs=jobs.filter(job=>job.shotId===shotId&&job.targetKey===target?.key&&job.token===pending?.token);
+  // G-Labs returns newest jobs first. Keep history, but show only the current
+  // selected target and latest candidate on the main screen.
+  const visibleJobs=shotJobs.slice(0,1);
+  const previousJobs=shotJobs.slice(1);
   const previewIdentity=(job:ImageJob)=>[id,job.id,job.token,job.staged?.sha256??'-',urls[job.id]??'-',previewAttempts[job.id]??0].join('|');
   const prepare=async()=>{
     const scope=captureProjectSession();if(!scope||!window.studio?.prepareImages)return;
@@ -161,8 +165,9 @@ export function StoryboardWorkspace(){
     if(attempts.some(job=>['SUBMITTED','RUNNING','DOWNLOADED','QUEUED'].includes(job.status))){
       setError('An image job is already active for this exact target. Resume or inspect it.');return;
     }
-    if(attempts.length&&!recoverUnknown&&
-      !window.confirm('Regenerate this exact image target? This starts a NEW potentially paid request; the previous attempt will not be reused.'))return;
+    // The clearly labeled Generate/Regenerate action is already an explicit
+    // one-request authorization. Never show a redundant browser confirmation.
+    // UNKNOWN attempts still require the separate recovery flow.
     // Consume consent BEFORE awaiting the Electron dialog; a second click
     // cannot reuse consent, even if the owner cancels that paid confirmation.
     if(recoverUnknown){setCheckedUnknown('');setAcknowledgedUnknown('');}
@@ -208,46 +213,61 @@ export function StoryboardWorkspace(){
     blocked:prepared?.jobs.filter(j=>j.state==='BLOCKED').length??0};
   return <div className="stack" data-testid="storyboard-automation">
     <Card>
-      <CardHeader title="Storyboard & Images" hint="Prepare → Review → Generate → Inspect / Approve → Exact Native Binding" action={<Badge tone={native?.nativeDraft?'mint':'amber'}>{native?.nativeDraft?'DRAFT':'NO DRAFT'}</Badge>}/>
-      <div className="info"><strong>Current Project Style:</strong> {native?.project.style??'No project'} (read-only) · Video {native?.brief.ratio??'9:16'} · Native DRAFT {native?.nativeDraft?'r'+native.nativeDraft.revision:'not available'}</div>
-      <div className="info">Creative review: {native?.nativeDraft?.reviewStatus??'not verified'} · Unresolved findings are retained; media observations remain deferred.</div>
-      <div className="info" data-testid="image-queue-counts">
-        {prepared?.shotCount??shotIds.length} Shots · {prepared?.imageOccurrences??imageTargets.length} missing image occurrences · {prepared?.uniquePaths??new Set(imageTargets.map(item=>item.path)).size} distinct paths · READY {counts.ready} · Needs owner review {counts.review} · Blocked {counts.blocked}
+      <CardHeader title="Storyboard Images" action={<Badge tone={native?.nativeDraft?'mint':'amber'}>{native?.nativeDraft?'DRAFT':'NO DRAFT'}</Badge>}/>
+      <div className="storyboard-compact-toolbar">
+        <div className="info" data-testid="image-queue-counts">
+          {prepared?.imageOccurrences??imageTargets.length} missing image occurrences · READY {counts.ready} · Review {counts.review} · Blocked {counts.blocked}
+        </div>
+        <Button disabled={!id||busy||!native?.nativeDraft} onClick={()=>void prepare()}>Refresh Images</Button>
       </div>
-      <div className="actions"><Button disabled={!id||busy||!native?.nativeDraft} onClick={()=>void prepare()}>Prepare Images (read-only; no paid requests)</Button></div>
-      {shotIds.length?<div className="shot-grid">{shotIds.map(value=><button key={value} className={shotId===value?'selected':''} onClick={()=>{recoveryEpoch.current+=1;setCheckedUnknown('');setAcknowledgedUnknown('');setSelectedShot(value);setSelectedKey('');}}>
-        <div className="scene-thumb"><strong>{value}</strong></div><div><strong>{value}</strong><small>{imageTargets.filter(t=>t.shotId===value).length} missing image layers</small></div>
+      {shotIds.length?<div className="storyboard-shot-strip" aria-label="Native shots">{shotIds.map(value=><button key={value}
+        className={shotId===value?'selected':''}
+        onClick={()=>{recoveryEpoch.current+=1;setCheckedUnknown('');setAcknowledgedUnknown('');setSelectedShot(value);setSelectedKey('');}}>
+        {value}<small>{imageTargets.filter(item=>item.shotId===value).length} images</small>
       </button>)}</div>:<div className="info">No native shots in the current Native DRAFT. Stage an approved source-grounded Native Author artifact first.</div>}
+      <details className="storyboard-technical-details">
+        <summary>Project &amp; queue details</summary>
+        <div className="info"><strong>Current Project Style:</strong> {native?.project.style??'No project'} · {native?.brief.ratio??'9:16'} · Native DRAFT {native?.nativeDraft?'r'+native.nativeDraft.revision:'not available'}</div>
+        <div className="info">Creative review: {native?.nativeDraft?.reviewStatus??'not verified'}</div>
+        <div className="info">{prepared?.shotCount??shotIds.length} Shots · {prepared?.uniquePaths??new Set(imageTargets.map(item=>item.path)).size} distinct paths</div>
+      </details>
     </Card>
     <Card>
-      <CardHeader title={shotId?shotId+' · Image assets':'Image assets'} hint="Choose an image layer — style, prompt, model, ratio and technical IDs are inherited."/>
-      {shotTargets.length?<div className="stack" aria-label="Native image asset list">{shotTargets.map(item=>{
-        const row=prepared?.jobs.find(x=>x.targetKey===item.key);
-        const current=jobs.find(j=>j.token===pending?.token&&j.targetKey===item.key);
-        return <button key={item.key} className={target?.key===item.key?'selected':''} style={{padding:10,textAlign:'left'}}
+      <CardHeader title={shotId?shotId+' · Images':'Images'}/>
+      {shotTargets.length?<div className="storyboard-layer-strip" aria-label="Native image asset list">{shotTargets.map(item=>{
+        const row=prepared?.jobs.find(value=>value.targetKey===item.key);
+        const current=jobs.find(job=>job.token===pending?.token&&job.targetKey===item.key);
+        return <button key={item.key} className={target?.key===item.key?'selected':''}
           onClick={()=>{recoveryEpoch.current+=1;setCheckedUnknown('');setAcknowledgedUnknown('');setSelectedKey(item.key);setError('');}}>
-          <strong>{row?.sourceDescription.slice(0,115)||item.layerId||'Source description unavailable'}</strong>
-          <div className="info">{row?.state??'Preparing'} · {current?.status??'Not generated'} · {row?.occurrencesAtPath??1} same-path occurrence(s), not shared jobs</div>
-          {row?.reason&&<div className="info error">{row.reason}</div>}
+          <strong>{row?.sourceDescription.slice(0,70)||item.layerId||'Image asset'}</strong>
+          <small>{current?.status==='FAILED'&&current.staged?'Needs revision':current?.status??row?.state??'Preparing'}</small>
         </button>;
       })}</div>:<div className="info" data-testid="glabs-image-unavailable">{!pending?'No Native DRAFT media candidate staged.':imageTargets.length?'No missing images in this Shot.':'All required image occurrences are fulfilled.'}</div>}
       {spec&&<div className="stack">
         <div className="info"><strong>Source image description:</strong> {spec.sourceDescription||spec.reason}</div>
-        <div className="info"><strong>Image Prompt:</strong> {spec.ownerEdited?'Owner-confirmed target override':'Deterministically compiled from approved style and exact Native source'} · {spec.state}{spec.reason?' · '+spec.reason:''}</div>
-        {spec.prompt&&<details><summary>Review complete Image Prompt and provenance</summary>
-          <pre className="prompt">{spec.prompt}</pre>
-          <pre className="prompt">{JSON.stringify(spec.sourceRows,null,2)}</pre>
-        </details>}
+        {spec.state!=='READY'&&<div className="info error">{spec.state}: {spec.reason}</div>}
         {spec.styleAnchors.length>0&&<Field label="Verified B4 style reference"><Select value={refs(ownerRefs).find(value=>value.startsWith('@modeb/b4/'))??''}
           onChange={event=>setDraftReferences(old=>({...old,[identity]:event.target.value}))}>
-          <option value="">Choose a packaged B4 approved illustration</option>
+          <option value="">Choose an approved B4 illustration</option>
           {spec.styleAnchors.map(anchor=><option key={anchor.id} value={'@modeb/b4/'+anchor.id}>{anchor.id} · {anchor.label.slice(0,85)}</option>)}
         </Select></Field>}
-        <div className="info">G-Labs model: {config?.model??'Configure Settings first'} · Output ratio: {config?.aspectRatio??'unknown'} · Price: unavailable · Paid submissions authorized: maximum 1 per click.</div>
-        {dirty&&<div className="info">Save this target's edit before paid generation. Other Shot/Layer prompts remain unchanged.</div>}
-        {hasUncertainAttempt&&<div className="info error" role="alert">Prior G-Labs job has UNKNOWN billing status. Check/reconcile that attempt; this screen will not authorize a new paid request automatically.</div>}
-        {hasActiveAttempt&&<div className="info">An image job is already active. Check its status or inspect the result instead of resubmitting.</div>}
-        <div className="actions"><Button variant="primary" disabled={busy||!config||!canSubmit||!ownerPrompt.trim()} onClick={()=>void generate(false)}>{hasPreviousAttempt?'Regenerate Selected (1 NEW paid request)':'Generate Selected (1 paid request)'}</Button></div>
+        {dirty&&<div className="info">Save the edited prompt/references before generating this image.</div>}
+        {hasActiveAttempt&&<div className="info">Generation in progress. Use Check Status rather than submitting again.</div>}
+        <div className="actions">
+          <Button variant="primary" disabled={busy||!config||!canSubmit||!ownerPrompt.trim()} onClick={()=>void generate(false)}>
+            {hasPreviousAttempt?'Regenerate Image':'Generate Image'}
+          </Button>
+        </div>
+        <details className="storyboard-technical-details">
+          <summary>Image prompt &amp; source details</summary>
+          <div className="info"><strong>Image Prompt:</strong> {spec.ownerEdited?'Edited':'Compiled'} · {spec.state}</div>
+          {spec.prompt&&<details><summary>Review complete Image Prompt and provenance</summary>
+            <pre className="prompt">{spec.prompt}</pre>
+            <pre className="prompt">{JSON.stringify(spec.sourceRows,null,2)}</pre>
+          </details>}
+          <div className="info">G-Labs model: {config?.model??'Not configured'} · {config?.aspectRatio??'unknown'} · Style: {spec.styleProfileRef.id}</div>
+          <div className="info">Native target: {spec.shotId}/{spec.layerId} · {spec.path}</div>
+        </details>
       </div>}
       {hasUncertainAttempt&&target&&<Card>
         <CardHeader title="UNKNOWN image attempt · owner recovery" hint="Existing provider request may already have been charged. Checking is read-only."/>
@@ -270,42 +290,62 @@ export function StoryboardWorkspace(){
             onClick={()=>void generate(true)}>Authorize ONE New Image Attempt (paid confirmation)</Button>
         </div>}
       </Card>}
-      {shotJobs.some(job=>job.status==='VALIDATED')&&<Field label="Owner-confirmed rights/source"><Input value={rights} onChange={event=>setRights(event.target.value)} placeholder="Owned/licensed provider image and source"/></Field>}
-      {shotJobs.length>0&&<div className="info">Actual generated-image previews (never automatically approved)</div>}
-      {shotJobs.map(job=><Card key={job.id}>
-        <CardHeader title={job.layerId+' · '+job.status} hint={job.model+' / '+job.aspectRatio}/>
-        <div className="info">Exact target: {job.shotId}/{job.layerId} · {job.targetPath} · {job.reason??''}</div>
-        {job.staged&&urls[job.id]&&<img key={previewIdentity(job)} src={urls[job.id]} alt={'G-Labs candidate for '+job.shotId+'/'+job.layerId}
-          style={{maxWidth:'100%',maxHeight:260,objectFit:'contain'}}
-          onLoad={event=>{
-            if(event.currentTarget.complete&&event.currentTarget.naturalWidth>0&&event.currentTarget.naturalHeight>0){
-              setPreviewReady(old=>({...old,[job.id]:previewIdentity(job)}));
-              setPreviewErrors(old=>{const next={...old};delete next[job.id];return next;});
-            }else{setPreviewReady(old=>{const next={...old};delete next[job.id];return next;});
-              setPreviewErrors(old=>({...old,[job.id]:'Generated image did not decode to visible pixels.'}));}
-          }}
-          onError={()=>{setPreviewReady(old=>{const next={...old};delete next[job.id];return next;});
-            setPreviewErrors(old=>({...old,[job.id]:'Generated image preview failed to load.'}));}}/>}
-        {job.status==='VALIDATED'&&previewReady[job.id]!==previewIdentity(job)&&<div className="info">Preview not verified — approval is blocked until the actual image loads.</div>}
-        {previewErrors[job.id]&&<div className="info error" role="alert">{previewErrors[job.id]}</div>}
-        {job.staged&&previewErrors[job.id]&&<Button disabled={busy} onClick={()=>{
-          setPreviewReady(old=>{const next={...old};delete next[job.id];return next;});
-          setPreviewErrors(old=>{const next={...old};delete next[job.id];return next;});
-          setPreviewAttempts(old=>({...old,[job.id]:(old[job.id]??0)+1}));
-          const scope=captureProjectSession();
-          if(scope)void refresh(scope).catch(e=>{if(isCurrentProjectSession(scope))setError(message(e));});
-        }}>Retry image preview</Button>}
-        <div className="actions">
-          {['SUBMITTED','RUNNING','DOWNLOADED','UNKNOWN'].includes(job.status)&&<Button disabled={busy} onClick={()=>void poll(job.id)}>Resume / Check status (read-only)</Button>}
-          {job.status==='VALIDATED'&&<Button variant="primary" disabled={busy||!rights.trim()||!urls[job.id]||previewReady[job.id]!==previewIdentity(job)} onClick={()=>void approve(job.id)}>Approve inspected image + bind</Button>}
-          {job.status==='QUEUED'&&<Button disabled={busy} onClick={async()=>{
-            const scope=captureProjectSession();if(!scope||!window.studio||!window.confirm('Cancel this queued request before paid submission?'))return;
-            try{await window.studio.glabsCancelQueued(scope.projectId,job.id);if(isCurrentProjectSession(scope))await refresh(scope);}
-            catch(e){if(isCurrentProjectSession(scope))setError(message(e));}
-          }}>Cancel queued attempt</Button>}
+      {visibleJobs.map(job=><div key={job.id} className="storyboard-selected-image" data-testid="storyboard-selected-image">
+        <div className="storyboard-image-stage">
+          {job.staged&&urls[job.id]?<img key={previewIdentity(job)} src={urls[job.id]}
+            alt={'G-Labs candidate for '+job.shotId+'/'+job.layerId}
+            onLoad={event=>{
+              if(event.currentTarget.complete&&event.currentTarget.naturalWidth>0&&event.currentTarget.naturalHeight>0){
+                setPreviewReady(old=>({...old,[job.id]:previewIdentity(job)}));
+                setPreviewErrors(old=>{const next={...old};delete next[job.id];return next;});
+              }else{setPreviewReady(old=>{const next={...old};delete next[job.id];return next;});
+                setPreviewErrors(old=>({...old,[job.id]:'Generated image did not decode to visible pixels.'}));}
+            }}
+            onError={()=>{setPreviewReady(old=>{const next={...old};delete next[job.id];return next;});
+              setPreviewErrors(old=>({...old,[job.id]:'Generated image preview failed to load.'}));}}/>
+          :<span>{['SUBMITTED','RUNNING','DOWNLOADED','QUEUED'].includes(job.status)?'Generating image…':'No image preview available'}</span>}
         </div>
-        {job.approved&&<div className="info">Approved image: {job.approved.path} · SHA256 {job.approved.sha256}. This does not mean other occurrences are bound.</div>}
-      </Card>)}
+        <div className="storyboard-image-review">
+          <strong>{job.status==='FAILED'&&job.staged?'Image generated · validation failed':
+            job.status==='VALIDATED'?'Ready to review':job.status==='RUNNING'?'Generating image…':
+            job.status==='APPROVED'?'Approved image':job.status}</strong>
+          {job.status==='FAILED'&&job.staged&&<div className="info error">The image was generated, but did not pass validation. Inspect the result before regenerating.</div>}
+          {job.status==='VALIDATED'&&previewReady[job.id]!==previewIdentity(job)&&<div className="info">Loading image preview before approval…</div>}
+          {previewErrors[job.id]&&<div className="info error" role="alert">{previewErrors[job.id]}</div>}
+          {job.staged&&previewErrors[job.id]&&<Button disabled={busy} onClick={()=>{
+            setPreviewReady(old=>{const next={...old};delete next[job.id];return next;});
+            setPreviewErrors(old=>{const next={...old};delete next[job.id];return next;});
+            setPreviewAttempts(old=>({...old,[job.id]:(old[job.id]??0)+1}));
+            const scope=captureProjectSession();
+            if(scope)void refresh(scope).catch(e=>{if(isCurrentProjectSession(scope))setError(message(e));});
+          }}>Retry Preview</Button>}
+          {job.status==='VALIDATED'&&<Field label="Owner-confirmed rights/source"><Input value={rights} onChange={event=>setRights(event.target.value)} placeholder="Owned or licensed image source"/></Field>}
+          <div className="actions">
+            {['SUBMITTED','RUNNING','DOWNLOADED'].includes(job.status)&&<Button disabled={busy} onClick={()=>void poll(job.id)}>Check Status</Button>}
+            {job.status==='VALIDATED'&&<Button variant="primary" disabled={busy||!rights.trim()||!urls[job.id]||previewReady[job.id]!==previewIdentity(job)} onClick={()=>void approve(job.id)}>Approve Image &amp; Bind</Button>}
+            {job.status==='QUEUED'&&<Button disabled={busy} onClick={async()=>{
+              const scope=captureProjectSession();if(!scope||!window.studio||!window.confirm('Cancel this queued request before paid submission?'))return;
+              try{await window.studio.glabsCancelQueued(scope.projectId,job.id);if(isCurrentProjectSession(scope))await refresh(scope);}
+              catch(e){if(isCurrentProjectSession(scope))setError(message(e));}
+            }}>Cancel Queued</Button>}
+          </div>
+          <details className="storyboard-technical-details">
+            <summary>Job details</summary>
+            <div className="info">{job.model} · {job.aspectRatio} · {job.shotId}/{job.layerId}</div>
+            <div className="info">{job.targetPath}</div>
+            {job.reason&&<div className="info">{job.reason}</div>}
+            {job.providerTaskId&&<div className="info">Provider task ID: {job.providerTaskId}</div>}
+            {job.approved&&<div className="info">Approved: {job.approved.path} · SHA256 {job.approved.sha256}</div>}
+          </details>
+        </div>
+      </div>)}
+      {previousJobs.length>0&&<details className="storyboard-technical-details">
+        <summary>Previous attempts ({previousJobs.length})</summary>
+        {previousJobs.map(job=><div key={job.id} className="info">{job.status} · {job.id}
+          {job.providerTaskId?' · Provider '+job.providerTaskId:''}
+          {job.reason?' · '+job.reason:''}
+        </div>)}
+      </details>}
       {error&&<div className="info error" role="alert">{error}</div>}
       {spec&&<details><summary>Advanced · target-specific edits and verified references</summary>
         <div className="info">Native target: {spec.shotId}/{spec.layerId} · {spec.path}</div>
