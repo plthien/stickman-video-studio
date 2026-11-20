@@ -229,6 +229,7 @@ export function StoryboardWorkspace(){
     if(recoverUnknown){setCheckedUnknown('');setAcknowledgedUnknown('');}
     paidInFlight.current=true;
     const selectedTargetKey=target.key;
+    setBatchProgress(null);
     setSubmission({key:selectedTargetKey,label:target.shotId+'/'+target.layerId});
     setError('');
     try{
@@ -360,10 +361,12 @@ export function StoryboardWorkspace(){
           {prepared?.imageOccurrences??imageTargets.length} missing image occurrences · READY {counts.ready} · Review {counts.review} · Blocked {counts.blocked}
         </div>
         <Button disabled={!id||busy||Boolean(submission)||!native?.nativeDraft} onClick={()=>void prepare()}>Refresh Images</Button>
-        <Button variant="primary" disabled={busy||Boolean(submission)||!eligibleBulk.length}
-          onClick={()=>void generateAll()}>
-          Generate All Ready ({eligibleBulk.length} requests)
-        </Button>
+        <span title="Starts one potentially paid G-Labs request per never-attempted READY image. Total cost is unavailable. No automatic retries.">
+          <Button variant="primary" disabled={busy||Boolean(submission)||!eligibleBulk.length}
+            onClick={()=>void generateAll()}>
+            Generate All Ready ({eligibleBulk.length} requests)
+          </Button>
+        </span>
       </div>
       {batchProgress&&<div className="storyboard-batch-progress" role="status" data-testid="image-batch-progress">
         <strong>{batchProgress.state==='running'?'Generating images':
