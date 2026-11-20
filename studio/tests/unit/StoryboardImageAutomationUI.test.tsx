@@ -51,7 +51,7 @@ const install=()=>{
   }});
   return{generate,prepare,save};
 };
-afterEach(()=>{cleanup();vi.restoreAllMocks();Object.defineProperty(window,'studio',{configurable:true,value:undefined});});
+afterEach(()=>{cleanup();vi.restoreAllMocks();vi.unstubAllGlobals();Object.defineProperty(window,'studio',{configurable:true,value:undefined});});
 describe('Storyboard P1: real renderer queue and paid-action isolation',()=>{
   it('UI-01 opening and Prepare Images are read-only; style B2 is inherited and review findings do not block',async()=>{
     const {generate,prepare}=install();
@@ -84,8 +84,11 @@ describe('Storyboard P1: real renderer queue and paid-action isolation',()=>{
     render(<AppStateProvider><Harness/></AppStateProvider>);
     const button=await screen.findByRole('button',{name:'Generate Image'});
     await waitFor(()=>expect(button).toBeEnabled());
+    const confirm=vi.fn(()=>false);
+    vi.stubGlobal('confirm',confirm);
     fireEvent.click(button);
     await waitFor(()=>expect(generate).toHaveBeenCalledTimes(1));
+    expect(confirm).not.toHaveBeenCalled();
     expect(generate).toHaveBeenCalledWith('A',expect.objectContaining({
       targetKey:'image:0:layer-a',model:'nano_banana_2',aspectRatio:'9:16',authorized:true,
       preparedFingerprint:'a'.repeat(64),
@@ -140,6 +143,29 @@ describe('Storyboard P1: real renderer queue and paid-action isolation',()=>{
       targetKey:'image:0:layer-a',authorized:true,regenerate:true,acknowledgeUnknown:false
     }));
     expect(confirm).not.toHaveBeenCalled();
+  });
+  it('UI-08 failed ratio validation keeps the generated preview visible while hiding diagnostics by default',async()=>{
+    const {generate}=install();
+    const current=window.studio!;
+    Object.defineProperty(window,'studio',{configurable:true,value:{
+      ...current,
+      glabsJobs:async()=>[{
+        id:'failed-image-1',token:'token-A',targetKey:'image:0:layer-a',
+        shotId:'sh-a',layerId:'layer-a',targetPath:'assets/images/a.png',
+        status:'FAILED',model:'nano_banana_2',aspectRatio:'9:16',
+        staged:{path:'assets/images/glabs-image.png',sha256:'c'.repeat(64),width:1024,height:1024},
+        reason:'GLABS_IMAGE_ASPECT_RATIO_MISMATCH'
+      }],
+      mediaUrl:async()=> 'studio-media://test/glabs-image.png'
+    }});
+    render(<AppStateProvider><Harness/></AppStateProvider>);
+    const preview=await screen.findByTestId('storyboard-selected-image');
+    expect(preview).toHaveTextContent('Image generated · validation failed');
+    expect(preview.querySelector('img')).toHaveAttribute('src','studio-media://test/glabs-image.png');
+    expect(screen.getByText('Job details').closest('details')).not.toHaveAttribute('open');
+    const retry=screen.getByRole('button',{name:'Regenerate Image'});
+    expect(retry).toBeEnabled();
+    expect(generate).not.toHaveBeenCalled();
   });
   it('UI-05 original manual Import & Bind remains available only on demand',async()=>{
     install();render(<AppStateProvider><Harness/></AppStateProvider>);
