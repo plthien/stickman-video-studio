@@ -621,7 +621,7 @@ export function getNativeImageGallery(_appPath:string,root:string){
   const originalShots=Array.isArray(original.shots)?original.shots as Array<Record<string,unknown>>:[];
   const frozenRefs=nativeRefs(original).filter(ref=>ref.kind==='image');
   const targets:Array<{key:string;shotId:string;layerId:string;path:string;
-    boundPath:string;fulfilled:boolean;managed:boolean}>=[];
+    boundPath:string;boundSha256?:string;fulfilled:boolean;managed:boolean}>=[];
   const shots=originalShots.map((shot,index)=>{
     const shotId=String(shot.id??'');
     const available:typeof targets=[];
@@ -642,6 +642,7 @@ export function getNativeImageGallery(_appPath:string,root:string){
               row.shotId===shotId&&row.layerId===layerId));
           available.push({key,shotId,layerId,path:layer.path,
             boundPath:fulfilled?binding!.relative:layer.path,
+            ...(fulfilled?{boundSha256:binding!.sha256}:{}),
             fulfilled,managed:Boolean(ref)});
         }
         if(Array.isArray(layer.children))visit(layer.children);
