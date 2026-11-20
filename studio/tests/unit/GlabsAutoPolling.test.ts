@@ -90,9 +90,11 @@ describe('Electron G-Labs read-only background polling coordinator',()=>{
     await vi.advanceTimersByTimeAsync(1);
     expect(onError).toHaveBeenCalledTimes(1);
     expect(poll).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(3999);
+    // The initial 1ms tick above already advanced the fake clock.
+    // The first exponential GET-only retry is due at t=4000ms.
+    await vi.advanceTimersByTimeAsync(3998); // t=3999: not due yet
     expect(poll).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(1); // t=4000: exactly due
     expect(poll).toHaveBeenCalledTimes(2);
     manager.close();
   });
