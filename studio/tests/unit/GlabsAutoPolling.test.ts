@@ -21,7 +21,8 @@ describe('Electron G-Labs read-only background polling coordinator',()=>{
     manager.observe('A',fakeJob('task-1'));
     expect(poll).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(0);
-    expect(poll).toHaveBeenCalledExactlyOnceWith('A','task-1');
+    expect(poll).toHaveBeenCalledTimes(1);
+    expect(poll).toHaveBeenCalledWith('A','task-1');
     expect(onJob).toHaveBeenCalledWith('A',expect.objectContaining({status:'VALIDATED'}));
     await vi.advanceTimersByTimeAsync(8000);
     expect(poll).toHaveBeenCalledTimes(1);
@@ -67,7 +68,8 @@ describe('Electron G-Labs read-only background polling coordinator',()=>{
       fakeJob('unknown-with-provider','UNKNOWN','ab12cd34')
     ]);
     await vi.advanceTimersByTimeAsync(0);
-    expect(poll).toHaveBeenCalledExactlyOnceWith('A','unknown-with-provider');
+    expect(poll).toHaveBeenCalledTimes(1);
+    expect(poll).toHaveBeenCalledWith('A','unknown-with-provider');
     manager.close();
   });
   it('AUTO-POLL-05 manual Check Now joins the current in-flight GET, never a duplicate request',async()=>{
