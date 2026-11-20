@@ -90,7 +90,8 @@ describe('F09 Native Shot full-card gallery without selecting Layers',()=>{
     loaded(within(card).getByRole('img'));
     expect(action).toBeEnabled();
     fireEvent.click(action);
-    expect(approve).toHaveBeenCalledExactlyOnceWith('candidate-0');
+    expect(approve).toHaveBeenCalledTimes(1);
+    expect(approve).toHaveBeenCalledWith('candidate-0');
   });
   it('F11-02 selected candidate checkboxes do not select or approve a third Layer',()=>{
     const approve=vi.fn();render(<Harness approve={approve}/>);
