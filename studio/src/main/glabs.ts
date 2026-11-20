@@ -18,7 +18,13 @@ export interface GLabsJob {
   styleProfileId?:'B1'|'B2'|'B3'|'B4';styleProfileSha256?:string;
   prompt:string;promptSha256:string;references:Array<{path:string;sha256:string;mime:string;name:string;rightsSha256:string}>;model:string;aspectRatio:string;status:JobStatus;
   providerTaskId?:string;staged?:{path:string;sha256:string;mime:string;width:number;height:number};
-  reason?:string;approved?:{rights:string;path:string;sha256:string};createdAt:string;updatedAt:string;
+  reason?:string;approved?:{rights:string;path:string;sha256:string;provenance?:{
+    source:'G-Labs generated output';projectId:string;jobId:string;providerTaskId:string|null;
+    model:string;promptSha256:string;imageSha256:string;nativeToken:string;
+    targetKey:string;shotId:string;layerId:string;targetPath:string;
+    styleSha256:string;approvedAt:string;ownerAuthorizedProjectUse:true;
+    providerLicenseVerified:false;
+  }};createdAt:string;updatedAt:string;
 }
 const MAX_RESPONSE=262_144,MAX_REQUEST=5_242_880,MAX_IMAGE=16*1024*1024;
 // Keep the owner's requested aspect ratio in the G-Labs provider request.
@@ -543,30 +549,57 @@ function assertJobReferences(appPath:string,root:string,job:GLabsJob,decode:GLab
       throw new Error('GLABS_REFERENCE_IMAGE_UNDECODABLE');
   }
 }
-export function approveGlabsImage(appPath:string,root:string,id:string,rights:string,decode:GLabsDecoder){
-  const job=readJob(root,id);
-  if(job.status!=='VALIDATED'||!job.staged)throw new Error('GLABS_IMAGE_NOT_VALIDATED');
-  if(typeof rights!=='string'||rights.trim().length<5)throw new Error('GLABS_RIGHTS_ATTESTATION_REQUIRED');
-  if(!currentJobTarget(appPath,root,job))
-    throw new Error('GLABS_JOB_STALE_CREATIVE_TARGET: inspected output cannot be bound.');
-  const image=validatedImage(root,job.staged.path,job.staged.sha256);
-  if(image.mime!=='image/png'||job.staged.mime!=='image/png')throw new Error('GLABS_IMAGE_MIME_INVALID');
-  const decoded=decode(image.bytes);
-  if(!decoded||!Buffer.isBuffer(decoded.png)||imageMime(decoded.png)!=='image/png'||
-    !Number.isSafeInteger(decoded.width)||!Number.isSafeInteger(decoded.height)||
-    decoded.width!==job.staged.width||decoded.height!==job.staged.height||
-    decoded.width<1||decoded.height<1||decoded.width>8192||decoded.height>8192)
-    throw new Error('GLABS_IMAGE_APPROVAL_DECODE_MISMATCH');
-  // Do not reintroduce a ratio-only rejection at approval. The staged file
-  // must still match the original SHA and decoded dimensions, and all approved
-  // references and frozen target evidence are verified below.
-  assertJobReferences(appPath,root,job,decode);
-  // All output/reference checks precede importMediaFile and fulfillMedia mutation.
-  const imported=importMediaFile(root,resolveProjectFile(root,job.staged.path),'image',rights.trim());
-  const bound=fulfillMedia(appPath,root,job.token,job.targetKey,imported.path,rights.trim());
-  job.approved={rights:rights.trim(),path:imported.path,sha256:imported.sha256};
-  job.status='APPROVED';writeJob(root,job);
-  return{job,pending:bound};
+// All approved Native fulfillment writes happen synchronously under this
+// per-project lock. Concurrent IPC approval cannot interleave pending.json
+// mutations; a repeated approval of the same job is an idempotent read.
+const approvalLocks=new Set<string>();
+export function approveGlabsImage(appPath:string,root:string,id:string,rights:string|undefined,decode:GLabsDecoder){
+  const projectLock=fs.realpathSync(root);
+  if(approvalLocks.has(projectLock))throw new Error('GLABS_APPROVAL_BUSY');
+  approvalLocks.add(projectLock);
+  try{
+    const job=readJob(root,id);
+    if(job.status==='APPROVED'&&job.approved){
+      // No repeat import, no repeat fulfillMedia and no second approval event.
+      return{job,pending:getPendingMedia(appPath,root)};
+    }
+    if(job.status!=='VALIDATED'||!job.staged)throw new Error('GLABS_IMAGE_NOT_VALIDATED');
+    // Undefined is the new G-Labs project-use approval. A legacy explicit
+    // empty string still fails rather than masquerading as authorization.
+    if(rights!==undefined&&(typeof rights!=='string'||rights.trim().length<5))
+      throw new Error('GLABS_RIGHTS_ATTESTATION_REQUIRED');
+    if(!currentJobTarget(appPath,root,job))
+      throw new Error('GLABS_JOB_STALE_CREATIVE_TARGET: inspected output cannot be bound.');
+    const image=validatedImage(root,job.staged.path,job.staged.sha256);
+    if(image.mime!=='image/png'||job.staged.mime!=='image/png')throw new Error('GLABS_IMAGE_MIME_INVALID');
+    const decoded=decode(image.bytes);
+    if(!decoded||!Buffer.isBuffer(decoded.png)||imageMime(decoded.png)!=='image/png'||
+      !Number.isSafeInteger(decoded.width)||!Number.isSafeInteger(decoded.height)||
+      decoded.width!==job.staged.width||decoded.height!==job.staged.height||
+      decoded.width<1||decoded.height<1||decoded.width>8192||decoded.height>8192)
+      throw new Error('GLABS_IMAGE_APPROVAL_DECODE_MISMATCH');
+    assertJobReferences(appPath,root,job,decode);
+    const provenance={
+      source:'G-Labs generated output' as const,projectId:job.projectId,
+      jobId:job.id,providerTaskId:job.providerTaskId??null,model:job.model,
+      promptSha256:job.promptSha256,imageSha256:job.staged.sha256,
+      nativeToken:job.token,targetKey:job.targetKey,shotId:job.shotId,
+      layerId:job.layerId,targetPath:job.targetPath,styleSha256:job.styleProfileSha256!,
+      approvedAt:timestamp(),ownerAuthorizedProjectUse:true as const,
+      providerLicenseVerified:false as const
+    };
+    // Media core still requires a nonempty rights string. This is a factual
+    // owner-authorization provenance marker, NOT an independently verified
+    // third-party license. Manual uploads keep their ordinary rights check.
+    const authorization=rights===undefined?
+      'OWNER_APPROVED_GLABS_PROJECT_USE | job='+job.id+
+      ' | source=G-Labs-generated | provider_license_not_verified':rights.trim();
+    const imported=importMediaFile(root,resolveProjectFile(root,job.staged.path),'image',authorization);
+    const bound=fulfillMedia(appPath,root,job.token,job.targetKey,imported.path,authorization);
+    job.approved={rights:authorization,path:imported.path,sha256:imported.sha256,provenance};
+    job.status='APPROVED';writeJob(root,job);
+    return{job,pending:bound};
+  }finally{approvalLocks.delete(projectLock);}
 }
 
 /** Local cancellation is possible only before a provider POST has been submitted. */
