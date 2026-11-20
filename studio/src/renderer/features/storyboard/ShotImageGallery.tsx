@@ -98,12 +98,12 @@ export function ShotImageGallery({
             <span>{staged?staged.width+' × '+staged.height+' px':'No generated dimensions'}</span>
             {staged&&<code title={staged.sha256}>SHA {staged.sha256.slice(0,12)}…</code>}
           </div>
-          {previewErrors[job?.id??'']&&<div className="info error" role="alert">
+          {previewErrors[job?.id??'']&&<div className="info error">
             {previewErrors[job!.id]}</div>}
           <div className="shot-image-card-actions">
             {job&&staged&&urls[job.id]&&<Button onClick={()=>setExpanded(job.id)}>Expand Preview</Button>}
             {mayGenerate&&<Button disabled={busy} onClick={()=>onGenerate(card.target.key)}>
-              {attempts.length?'Regenerate Image':'Generate Image'}
+              {attempts.length?'Regenerate':'Generate'} · {card.target.layerId}
             </Button>}
             {job&&job.status==='VALIDATED'&&<label className="shot-image-select">
               <input type="checkbox" aria-label={'Select '+card.target.layerId}
