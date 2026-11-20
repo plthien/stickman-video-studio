@@ -127,10 +127,57 @@ export function StoryboardWorkspace(){
   },[id]);
   const candidateAfter=pending?.after as {shots?:unknown[]}|undefined;
   const shots=Array.isArray(candidateAfter?.shots)?candidateAfter.shots as Array<Record<string,unknown>>:[];
-  const shotIds=shots.filter(row=>typeof row.id==='string').map(row=>row.id as string);
+  const shotIds=gallery?.token===pending?.token&&gallery.shots.length?
+    gallery.shots.map(shot=>shot.id):
+    shots.filter(row=>typeof row.id==='string').map(row=>row.id as string);
   const shotId=shotIds.includes(selectedShot)?selectedShot:shotIds[0]??'';
   const imageTargets=pending?.missing.filter(row=>row.kind==='image')??[];
   const shotTargets=imageTargets.filter(row=>row.shotId===shotId);
+  // Legacy test fixtures may not supply the gallery IPC method. Derive their
+  // display-only inventory from the verified Native after.shots projection,
+  // never from its shrinking missing-media list.
+  const fallbackGalleryTargets:GalleryTarget[]=[];
+  shots.forEach((shot,index)=>{
+    if(typeof shot.id!=='string')return;
+    const visit=(values:unknown[])=>{
+      for(const value of values){
+        if(!value||typeof value!=='object'||Array.isArray(value))continue;
+        const layer=value as Record<string,unknown>;
+        if(layer.type==='image'&&typeof layer.id==='string'&&typeof layer.path==='string'){
+          const key=imageTargets.find(item=>item.shotId===shot.id&&
+            item.layerId===layer.id)?.key??'image:'+index+':'+layer.id;
+          fallbackGalleryTargets.push({key,shotId:shot.id as string,
+            layerId:layer.id,path:layer.path,boundPath:layer.path,
+            fulfilled:Boolean(pending?.fulfillments?.[key]),managed:!layer.path.startsWith('@b1/')});
+        }
+        if(Array.isArray(layer.children))visit(layer.children);
+      }
+    };
+    if(Array.isArray(shot.layers))visit(shot.layers);
+  });
+  const galleryTargets=gallery?.token===pending?.token?
+    gallery.targets:fallbackGalleryTargets;
+  const previewIdentity=(job:ImageJob)=>[id,job.id,job.token,job.staged?.sha256??'-',urls[job.id]??'-',previewAttempts[job.id]??0].join('|');
+  const cards:GalleryCard[]=galleryTargets.filter(item=>item.shotId===shotId)
+    .map(item=>{
+      const history=jobs.filter(job=>job.token===pending?.token&&
+        job.targetKey===item.key&&job.shotId===item.shotId&&
+        job.layerId===item.layerId);
+      // An approved/bound card remains visible even after it leaves
+      // pending.missing. The exact historical job and SHA are retained.
+      const job=history.find(value=>value.status==='APPROVED')??history[0]??null;
+      return{target:item,job,history,
+        spec:prepared?.jobs.find(value=>value.targetKey===item.key)??null};
+    });
+  const inspectedReadyCards=galleryTargets.map(item=>{
+    const history=jobs.filter(job=>job.token===pending?.token&&
+      job.targetKey===item.key&&job.shotId===item.shotId&&job.layerId===item.layerId);
+    const job=history.find(value=>value.status==='APPROVED')??history[0];
+    return{target:item,job};
+  }).filter((card):card is {target:GalleryTarget;job:ImageJob}=>Boolean(
+    card.job?.status==='VALIDATED'&&card.job.staged&&urls[card.job.id]&&
+    !previewErrors[card.job.id]&&previewReady[card.job.id]===previewIdentity(card.job)
+  ));
   const target=shotTargets.find(row=>row.key===selectedKey)??shotTargets[0]??null;
   const spec=prepared?.jobs.find(row=>row.targetKey===target?.key)??null;
   const identity=[id??'',pending?.token??'',spec?.draftIdentity.creativeFingerprint??'',target?.key??''].join('|');
@@ -199,7 +246,7 @@ export function StoryboardWorkspace(){
     selectedPreview&&urls[selectedPreview.id],
     selectedPreview&&previewErrors[selectedPreview.id],
     selectedPreview&&previewAttempts[selectedPreview.id]]);
-  const previewIdentity=(job:ImageJob)=>[id,job.id,job.token,job.staged?.sha256??'-',urls[job.id]??'-',previewAttempts[job.id]??0].join('|');
+
   const prepare=async()=>{
     const scope=captureProjectSession();if(!scope||!window.studio?.prepareImages)return;
     setBusy(true);setError('');
