@@ -161,7 +161,7 @@ describe('Storyboard P1: real renderer queue and paid-action isolation',()=>{
     render(<AppStateProvider><Harness/></AppStateProvider>);
     const preview=await screen.findByTestId('storyboard-selected-image');
     expect(preview).toHaveTextContent('Image generated · validation failed');
-    expect(preview.querySelector('img')).toHaveAttribute('src','studio-media://test/glabs-image.png');
+    await waitFor(()=>expect(preview.querySelector('img')).toHaveAttribute('src','studio-media://test/glabs-image.png'));
     expect(screen.getByText('Job details').closest('details')).not.toHaveAttribute('open');
     const retry=screen.getByRole('button',{name:'Regenerate Image'});
     expect(retry).toBeEnabled();
