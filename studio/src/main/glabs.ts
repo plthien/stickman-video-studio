@@ -474,7 +474,12 @@ export async function pollGlabsImage(appPath:string,root:string,userData:string,
   if(!currentJobTarget(appPath,root,job))return job;
   if(!pureObject(response)||response.task_id!==task)throw new Error('GLABS_STATUS_TASK_ID_MISMATCH');
   const status=String(response.status);
-  if(status==='pending'||status==='running'){job.status='RUNNING';writeJob(root,job);return job;}
+  if(status==='pending'||status==='running'){
+    // Hundreds of active jobs may be checked repeatedly. Do not rewrite the
+    // persisted JSON when the provider status has not actually changed.
+    if(job.status!=='RUNNING'){job.status='RUNNING';writeJob(root,job);}
+    return job;
+  }
   if(status==='failed'){job.status='FAILED';job.reason='Provider reported failure (no automatic retry).';writeJob(root,job);return job;}
   if(status!=='completed')throw new Error('GLABS_STATUS_UNRECOGNIZED');
   const resolved=await requestJson(config,userData,cipher,'GET','api/result/'+task);
