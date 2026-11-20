@@ -234,6 +234,28 @@ describe('Phase-1 Storyboard viewport and owner-started safe bulk generation',()
     view.unmount();
     expect(unsubscribe).toHaveBeenCalled();
   });
+  it('AUTO-UI-03 an early completed provider event survives an older initial jobs snapshot and delayed preparation',async()=>{
+    const running=job('early-completion',0);
+    install([running]);
+    let finishPrepare!:(result:ReturnType<typeof prepared>)=>void;
+    const slowPrepare=new Promise<ReturnType<typeof prepared>>(resolve=>{finishPrepare=resolve;});
+    let notify!: (change:{projectId:string;job:ImageJob})=>void;
+    Object.defineProperty(window,'studio',{configurable:true,value:{
+      ...window.studio,prepareImages:()=>slowPrepare,
+      onGlabsJobChanged:(listener:typeof notify)=>{notify=listener;return()=>undefined;}
+    }});
+    render(<AppStateProvider><Harness/></AppStateProvider>);
+    await waitFor(()=>expect(typeof notify).toBe('function'));
+    const complete={...running,status:'VALIDATED',staged:{
+      path:'assets/images/early-completed.png',sha256:'f'.repeat(64),width:768,height:1376
+    }};
+    await act(async()=>{notify({projectId:'A',job:complete});});
+    finishPrepare(prepared('A'));
+    const image=await screen.findByRole('img',{name:'G-Labs candidate for sh-a/layer-a'});
+    await waitFor(()=>expect(image).toHaveAttribute(
+      'src','studio-media://A/assets/images/early-completed.png'));
+    expect(screen.getByTestId('storyboard-selected-image')).toHaveTextContent('Ready to review');
+  });
   it('AUTO-UI-02 a late image event from project A cannot appear in project B',async()=>{
     install([job('running-a',0)]);
     let notify!: (change:{projectId:string;job:ImageJob})=>void;
