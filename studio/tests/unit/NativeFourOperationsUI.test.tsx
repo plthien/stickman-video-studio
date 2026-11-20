@@ -297,7 +297,7 @@ describe('Storyboard — source-grounded paid image generation for current Nativ
   it('SB-IMG-01 compiles first missing layer automatically; paid submission requires explicit owner click',async()=>{
     const {glabsGenerate}=installStoryboard();
     render(<AppStateProvider><StoryboardHarness/></AppStateProvider>);
-    const generate=await screen.findByRole('button',{name:'Generate Selected (1 paid request)'});
+    const generate=await screen.findByRole('button',{name:'Generate Image'});
     await waitFor(()=>expect(generate).toBeEnabled());
     expect(screen.getByText(/Current Project Style:/).closest('div')).toHaveTextContent('B1');
     expect(screen.getByText(/Source image description:/).closest('div')).toHaveTextContent('layer-1');
@@ -359,7 +359,7 @@ describe('Storyboard — source-grounded paid image generation for current Nativ
     render(<AppStateProvider><StoryboardHarness/></AppStateProvider>);
     await waitFor(()=>expect(screen.getByTestId('glabs-image-unavailable')).toHaveTextContent(
       'No Native DRAFT media candidate staged.'));
-    expect(screen.queryByRole('button',{name:/Generate Selected/})).not.toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:/Generate Image|Regenerate Image/})).not.toBeInTheDocument();
     expect(glabsGenerate).not.toHaveBeenCalled();
   });
 });
