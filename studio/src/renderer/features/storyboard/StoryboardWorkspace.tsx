@@ -1,5 +1,5 @@
 /* eslint-disable react-hooks/exhaustive-deps -- all async refreshes are guarded by the captured project session */
-import {useEffect,useRef,useState} from 'react';
+import {useEffect,useLayoutEffect,useRef,useState} from 'react';
 import {useAppState} from '../../app/AppState';
 import {Badge,Button,Card,CardHeader,Field,Input,Select,Textarea} from '../../components/ui';
 import {LegacyStoryboardWorkspace} from './LegacyStoryboardWorkspace';
@@ -56,6 +56,7 @@ export function StoryboardWorkspace(){
     setPending(nextPending);setJobs(nextJobs);setConfig(nextConfig.config);
     setPrepared(nextPrepared);setUrls(nextUrls);
     setPreviewErrors(previous=>({...previous,...nextErrors}));
+    return{pending:nextPending,jobs:nextJobs};
   };
   useEffect(()=>{
     const scope=captureProjectSession();
@@ -89,7 +90,10 @@ export function StoryboardWorkspace(){
     spec?.styleProfileRef.sha256??'NO_STYLE_AUTHORITY',
     ...unknownAttempts.map(job=>job.id+':'+(job.providerTaskId??'')).sort()
   ].join('|'):'';
-  useEffect(()=>{
+  // Layout effect establishes identity before the freshly displayed UNKNOWN
+  // controls can be clicked. A passive effect can invalidate a just-started
+  // polling request after the click, losing the reconciliation result.
+  useLayoutEffect(()=>{
     recoveryIdentityRef.current=recoveryIdentity;
     recoveryEpoch.current+=1;
     setCheckedUnknown('');
@@ -139,10 +143,18 @@ export function StoryboardWorkspace(){
         window.studio!.glabsPoll(scope.projectId,job.id)));
       if(!isCurrentProjectSession(scope)||recoveryEpoch.current!==epoch||
         recoveryIdentityRef.current!==identity)return;
-      await refresh(scope);
-      if(isCurrentProjectSession(scope)&&recoveryEpoch.current===epoch&&
-        recoveryIdentityRef.current===identity&&outcomes.every(job=>
-          job!==null&&typeof job==='object'&&'status' in job&&job.status==='UNKNOWN'))
+      const refreshed=await refresh(scope);
+      // A late provider response is not authoritative if the persisted job
+      // journal now says RUNNING/FAILED or the set of UNKNOWN jobs changed.
+      const previousIds=unknownAttempts.map(job=>job.id).sort();
+      const persistedIds=refreshed?.jobs.filter(job=>job.token===pending?.token&&
+        job.targetKey===target?.key&&job.status==='UNKNOWN').map(job=>job.id).sort();
+      const stillUnknown=Boolean(refreshed?.pending?.token===pending?.token&&
+        persistedIds&&JSON.stringify(persistedIds)===JSON.stringify(previousIds));
+      if(stillUnknown&&isCurrentProjectSession(scope)&&
+        recoveryEpoch.current===epoch&&recoveryIdentityRef.current===identity&&
+        outcomes.every(job=>job!==null&&typeof job==='object'&&
+          'status' in job&&job.status==='UNKNOWN'))
         setCheckedUnknown(identity);
     }catch(e){if(isCurrentProjectSession(scope)&&recoveryEpoch.current===epoch)
       setError('Checking existing G-Labs attempt failed: '+message(e));}
