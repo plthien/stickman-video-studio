@@ -75,6 +75,7 @@ export function readIdentityWorkflow(root:string):IdentityWorkflowStore{
     (data.ownerVisualDefinitions!==undefined&&
       (!Array.isArray(data.ownerVisualDefinitions)||
        data.ownerVisualDefinitions.length>100||
+       data.ownerVisualDefinitions.some(v=>!v||typeof v.charId!=='string')||
        new Set(data.ownerVisualDefinitions.map(v=>v.charId)).size!==
          data.ownerVisualDefinitions.length)))
     throw Error('IDENTITY_WORKFLOW_CORRUPT');
