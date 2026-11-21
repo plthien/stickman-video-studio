@@ -288,7 +288,7 @@ describe('F24 source-grounded registry, reference payload and strict gates',()=>
       request(root,targets[1].key),decode)).rejects.toThrow('CONTINUITY_SOURCE_NOT_READY');
     expect(posts()).toHaveLength(1);
   });
-  it('VCR-12 current manually approved and bound source is a real exact previous-image dependency',()=>{
+  it('VCR-12 current manually approved and bound source is a real exact previous-image dependency',async()=>{
     const {root,targets}=stage(2);const a=character(root,'char_001',29);
     strict(root);map(root,targets[0].key,['char_001']);
     map(root,targets[1].key,['char_001'],false,
@@ -305,6 +305,12 @@ describe('F24 source-grounded registry, reference payload and strict gates',()=>
     expect(plan.sourceSnapshotSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(plan.references.some(ref=>ref.kind==='previous_image'&&
       ref.sha256===a.ref.sha256)).toBe(true);
+    const dir=credential(),{posts}=transport();
+    await submitGlabsImage(appPath,root,dir,cipher,request(root,targets[1].key),decode);
+    expect(posts()).toHaveLength(1);
+    const payload=posts()[0].body!.reference_images as Array<{data:string}>;
+    expect(payload).toHaveLength(1); // canonical + previous-image have identical bytes
+    expect(sha(Buffer.from(payload[0].data.split(',')[1],'base64'))).toBe(a.ref.sha256);
   });
   it('VCR-14/15 dependency impact is transitive and future/cyclic source mapping fails',()=>{
     const {root,targets}=stage(4);
