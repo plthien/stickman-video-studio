@@ -22,6 +22,7 @@ import {identityWorkflowSnapshot,freezeIdentityTask,importIdentityResult,
   previewIdentityUpgrade,upgradeIdentityPolicy,registerValidatedGeneratedReference,
   readIdentityWorkflow} from './identity/identityWorkflow.js';
 import {listReferenceJobs,submitReferenceJob,syncReferenceJob} from './identity/referenceGeneration.js';
+import {previewReferenceSwitchImpact} from './identity/impact.js';
 import type {IdentityReviewOperation} from './identity/contracts.js';
 import { assertLocalRoot, assertMediaRelative, fileFetchUrl, mediaUrl, projectId, readState, strictJson, writeState, type NativeCommand, type Stage, type StudioState } from './services.js';
 
@@ -113,9 +114,11 @@ function registerIpc() {
   ipcMain.handle('identity:approveReference',(_event,id:string,input:{
     expectedRevision:number;candidateId:string;ownerInspected:true
   })=>approveOwnerReference(rootFor(id),app.getAppPath(),input,decodeGlabsImage));
+  ipcMain.handle('identity:previewReferenceImpact',(_event,id:string,selectedIds:string[])=>
+    previewReferenceSwitchImpact(rootFor(id),selectedIds));
   ipcMain.handle('identity:publishReferences',(_event,id:string,revision:number,
-    selectedIds:string[])=>publishStyleBibleReferences(rootFor(id),app.getAppPath(),
-      revision,selectedIds,decodeGlabsImage));
+    selectedIds:string[],reviewedImpactSha256?:string)=>publishStyleBibleReferences(rootFor(id),app.getAppPath(),
+      revision,selectedIds,decodeGlabsImage,reviewedImpactSha256));
   ipcMain.handle('identity:referenceJobs',(_event,id:string)=>
     listReferenceJobs(rootFor(id)));
   ipcMain.handle('identity:generateReference',(_event,id:string,input:{
