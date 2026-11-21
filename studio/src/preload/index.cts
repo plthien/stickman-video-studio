@@ -16,8 +16,10 @@ contextBridge.exposeInMainWorld('studio', Object.freeze({
   identityApproveBible:(id:string,revision:number)=>invoke('identity:approveBible',id,revision),
   identityRegisterOwnerReference:(id:string,input:unknown)=>invoke('identity:registerOwnerReference',id,input),
   identityApproveReference:(id:string,input:unknown)=>invoke('identity:approveReference',id,input),
-  identityPublishReferences:(id:string,revision:number,selectedIds:string[])=>
-    invoke('identity:publishReferences',id,revision,selectedIds),
+  identityPreviewReferenceImpact:(id:string,selectedIds:string[])=>
+    invoke('identity:previewReferenceImpact',id,selectedIds),
+  identityPublishReferences:(id:string,revision:number,selectedIds:string[],impactSha256?:string)=>
+    invoke('identity:publishReferences',id,revision,selectedIds,impactSha256),
   identityReferenceJobs:(id:string)=>invoke('identity:referenceJobs',id),
   identityGenerateReference:(id:string,input:unknown)=>invoke('identity:generateReference',id,input),
   identitySyncReference:(id:string,jobId:string)=>invoke('identity:syncReference',id,jobId),
