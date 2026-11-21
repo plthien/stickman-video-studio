@@ -8,7 +8,12 @@ export interface PinnedStyle {
 export function compileStyleBible(analysis:ScriptAnalysis,script:ApprovedScriptSnapshot,
   pinned:PinnedStyle):StyleBible{
   validateScriptAnalysis(analysis,script);
-  if(!pinned.guidance.trim()||hash(pinned.guidance)!==pinned.sha256)
+  // loadImageStyleProfile() pins the full installed B1–B4 source (for B4:
+  // manifest + lock + anchors), while guidance is an extracted projection.
+  // Their SHA values are intentionally different. The caller must obtain the
+  // source SHA from that verified loader, and we separately hash guidance.
+  if(!pinned.guidance.trim()||!/^[a-f0-9]{64}$/.test(pinned.sha256)||
+    !['B1','B2','B3','B4'].includes(pinned.id))
     throw Error('STYLE_BIBLE_STYLE_PIN_INVALID');
   const characters:BibleCharacter[]=analysis.continuity_catalog.characters.map(char=>{
     const inherited=structuredClone(char);
