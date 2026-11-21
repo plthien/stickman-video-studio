@@ -35,10 +35,28 @@ const current=(root:string,key:string)=>{
     FAIL('NEEDS_MAPPING_REVIEW');
   return{gallery,target,binding:binding as TargetIdentityBinding};
 };
+/** Source owner extras and B4 style pins are frozen in project-local overrides.
+ * An old-token or changed-creative override cannot authorize current continuity. */
+function currentSourceOwnerReferences(root:string,key:string):string[]{
+  const filename=resolveProjectFile(root,'.studio/storyboard/image-overrides-v1.json');
+  if(!fs.existsSync(filename))return[];
+  const value=strictJson(fs.readFileSync(filename,'utf8')) as {
+    schema?:string;projectId?:string;
+    items?:Record<string,{creativeFingerprint?:string;references?:unknown}>
+  };
+  if(value.schema!=='storyboard-image-overrides-v1'||
+    value.projectId!==readState(root).project.id)return[];
+  const item=value.items?.[key];
+  const current=getNativeImageGallery('',root).targets.find(t=>t.key===key);
+  if(!item||item.creativeFingerprint!==current?.creativeFingerprint||
+    !Array.isArray(item.references)||item.references.some(r=>typeof r!=='string'))
+    return[];
+  return item.references as string[];
+}
 /** Verify the source is not itself stale under a newly changed ancestor/master.
  * Read-only, no Native binding mutations or paid generation. */
 function approvedSourceCurrent(root:string,key:string,sourceSha:string):boolean{
-  const ancestor=resolveVisualReferences(root,key);
+  const ancestor=resolveVisualReferences(root,key,currentSourceOwnerReferences(root,key));
   if(!ancestor.enabled||ancestor.readiness!=='READY')return false;
   const file=resolveProjectFile(root,'.studio/visual-identity/visual-review-v1.json');
   if(!fs.existsSync(file))return false;
