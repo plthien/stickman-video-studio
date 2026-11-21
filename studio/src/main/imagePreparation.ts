@@ -3,8 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {getPendingMedia,nativeImageTargetIdentity,nativeImageTargetIdentityFromSnapshot,readNativeDraft} from './externalTasks.js';
 import {imageRequirementsForTarget} from './imageRequirements.js';
-import {resolveNativeTargetBinding} from './identity/nativeBinding.js';
-import {resolveApprovedPreviousImage} from './identity/continuityGraph.js';
+import {createContinuityResolver} from './identity/continuityGraph.js';
 import {contentHash} from './identity/contracts.js';
 import {nativeSkillRoot,readState,resolveProjectFile,sha,atomicJson,strictJson} from './services.js';
 
@@ -247,11 +246,13 @@ function findExactLayer(layers:unknown[],layerId:string,pathValue:string):boolea
 }
 /** Canonical refs are compiler-owned; owner edits only supplemental refs.
  * Never mutate legacy specs or silently remove a required reference. */
-function withUpstreamIdentity(appPath:string,root:string,item:ImageJobSpec):ImageJobSpec{
-  if(readState(root).identityPolicy!=='v1')return item;
+function withUpstreamIdentity(appPath:string,root:string,item:ImageJobSpec,
+  preverified?:ReturnType<typeof createContinuityResolver>):ImageJobSpec{
+  if(!preverified&&readState(root).identityPolicy!=='v1')return item;
   try{
-    const binding=resolveNativeTargetBinding(root,appPath,item.targetKey);
-    const previous=resolveApprovedPreviousImage(appPath,root,item.targetKey);
+    const resolver=preverified??createContinuityResolver(appPath,root);
+    const binding=resolver.getBinding(item.targetKey);
+    const previous=resolver.resolve(item.targetKey);
     const canonical=binding.canonicalAnchors;
     const ownerRefs=[...item.references];
     const lockedStyle=ownerRefs.filter(r=>r.startsWith('@modeb/b4/'));
@@ -330,9 +331,11 @@ export function prepareNativeImages(appPath:string,root:string,persist=false){
     catch{fingerprints[target.key]='';}
   }
   const profile=loadImageStyleProfile(appPath,style);
+  const resolver=state.identityPolicy==='v1'?
+    createContinuityResolver(appPath,root):undefined;
   const jobs=compileImageJobSpecs({projectId:state.project.id,style,authorTaskId:draft.authorTaskId,draftRevision:draft.revision,
     token:draft.token,pending,profile,fingerprints,overrides:overrides.items})
-    .map(job=>withUpstreamIdentity(appPath,root,job));
+    .map(job=>resolver?withUpstreamIdentity(appPath,root,job,resolver):job);
   const result={status:'PRE_MEDIA_PROJECTION' as const,style,revision:draft.revision,token:draft.token,
     jobs,shotCount:Array.isArray(pending.after?.shots)?pending.after!.shots!.length:0,imageOccurrences:image.length,
     uniquePaths:new Set(image.map(target=>target.path)).size};
