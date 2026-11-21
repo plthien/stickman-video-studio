@@ -17,10 +17,35 @@ export interface NativeIdentityReceipt{
   schema:'stickman-native-identity-publication-v1';
   projectId:string;nativeProjectSha:string;sourceSnapshotSha:string;
   approvalSetSha:string;rows:NativeIdentityReceiptRow[];
+  scope:'FULL'|'SAMPLE';totalTargets:number;sampleSeconds:number|null;
   revision:number;createdAt:string;receiptSha:string;
 }
 const receiptFile=(root:string)=>resolveProjectFile(root,'.studio/identity/native-publication-v1.json');
-export function currentDraftIdentityReceipt(root:string,appPath:string){
+/** A sample receipt attests only layers that start inside the sample window. */
+function targetStarts(manifest:Record<string,unknown>,targetKey:string):number{
+  const shotIndex=Number(/^image:([0-9]+):/.exec(targetKey)?.[1]);
+  const shot=(manifest.shots as Array<Record<string,unknown>>)[shotIndex];
+  if(!shot||!Number.isFinite(Number(shot.start)))throw Error('IDENTITY_SAMPLE_SHOT_INVALID');
+  const visit=(layers:unknown[],from=0):number|null=>{
+    for(const item of layers){
+      if(!item||typeof item!=='object'||Array.isArray(item))continue;
+      const node=item as Record<string,unknown>;
+      const next=Math.max(from,Number(node.from??0));
+      if(node.type==='image'&&targetKey==='image:'+shotIndex+':'+node.id)
+        return Number(shot.start)+next;
+      if(Array.isArray(node.children)){
+        const found=visit(node.children,next);if(found!==null)return found;
+      }
+    }
+    return null;
+  };
+  const start=visit(Array.isArray(shot.layers)?shot.layers:[]);
+  if(start===null||!Number.isFinite(start)||start<0)
+    throw Error('IDENTITY_SAMPLE_TARGET_TIMING_INVALID');
+  return start;
+}
+export function currentDraftIdentityReceipt(root:string,appPath:string,
+  sampleSeconds?:number){
   const state=readState(root);
   if(state.identityPolicy!=='v1')return null;
   const draft=readNativeDraft(root,state);
@@ -32,8 +57,14 @@ export function currentDraftIdentityReceipt(root:string,appPath:string){
   const gallery=getNativeImageGallery(appPath,root);
   if(gallery.token!==draft.token||gallery.targets.length!==verified.plans.length)
     throw Error('IDENTITY_NATIVE_GALLERY_MISMATCH');
+  if(sampleSeconds!==undefined&&
+    (!Number.isFinite(sampleSeconds)||sampleSeconds<=0))
+    throw Error('IDENTITY_SAMPLE_SECONDS_INVALID');
+  const scope=sampleSeconds===undefined?'FULL' as const:'SAMPLE' as const;
+  const selected=verified.plans.filter(plan=>
+    sampleSeconds===undefined||targetStarts(native.manifest,plan.targetKey)<sampleSeconds);
   const jobs=listGlabsJobs(root),rows:NativeIdentityReceiptRow[]=[];
-  for(const plan of verified.plans){
+  for(const plan of selected){
     const target=gallery.targets.find(row=>row.key===plan.targetKey);
     if(!target||!target.fulfilled||!target.boundSha256)
       throw Error('IDENTITY_NATIVE_IMAGE_UNFULFILLED: '+plan.targetKey);
@@ -64,6 +95,7 @@ export function currentDraftIdentityReceipt(root:string,appPath:string){
   }
   return{projectId:state.project.id,sourceSnapshotSha:verified.identity.snapshotSha,
     approvalSetSha:verified.identity.approvalSetSha,
+    scope,totalTargets:verified.plans.length,sampleSeconds:sampleSeconds??null,
     rows:rows.sort((a,b)=>a.targetKey.localeCompare(b.targetKey))};
 }
 export function publishNativeIdentityReceipt(root:string,appPath:string,
@@ -82,7 +114,7 @@ export function publishNativeIdentityReceipt(root:string,appPath:string,
   if(sha(bytes)!==expectedNativeSha)throw Error('IDENTITY_NATIVE_MANIFEST_CHANGED');
   const manifest=strictJson(bytes.toString('utf8')) as Record<string,unknown>;
   const actual=actualPublishedImages(manifest);
-  if(actual.size!==current.rows.length||
+  if(actual.size!==current.totalTargets||
     current.rows.some(row=>actual.get(row.targetKey)!==row.imagePath))
     throw Error('IDENTITY_NATIVE_PUBLISHED_MAPPING_MISMATCH');
   const previous=readNativeIdentityReceipt(root);
@@ -124,7 +156,8 @@ function actualPublishedImages(manifest:Record<string,unknown>){
 }
 /** Call before and AFTER each Native CLI/preview reuse. Immutable last-good
  * project.json is never treated as an F24 certification by itself. */
-export function assertPublishedIdentityCurrent(root:string,appPath:string){
+export function assertPublishedIdentityCurrent(root:string,appPath:string,
+  required:'FULL'|'SAMPLE'='FULL'){
   const state=readState(root);
   if(state.identityPolicy!=='v1')return null;
   const identity=readApprovedNativeIdentity(root,appPath);
@@ -132,12 +165,19 @@ export function assertPublishedIdentityCurrent(root:string,appPath:string){
   if(!receipt||receipt.sourceSnapshotSha!==identity.snapshotSha||
     receipt.approvalSetSha!==identity.approvalSetSha)
     throw Error('IDENTITY_PUBLISHED_REFERENCE_LINEAGE_STALE');
+  if(receipt.scope==='SAMPLE'&&required==='FULL')
+    throw Error('IDENTITY_SAMPLE_NOT_FULLY_CERTIFIED');
+  if(!['SAMPLE','FULL'].includes(receipt.scope)||
+    !Number.isSafeInteger(receipt.totalTargets)||receipt.totalTargets<receipt.rows.length)
+    throw Error('IDENTITY_PUBLISHED_RECEIPT_SCOPE_INVALID');
   const bytes=fs.readFileSync(resolveProjectFile(root,'project.json'));
   if(sha(bytes)!==receipt.nativeProjectSha)
     throw Error('IDENTITY_PUBLISHED_NATIVE_SOURCE_STALE');
   const manifest=strictJson(bytes.toString('utf8')) as Record<string,unknown>;
   const current=actualPublishedImages(manifest);
-  if(current.size!==receipt.rows.length)throw Error('IDENTITY_PUBLISHED_IMAGE_COUNT_MISMATCH');
+  if(current.size!==receipt.totalTargets)throw Error('IDENTITY_PUBLISHED_IMAGE_COUNT_MISMATCH');
+  if(receipt.scope==='FULL'&&receipt.rows.length!==receipt.totalTargets)
+    throw Error('IDENTITY_PUBLISHED_FULL_COVERAGE_INVALID');
   for(const row of receipt.rows){
     if(current.get(row.targetKey)!==row.imagePath)
       throw Error('IDENTITY_PUBLISHED_NATIVE_IMAGE_REMAPPED');
