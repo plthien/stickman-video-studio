@@ -749,11 +749,6 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
     writeState(root,state);
     fs.unlinkSync(pendingPath(root));return state;
   }
-  // F24 Native author/publish is gated until structured exact-target identity
-  // snapshots are verified end-to-end. Do not promote a legacy-format Native
-  // candidate under a new v1 identity policy.
-  if(state.identityPolicy==='v1')
-    throw new Error('IDENTITY_NATIVE_EXACT_BINDINGS_NOT_READY');
   const identityReceipt=state.identityPolicy==='v1'?
     currentDraftIdentityReceipt(root,appPath):null;
   const seconds=validateSeconds(options.previewSeconds);
