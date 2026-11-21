@@ -85,6 +85,14 @@ describe('F24 upstream source-grounded contract gates',()=>{
     expect(()=>referencePromptForCharacter(incomplete,'char_001',style))
       .toThrow('STYLE_BIBLE_NEEDS_OWNER_DEFINITION');
   });
+  it('U09/R10 pins full B1–B4 source SHA separately from extracted guidance text SHA',()=>{
+    const pinned={...style,sha256:'c'.repeat(64)};
+    const bible=compileStyleBible(analysis(),script,pinned);
+    expect(bible.style_profile_sha256).toBe(pinned.sha256);
+    expect(bible.style_guidance_sha256).toBe(hash(pinned.guidance));
+    expect(bible.style_guidance_sha256).not.toBe(bible.style_profile_sha256);
+    expect(()=>referencePromptForCharacter(bible,'char_001',pinned)).not.toThrow();
+  });
   it('R01/R02 compiles a single 1:1 four-view human or single group overview',()=>{
     const bible=compileStyleBible(analysis(),script,style);
     const prompt=referencePromptForCharacter(bible,'char_001',style);
