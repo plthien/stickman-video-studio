@@ -8,6 +8,10 @@ import { reconcileScriptActivation, confirmImport, freezeTask, stageImport, getN
 import {confirmLifecycleResult,freezeLifecycleTask,readFrozenExternalTask,stageLifecycleResult} from './externalLifecycle.js';
 import {readExternalHistory} from './externalHistory.js';
 import {prepareNativeImages,saveNativeImagePrompt,loadImageStyleProfile} from './imagePreparation.js';
+import {readCharacterRegistry,readTargetBindings,registerCharacter,addCharacterReference,
+  approveCharacter,setStrictCharacterMode,archiveCharacter,saveTargetBinding,previewCharacterImpact} from './visualIdentityRegistry.js';
+import {characterCoverage,resolveVisualReferences} from './visualReferenceResolver.js';
+import {attestVisualCandidate,attestBoundVisual,readVisualReviews} from './visualIdentityReview.js';
 import { getCaptionReview, draftCaptionReview, approveCaptionReview,autoCaptionReview } from './captionReview.js';
 import {glabsSettings,saveGlabsSettings,glabsCredentialStatus,saveGlabsKey,clearGlabsKey,glabsProbe,reconcileGlabsJobs,readGlabsJob,submitGlabsImage,pollGlabsImage,approveGlabsImage,cancelQueuedGlabsImage,type GLabsSettings,type ImageRequest} from './glabs.js';
 import {createGlabsAutoPolling} from './glabsAutoPolling.js';
@@ -90,6 +94,46 @@ function registerIpc() {
     return{...inventory,
       styleProfileSha256:loadImageStyleProfile(app.getAppPath(),style as 'B1'|'B2'|'B3'|'B4').sha256};
   });
+  // F24 owner-local Registry/mapping IPC. Read paths never initiate a provider request.
+  ipcMain.handle('visualIdentity:snapshot',(_event,id:string)=>{
+    const root=rootFor(id),coverage=characterCoverage(root),registry=readCharacterRegistry(root),
+      bindings=readTargetBindings(root),reviews=readVisualReviews(root);
+    return{registry,bindings,coverage,reviews};
+  });
+  ipcMain.handle('visualIdentity:createCharacter',(_event,id:string,input:Parameters<typeof registerCharacter>[1])=>
+    registerCharacter(rootFor(id),input));
+  ipcMain.handle('visualIdentity:setStrict',(_event,id:string,input:Parameters<typeof setStrictCharacterMode>[1])=>
+    setStrictCharacterMode(rootFor(id),input));
+  ipcMain.handle('visualIdentity:impact',(_event,id:string,characterId:string)=>
+    previewCharacterImpact(rootFor(id),characterId));
+  ipcMain.handle('visualIdentity:approveCharacter',(_event,id:string,input:Parameters<typeof approveCharacter>[1])=>
+    approveCharacter(rootFor(id),input));
+  ipcMain.handle('visualIdentity:archiveCharacter',(_event,id:string,input:Parameters<typeof archiveCharacter>[1])=>
+    archiveCharacter(rootFor(id),input));
+  ipcMain.handle('visualIdentity:mapTarget',(_event,id:string,input:Parameters<typeof saveTargetBinding>[1])=>
+    saveTargetBinding(rootFor(id),input));
+  ipcMain.handle('visualIdentity:addExistingReference',(_event,id:string,input:Parameters<typeof addCharacterReference>[1])=>
+    addCharacterReference(rootFor(id),input,decodeGlabsImage));
+  ipcMain.handle('visualIdentity:importReference',async(_event,id:string,input:{
+    characterId:string;referenceId:string;expectedRevision:number;rights:string
+  })=>{
+    if(!input||typeof input.rights!=='string'||!input.rights.trim())
+      throw new Error('CHARACTER_OWNER_SOURCE_RIGHTS_REQUIRED');
+    const root=rootFor(id);
+    const pick=await dialog.showOpenDialog({properties:['openFile'],
+      filters:[{name:'Approved character images',extensions:['png','jpg','jpeg']}]});
+    if(pick.canceled)return null;
+    const imported=importMediaFile(root,pick.filePaths[0],'image',input.rights);
+    return addCharacterReference(root,{characterId:input.characterId,
+      referenceId:input.referenceId,relativePath:imported.path,
+      expectedRevision:input.expectedRevision},decodeGlabsImage);
+  });
+  ipcMain.handle('visualIdentity:attestCandidate',(_event,id:string,input:Parameters<typeof attestVisualCandidate>[1])=>
+    attestVisualCandidate(rootFor(id),input));
+  ipcMain.handle('visualIdentity:attestBound',(_event,id:string,input:Parameters<typeof attestBoundVisual>[1])=>
+    attestBoundVisual(rootFor(id),input));
+  ipcMain.handle('visualIdentity:resolve',(_event,id:string,targetKey:string)=>
+    resolveVisualReferences(rootFor(id),targetKey));
   ipcMain.handle('storyboard:prepareImages',(_event,id:string,persist=false)=>prepareNativeImages(app.getAppPath(),rootFor(id),persist===true));
   ipcMain.handle('storyboard:saveImagePrompt',(_event,id:string,input:Parameters<typeof saveNativeImagePrompt>[2])=>saveNativeImagePrompt(app.getAppPath(),rootFor(id),input));
   ipcMain.handle('glabs:settings',()=>({config:glabsSettings(app.getPath('userData')),credential:glabsCredentialStatus(app.getPath('userData'),safeStorage)}));
