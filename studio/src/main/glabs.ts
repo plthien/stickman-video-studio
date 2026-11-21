@@ -17,7 +17,7 @@ export interface GLabsJob {
   authorTaskId?:string;draftRevisionAtSubmission?:number;targetCreativeSha256?:string;
   styleProfileId?:'B1'|'B2'|'B3'|'B4';styleProfileSha256?:string;
   prompt:string;promptSha256:string;references:Array<{path:string;sha256:string;mime:string;name:string;rightsSha256:string}>;model:string;aspectRatio:string;status:JobStatus;
-  identityBindingSnapshotSha?:string;identityApprovalSetSha?:string;
+  identityBindingSnapshotSha?:string;identityTargetBindingSha?:string;identityApprovalSetSha?:string;
   identityStyleBibleSha?:string;identityCharacterIds?:string[];
   identityRequiredReferences?:string[];identityPreviousSourceSha?:string;
   providerTaskId?:string;staged?:{path:string;sha256:string;mime:string;width:number;height:number};
@@ -438,6 +438,7 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
     styleProfileId:styleProfile.id,styleProfileSha256:styleProfile.sha256,
     ...(prepared?.identityBindingSnapshotSha?{
       identityBindingSnapshotSha:prepared.identityBindingSnapshotSha,
+      identityTargetBindingSha:prepared.identityTargetBindingSha,
       identityApprovalSetSha:prepared.identityApprovalSetSha,
       identityStyleBibleSha:prepared.identityStyleBibleSha,
       identityCharacterIds:[...(prepared.identityCharacterIds??[])],
