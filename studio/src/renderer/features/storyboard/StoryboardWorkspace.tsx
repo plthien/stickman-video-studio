@@ -638,6 +638,7 @@ export function StoryboardWorkspace(){
           Approve All Inspected Ready ({inspectedReadyCards.length})
         </Button>
       </div>
+      {error&&<div className="info error" role="alert">{error}</div>}
       {batchProgress&&<div className="storyboard-batch-progress" role="status" data-testid="image-batch-progress">
         <strong>{batchProgress.state==='running'?'Submitting image requests':
           batchProgress.state==='complete'?'Batch submitted':'Batch stopped'}</strong>
