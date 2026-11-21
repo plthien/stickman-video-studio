@@ -123,7 +123,7 @@ describe('F09 Native Shot full-card gallery without selecting Layers',()=>{
     expect(card).toHaveTextContent('Needs Regeneration');
     expect(within(card).queryByText('Approved')).not.toBeInTheDocument();
     expect(within(card).getByRole('button',{
-      name:'Regenerate for Current Draft · portrait'
+      name:'Regenerate for Current Draft (Paid) · portrait'
     })).toBeEnabled();
   });
   it('F15-UI-01 extreme generated ratio remains intrinsic with contain and uncropped expansion',()=>{
