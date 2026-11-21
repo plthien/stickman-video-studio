@@ -18,6 +18,9 @@ contextBridge.exposeInMainWorld('studio', Object.freeze({
   identityApproveReference:(id:string,input:unknown)=>invoke('identity:approveReference',id,input),
   identityPublishReferences:(id:string,revision:number,selectedIds:string[])=>
     invoke('identity:publishReferences',id,revision,selectedIds),
+  identityReferenceJobs:(id:string)=>invoke('identity:referenceJobs',id),
+  identityGenerateReference:(id:string,input:unknown)=>invoke('identity:generateReference',id,input),
+  identitySyncReference:(id:string,jobId:string)=>invoke('identity:syncReference',id,jobId),
   galleryImages: (id: string) => invoke('storyboard:gallery', id),
   prepareImages: (id: string, persist = false) => invoke('storyboard:prepareImages', id, persist), saveImagePrompt: (id: string, input: unknown) => invoke('storyboard:saveImagePrompt', id, input),
   glabsSettings:()=>invoke('glabs:settings'), glabsConfigure:(settings:unknown)=>invoke('glabs:configure',settings), glabsSaveKey:(key:string)=>invoke('glabs:saveKey',key), glabsClearKey:()=>invoke('glabs:clearKey'), glabsProbe:()=>invoke('glabs:probe'), glabsJobs:(id:string)=>invoke('glabs:jobs',id), glabsGenerate:(id:string,input:unknown)=>invoke('glabs:generate',id,input), glabsPoll:(id:string,jobId:string)=>invoke('glabs:poll',id,jobId), glabsCancelQueued:(id:string,jobId:string)=>invoke('glabs:cancelQueued',id,jobId), glabsApprove:(id:string,jobId:string,rights?:string)=>invoke('glabs:approve',id,jobId,rights),
