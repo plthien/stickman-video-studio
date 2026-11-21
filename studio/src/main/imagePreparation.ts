@@ -246,7 +246,7 @@ function withVisualIdentity(root:string,item:ImageJobSpec):ImageJobSpec{
   const ownerReferences=[...item.references];
   const addition=plan.effectivePromptAppendix;
   const effectivePrompt=addition&&item.effectivePrompt?
-    item.effectivePrompt+'\\n\\n'+addition:item.effectivePrompt;
+    item.effectivePrompt+'\n\n'+addition:item.effectivePrompt;
   return{...item,
     state:item.state==='READY'&&plan.readiness!=='READY'?'BLOCKED':item.state,
     reason:item.state==='READY'&&plan.readiness!=='READY'?plan.blockers.join(', '):item.reason,
