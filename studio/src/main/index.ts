@@ -20,7 +20,7 @@ import {identityWorkflowSnapshot,freezeIdentityTask,importIdentityResult,
   approveScriptAnalysis,prepareProjectStyleBible,approveProjectStyleBible,
   registerOwnerReference,approveOwnerReference,publishStyleBibleReferences,
   previewIdentityUpgrade,upgradeIdentityPolicy,registerValidatedGeneratedReference,
-  readIdentityWorkflow} from './identity/identityWorkflow.js';
+  readIdentityWorkflow,approveOwnerVisualDefinition} from './identity/identityWorkflow.js';
 import {listReferenceJobs,submitReferenceJob,syncReferenceJob} from './identity/referenceGeneration.js';
 import {previewReferenceSwitchImpact} from './identity/impact.js';
 import type {IdentityReviewOperation} from './identity/contracts.js';
@@ -108,6 +108,10 @@ function registerIpc() {
     prepareProjectStyleBible(rootFor(id),app.getAppPath(),revision));
   ipcMain.handle('identity:approveBible',(_event,id:string,revision:number)=>
     approveProjectStyleBible(rootFor(id),app.getAppPath(),revision,true));
+  ipcMain.handle('identity:approveVisualDefinition',(_event,id:string,input:{
+    expectedRevision:number;anchorId:string;provenance:'SCRIPT_AUTHOR'|'OWNER_BRIEF';
+    evidence:string;traits:string[];ownerInspected:true
+  })=>approveOwnerVisualDefinition(rootFor(id),app.getAppPath(),input));
   ipcMain.handle('identity:registerOwnerReference',(_event,id:string,input:{
     expectedRevision:number;anchorId:string;relativePath:string;ownerSource:string
   })=>registerOwnerReference(rootFor(id),app.getAppPath(),input,decodeGlabsImage));
