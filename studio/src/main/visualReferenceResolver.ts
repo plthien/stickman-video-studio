@@ -1,5 +1,4 @@
 /** F24 authoritative reference planner. No API, paid POST, inferred actor or image mutation. */
-import fs from 'node:fs';
 import {getNativeImageGallery} from './externalTasks.js';
 import {readState,sha} from './services.js';
 import {readCharacterRegistry,readTargetBindings,verifyIdentityMedia,
@@ -150,17 +149,18 @@ export function resolveVisualReferences(root:string,targetKey:string,ownerRefs:s
     orderedPaths};
 }
 export function assertVisualReferenceCurrent(root:string,input:{
-  targetKey:string;referenceSetSha256?:string;references:string[]
+  targetKey:string;referenceSetSha256?:string;
+  ownerReferences:string[];compiledReferences:string[];
 }){
-  const plan=resolveVisualReferences(root,input.targetKey,
-    input.references.filter(r=>r.startsWith('@modeb/b4/')||
-      // Manual paths already present in the frozen set must not be treated as extra overrides.
-      !readTargetBindings(root).bindings.length));
-  if(!plan.enabled)return;
+  const plan=resolveVisualReferences(root,input.targetKey,input.ownerReferences);
+  if(!plan.enabled){
+    if(input.referenceSetSha256)throw new Error('REFERENCE_STALE');
+    return;
+  }
   if(plan.readiness!=='READY')throw new Error(plan.readiness);
   if(!input.referenceSetSha256||input.referenceSetSha256!==plan.referenceSetSha256)
     throw new Error('REFERENCE_STALE');
-  if(JSON.stringify([...new Set(plan.orderedPaths)])!==JSON.stringify(input.references))
+  if(JSON.stringify(plan.orderedPaths)!==JSON.stringify(input.compiledReferences))
     throw new Error('REFERENCE_STALE');
 }
 export function characterCoverage(root:string){
