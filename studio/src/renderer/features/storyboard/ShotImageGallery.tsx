@@ -134,13 +134,14 @@ function CardPromptEditor({card,onSave}:{
 }
 
 
-function IdentityReferencePreview({projectId,sourcePath,anchorId}:{
-  projectId:string;sourcePath:string;anchorId:string
+function IdentityReferencePreview({projectId,sourcePath,anchorId,onVerified}:{
+  projectId:string;sourcePath:string;anchorId:string;
+  onVerified:(anchorId:string,valid:boolean)=>void
 }){
   const [url,setUrl]=useState('');
   const [loaded,setLoaded]=useState(false);
   useEffect(()=>{
-    let alive=true;setUrl('');setLoaded(false);
+    let alive=true;setUrl('');setLoaded(false);onVerified(anchorId,false);
     if(!window.studio)return;
     void window.studio.mediaUrl(projectId,sourcePath).then(value=>{
       if(alive)setUrl(value);
@@ -152,8 +153,9 @@ function IdentityReferencePreview({projectId,sourcePath,anchorId}:{
     {url?<img src={url} alt={'Canonical character reference '+anchorId}
       onLoad={e=>{
         const image=e.currentTarget;
-        setLoaded(image.complete&&image.naturalWidth>0&&image.naturalHeight>0);
-      }} onError={()=>setLoaded(false)}/>:<span>Reference unavailable</span>}
+        const valid=image.complete&&image.naturalWidth>0&&image.naturalHeight>0;
+        setLoaded(valid);onVerified(anchorId,valid);
+      }} onError={()=>{setLoaded(false);onVerified(anchorId,false);}}/>:<span>Reference unavailable</span>}
     <small>{loaded?'Reference loaded':'Reference not yet verified in preview'}</small>
   </div>;
 }
@@ -167,6 +169,7 @@ function ImagePreviewLightbox({card,url,onClose,triggerRef,projectId,onIdentityR
     referenceSetSha256:string)=>void;reviewed:boolean;
 }){
   const [scale,setScale]=useState<'fit'|'original'>('fit');
+  const [verifiedRefs,setVerifiedRefs]=useState<Set<string>>(new Set());
   const dialogRef=useRef<HTMLDivElement>(null);
   const closeRef=useRef<HTMLButtonElement>(null);
   useEffect(()=>{
@@ -238,10 +241,17 @@ function ImagePreviewLightbox({card,url,onClose,triggerRef,projectId,onIdentityR
           <strong>Canonical Registry · owner identity review</strong>
           <small>Compare real master image(s) with the candidate. This is not a machine likeness check.</small>
           {canonical.map(ref=><IdentityReferencePreview key={ref.anchorId+'|'+ref.sha256}
-            projectId={projectId} sourcePath={ref.sourcePath} anchorId={ref.anchorId}/>)}
+            projectId={projectId} sourcePath={ref.sourcePath} anchorId={ref.anchorId}
+            onVerified={(id,valid)=>setVerifiedRefs(previous=>{
+              if(previous.has(id)===valid)return previous;
+              const next=new Set(previous);
+              if(valid)next.add(id);else next.delete(id);
+              return next;
+            })}/>)}
           {!canonical.length&&<div className="info">Explicit no recurring character.</div>}
           <div className="info">Reference digest: {card.spec?.referenceSetSha256?.slice(0,16)}</div>
-          <Button disabled={reviewed||!onIdentityReviewed}
+          <Button disabled={reviewed||!onIdentityReviewed||
+            canonical.some(ref=>!verifiedRefs.has(ref.anchorId))}
             onClick={()=>onIdentityReviewed?.(card.job!.id,card.target.key,
               staged.sha256,card.spec!.referenceSetSha256!)}>
             {reviewed?'Identity visually checked':'I visually checked this candidate against master'}
