@@ -22,7 +22,7 @@ export interface ReferencePlan{
 const hash=(v:unknown)=>sha(JSON.stringify(v));
 const FAIL=(msg:ReferenceReadiness)=>{throw new Error(msg)};
 const current=(root:string,key:string)=>{
-  const gallery=getNativeImageGallery(root);
+  const gallery=getNativeImageGallery('',root);
   const target=gallery.targets.find(t=>t.key===key);
   if(!target||!target.creativeFingerprint||!gallery.token)
     throw new Error('CHARACTER_TARGET_CURRENT_DRAFT_REQUIRED');
@@ -164,7 +164,7 @@ export function assertVisualReferenceCurrent(root:string,input:{
     throw new Error('REFERENCE_STALE');
 }
 export function characterCoverage(root:string){
-  const registry=readCharacterRegistry(root),gallery=getNativeImageGallery(root);
+  const registry=readCharacterRegistry(root),gallery=getNativeImageGallery('',root);
   const result=gallery.targets.map(t=>{
     const mapping=readTargetBindings(root).bindings.find(b=>b.targetKey===t.key);
     const current=!!mapping&&mapping.draftToken===gallery.token&&
