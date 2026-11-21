@@ -13,6 +13,7 @@ import {approveCandidate,publishApprovalSet,validatePublishedSet,verifyReference
   type ReferenceCandidate,type ReferenceApprovalSet,type IdentityDecoder} from './referencePublication.js';
 import {referencePromptForCharacter} from './styleBible.js';
 import {importMediaFile} from '../externalTasks.js';
+import {previewReferenceSwitchImpact,assertNoIdentityBusyJobs} from './impact.js';
 
 type TaskState='FROZEN'|'IMPORTED'|'STALE';
 interface TaskEntry{task:AnalysisTask;status:TaskState;frozenArtifactSha:string|null;at:string}
@@ -395,7 +396,8 @@ export function approveOwnerReference(root:string,appPath:string,input:{
   return save(root,prior,next,'approve:reference',approved);
 }
 export function publishStyleBibleReferences(root:string,appPath:string,
-  expectedRevision:number,selectedIds:string[],decode:IdentityDecoder){
+  expectedRevision:number,selectedIds:string[],decode:IdentityDecoder,
+  reviewedImpactSha256?:string){
   const prior=readIdentityWorkflow(root);
   if(prior.revision!==expectedRevision)throw Error('IDENTITY_REVISION_CONFLICT');
   const {script,analysis}=validApproved(root,prior);
@@ -405,6 +407,16 @@ export function publishStyleBibleReferences(root:string,appPath:string,
   const selected=selectedIds.map(id=>prior.referenceCandidates.find(c=>
     c.candidate_id===id&&c.status==='APPROVED'));
   if(selected.some(x=>!x))throw Error('REFERENCE_APPROVAL_SET_MISSING_CANDIDATE');
+  const impact=previewReferenceSwitchImpact(root,selectedIds);
+  if(prior.referenceApprovalSet&&impact.changedCharacterIds.length){
+    if(reviewedImpactSha256!==impact.impactSha256)
+      throw Error('REFERENCE_CANONICAL_IMPACT_REVIEW_REQUIRED');
+    assertNoIdentityBusyJobs(root,impact.affectedTargetKeys);
+  }
+  // Re-publishing the very same approved source must be idempotent; a synthetic
+  // revision bump would incorrectly stale every already-generated image.
+  if(prior.referenceApprovalSet&&!impact.changedCharacterIds.length)
+    return prior;
   const approvalSet=publishApprovalSet(root,bible,selected as ReferenceCandidate[],
     (prior.referenceApprovalSet?.revision??0)+1,decode);
   const next=clone(prior);next.referenceApprovalSet=approvalSet;
