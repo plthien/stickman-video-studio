@@ -315,8 +315,31 @@ export function previewCharacterImpact(root:string,characterId:string){
       }
     }
   }
-  const targets=[...affected].sort();
+  const targets=[...affected].sort(),direct=new Set(store.bindings.filter(b=>
+    b.characters.includes(characterId)).map(b=>b.targetKey));
+  const gallery=getNativeImageGallery('',root);
+  const busyAndApproved:Array<{targetKey:string;jobId:string;status:string}>=[];
+  const dir=resolveProjectFile(root,'.studio/glabs/jobs');
+  if(fs.existsSync(dir))for(const name of fs.readdirSync(dir).filter(n=>
+    /^[a-f0-9-]{36}\.json$/i.test(n))){
+    const job=strictJson(fs.readFileSync(resolveProjectFile(root,
+      '.studio/glabs/jobs/'+name),'utf8')) as Record<string,unknown>;
+    if(job.projectId===registry.projectId&&targets.includes(String(job.targetKey))&&
+      ['QUEUED','SUBMITTED','RUNNING','DOWNLOADED','UNKNOWN','APPROVED'].includes(String(job.status)))
+      busyAndApproved.push({targetKey:String(job.targetKey),jobId:String(job.id),
+        status:String(job.status)});
+  }
+  const impacts=targets.map(targetKey=>{
+    const current=gallery.targets.find(t=>t.key===targetKey);
+    const source=store.bindings.find(b=>b.targetKey===targetKey);
+    return{targetKey,reason:direct.has(targetKey)?'direct_character':'continuity_descendant',
+      currentDraft:Boolean(current&&source&&source.draftToken===gallery.token&&
+        source.creativeFingerprint===current.creativeFingerprint),
+      currentlyBound:Boolean(current?.fulfilled),
+      jobs:busyAndApproved.filter(j=>j.targetKey===targetKey)
+    };
+  });
   const impactSha256=hash({projectId:registry.projectId,registryRevision:registry.revision,
     bindingRevision:store.revision,characterId,targets});
-  return{characterId,targets,impactSha256};
+  return{characterId,targets,impacts,impactSha256};
 }
