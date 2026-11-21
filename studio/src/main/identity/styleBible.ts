@@ -1,0 +1,71 @@
+/** A deterministic derived Style Bible. It MUST NOT author characters itself. */
+import {canonical,contentHash,hash,loadSchema,validateWithSchema,
+  type StyleBible,type ScriptAnalysis,type BibleCharacter} from './contracts.js';
+import {validateScriptAnalysis,type ApprovedScriptSnapshot} from './scriptAnalysis.js';
+export interface PinnedStyle {
+  id:'B1'|'B2'|'B3'|'B4';guidance:string;sha256:string;
+}
+export function compileStyleBible(analysis:ScriptAnalysis,script:ApprovedScriptSnapshot,
+  pinned:PinnedStyle):StyleBible{
+  validateScriptAnalysis(analysis,script);
+  if(!pinned.guidance.trim()||hash(pinned.guidance)!==pinned.sha256)
+    throw Error('STYLE_BIBLE_STYLE_PIN_INVALID');
+  const characters:BibleCharacter[]=analysis.continuity_catalog.characters.map(char=>{
+    const inherited=structuredClone(char);
+    const source_definition_hash=contentHash({inherited,styleId:pinned.id,styleSha:pinned.sha256});
+    return{...inherited,source_definition_hash,
+      visual_readiness:char.explicit_visual_traits.length||char.identity_markers.length?
+        'READY_FOR_REFERENCE' as const:'NEEDS_OWNER_DEFINITION' as const};
+  });
+  const base={schema:'stickman-project-style-bible-v1' as const,
+    project_id:script.projectId,source_script_sha256:script.sha256,
+    source_authoring_sha256:contentHash(script.authoring),analysis_sha256:contentHash(analysis),
+    style_profile_id:pinned.id,style_profile_sha256:pinned.sha256,
+    style_guidance_sha256:hash(pinned.guidance),characters};
+  const bible={...base,style_bible_sha256:contentHash(base)};
+  return validateWithSchema<StyleBible>(loadSchema('bible'),bible);
+}
+export function validateStyleBibleCurrent(bible:StyleBible,
+  analysis:ScriptAnalysis,script:ApprovedScriptSnapshot,pinned:PinnedStyle){
+  const current=compileStyleBible(analysis,script,pinned);
+  if(canonical(current)!==canonical(bible))throw Error('STYLE_BIBLE_SOURCE_STALE');
+  return true;
+}
+/** Print view labels only in prompt instructions; generated pixels must have NO text. */
+export function referencePromptForCharacter(bible:StyleBible,
+  charId:string,pinned:PinnedStyle){
+  if(bible.style_profile_sha256!==pinned.sha256||bible.style_profile_id!==pinned.id)
+    throw Error('STYLE_BIBLE_STYLE_STALE');
+  const row=bible.characters.find(c=>c.char_id===charId);
+  if(!row)throw Error('STYLE_BIBLE_CHARACTER_NOT_FOUND');
+  if(row.visual_readiness!=='READY_FOR_REFERENCE')throw Error('STYLE_BIBLE_NEEDS_OWNER_DEFINITION');
+  const format=row.entity_kind==='human_group'?[
+    'ONE GROUP OVERVIEW. One coherent approved group in a single image.',
+    'Do not render four copies or invent new group members. No printed labels.'
+  ].join('\n'):[
+    'ONE SQUARE 1:1 IMAGE. Exactly FOUR edge-to-edge panels in a 2×2 sheet:',
+    'Upper-left: front close-up face and shoulders.',
+    'Upper-right: front full body, head to feet.',
+    'Lower-left: left profile full body, head to feet.',
+    'Lower-right: back full body, head to feet.',
+    'Same ONE identity and proportions in all panels. NO gutters, frames, captions,',
+    'letters, labels, numbers, logos, watermark, cropping or extra people.'
+  ].join('\n');
+  const lines=[
+    'SOURCE-GROUNDED CANONICAL STYLE BIBLE REFERENCE',
+    'Character ID: '+row.char_id,
+    'Owner-approved label: '+row.label,
+    'Grounded description: '+row.description,
+    'Approved stable traits: '+JSON.stringify(row.explicit_visual_traits),
+    'Approved identity markers: '+JSON.stringify(row.identity_markers),
+    'Physical constraints: '+JSON.stringify(row.physical_constraints),
+    'Narrative role context (NOT appearance instructions): '+row.narrative_role,
+    'EXACT B'+pinned.id.slice(-1)+' VISUAL STYLE / SHA '+pinned.sha256,pinned.guidance,
+    format,'No invented clothing, features, people, props or story actions.',
+    'Do not include text anywhere in generated image.'
+  ];
+  const prompt=lines.join('\n\n');
+  return{anchor_type:'character' as const,anchor_id:row.char_id,
+    source_definition_hash:row.source_definition_hash,
+    aspect_ratio:'1:1' as const,prompt,prompt_sha256:hash(prompt)};
+}
