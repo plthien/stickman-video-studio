@@ -400,6 +400,7 @@ export function registerValidatedGeneratedReference(root:string,appPath:string,
     persisted.providerTaskId!==job.providerTaskId||
     persisted.styleBibleSha!==job.styleBibleSha||
     persisted.sourceDefinitionHash!==job.sourceDefinitionHash||
+    persisted.ownerVisualDefinitionSha!==job.ownerVisualDefinitionSha||
     persisted.staged?.path!==job.staged.path||
     persisted.staged?.sha256!==job.staged.sha256)
     throw Error('REFERENCE_GENERATED_JOB_PROVENANCE_INVALID');
@@ -426,7 +427,12 @@ export function registerValidatedGeneratedReference(root:string,appPath:string,
       throw Error('REFERENCE_GENERATION_JOURNAL_CONFLICT');
     return prior;
   }
-  const prompt=referencePromptForCharacter(bible,job.anchorId,pinned(appPath,root));
+  const owner=prior.ownerVisualDefinitions?.find(d=>d.charId===job.anchorId);
+  if(owner)validateOwnerVisualDefinition(owner,script,bible);
+  if(owner?.definitionSha!==job.ownerVisualDefinitionSha)
+    throw Error('REFERENCE_GENERATION_VISUAL_DEFINITION_STALE');
+  const prompt=referencePromptForCharacter(bible,job.anchorId,pinned(appPath,root),
+    owner);
   if(prompt.prompt_sha256!==job.promptSha)
     throw Error('REFERENCE_GENERATION_PROMPT_STALE');
   const candidate:ReferenceCandidate={
@@ -435,6 +441,7 @@ export function registerValidatedGeneratedReference(root:string,appPath:string,
     source_definition_hash:row.source_definition_hash,
     style_bible_sha256:bible.style_bible_sha256,
     prompt_sha256:job.promptSha,provider_job_id:job.providerTaskId,model:job.model,
+    ...(owner?{visual_definition_sha256:owner.definitionSha}:{}),
     aspect_ratio:'1:1',media_path:job.staged.path,media_sha256:job.staged.sha256,
     media_mime:'image/png',width:actual.width,height:actual.height,
     rights:'OWNER_AUTHORIZED_GLABS_GENERATED | job='+job.id+
@@ -473,6 +480,7 @@ export function approveOwnerReference(root:string,appPath:string,input:{
       source.sourceDefinitionHash!==verified.source_definition_hash||
       source.styleBibleSha!==verified.style_bible_sha256||
       source.promptSha!==verified.prompt_sha256||
+      source.ownerVisualDefinitionSha!==verified.visual_definition_sha256||
       source.staged?.path!==verified.media_path||
       source.staged?.sha256!==verified.media_sha256)
       throw Error('REFERENCE_GENERATED_JOB_PROVENANCE_INVALID');
