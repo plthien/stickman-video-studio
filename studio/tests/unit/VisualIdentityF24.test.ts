@@ -272,6 +272,9 @@ describe('F24 source-grounded registry, reference payload and strict gates',()=>
     expect(pending.targets[0].fulfilled).toBe(false);
     fulfillMedia(appPath,root,pending.token!,targets[0].key,a.media.path,
       'Owner produced and approved image char_001');
+    const sourcePlan=resolveVisualReferences(root,targets[0].key);
+    attestBoundVisual(root,{targetKey:targets[0].key,boundSha256:a.ref.sha256,
+      referenceSetSha256:sourcePlan.referenceSetSha256,ownerConfirmed:true});
     const plan=resolveVisualReferences(root,targets[1].key);
     expect(plan.readiness).toBe('READY');
     expect(plan.sourceSnapshotSha256).toMatch(/^[a-f0-9]{64}$/);
