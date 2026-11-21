@@ -749,17 +749,20 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
     writeState(root,state);
     fs.unlinkSync(pendingPath(root));return state;
   }
-  const identityReceipt=state.identityPolicy==='v1'?
-    currentDraftIdentityReceipt(root,appPath):null;
-  const identityReceiptFile=identityReceipt?
-    resolveProjectFile(root,'.studio/identity/native-publication-v1.json'):null;
-  const beforeIdentityReceiptBytes=identityReceiptFile&&fs.existsSync(identityReceiptFile)?
-    fs.readFileSync(identityReceiptFile):null;
-  let writtenIdentityReceiptSha:string|null=null;
   const seconds=validateSeconds(options.previewSeconds);
   const resolved=resolvePendingCandidate(root,state,pending);
   const missingInside=resolved.missing.filter(ref=>ref.scopeStart<seconds);
   if(missingInside.length)throw new Error('Missing media inside the selected sample: '+missingInside.map(item=>item.key).join(', '));
+  const identitySampleReceipt=state.identityPolicy==='v1'?
+    currentDraftIdentityReceipt(root,appPath,seconds):null;
+  const identityFullReceipt=state.identityPolicy==='v1'&&
+    !resolved.missing.some(ref=>ref.kind==='image')?
+    currentDraftIdentityReceipt(root,appPath):null;
+  const identityReceiptFile=state.identityPolicy==='v1'?
+    resolveProjectFile(root,'.studio/identity/native-publication-v1.json'):null;
+  const beforeIdentityReceiptBytes=identityReceiptFile&&fs.existsSync(identityReceiptFile)?
+    fs.readFileSync(identityReceiptFile):null;
+  let writtenIdentityReceiptSha:string|null=null;
   // The unmodified original native CLI decides whether the candidate is valid.
   const candidate=path.join(root,'.project-candidate-'+randomUUID()+'.json');
   const current=path.join(root,'project.json'),beforeBytes=fs.readFileSync(current),runner=options.validator??runProcess;
@@ -777,6 +780,9 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
       if(result.code===0)full=checkedSeconds(result,'full-film');
     }
     if(!full&&!options.allowSampleDraft)throw new Error('Only SAMPLE_READY. Explicitly approve incomplete draft promotion; full-film is not ready.');
+    const identityReceipt=full?identityFullReceipt:identitySampleReceipt;
+    if(state.identityPolicy==='v1'&&!identityReceipt)
+      throw Error('IDENTITY_FULL_NATIVE_MEDIA_UNVERIFIED');
     // CLI validation is async: do not promote a frozen candidate whose project,
     // approved script, WAV, words, caption revision or approved media changed
     // while the native process was running.
@@ -788,7 +794,8 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
     const again=resolvePendingCandidate(root,fresh,diskPending);
     if(JSON.stringify(again.manifest)!==JSON.stringify(resolved.manifest)||JSON.stringify(again.missing)!==JSON.stringify(resolved.missing))throw new Error('Native candidate or missing-media ledger changed during validation.');
     if(!fs.readFileSync(current).equals(beforeBytes))throw new Error('Last-good native manifest changed during validation; staged confirmation is stale.');
-    if(identityReceipt&&JSON.stringify(currentDraftIdentityReceipt(root,appPath))!==
+    if(identityReceipt&&JSON.stringify(currentDraftIdentityReceipt(root,appPath,
+      identityReceipt.scope==='SAMPLE'?seconds:undefined))!==
       JSON.stringify(identityReceipt))
       throw new Error('IDENTITY_NATIVE_DRAFT_LINEAGE_CHANGED_DURING_CLI');
     const readiness:NonNullable<StudioState['nativeReadiness']>={sampleReady:true,fullReady:Boolean(full),previewSeconds:seconds,checkedSeconds:sample.checkedSeconds,
