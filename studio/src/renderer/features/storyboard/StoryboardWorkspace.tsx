@@ -249,7 +249,8 @@ export function StoryboardWorkspace(){
           candidate.shotId===item.shotId&&candidate.layerId===item.layerId&&
           candidate.path===item.path))return false;
       const prior=jobs.filter(job=>job.token===pending.token&&job.targetKey===item.targetKey);
-      if(prior.some(job=>['QUEUED','SUBMITTED','RUNNING','DOWNLOADED','UNKNOWN'].includes(job.status)))
+      if(prior.some(job=>['QUEUED','SUBMITTED','RUNNING','DOWNLOADED','UNKNOWN','VALIDATED'].includes(job.status)||
+        (job.status!=='STALE'&&(!job.targetCreativeSha256||!job.styleProfileSha256))))
         return false;
       // Current VALIDATED/APPROVED/FAILED candidates require per-image owner
       // review; a STALE or superseded creative identity does not occupy the
@@ -469,7 +470,8 @@ export function StoryboardWorkspace(){
         }
         const prior=existing.filter(job=>job.token===batch.token&&
           job.targetKey===item.targetKey);
-        if(prior.some(job=>['QUEUED','SUBMITTED','RUNNING','DOWNLOADED','UNKNOWN'].includes(job.status)||
+        if(prior.some(job=>['QUEUED','SUBMITTED','RUNNING','DOWNLOADED','UNKNOWN','VALIDATED'].includes(job.status)||
+          (job.status!=='STALE'&&(!job.targetCreativeSha256||!job.styleProfileSha256))||
           (job.status!=='STALE'&&job.targetCreativeSha256===item.draftIdentity.creativeFingerprint&&
            job.styleProfileSha256===item.styleProfileRef.sha256))){
           stopReason='Current provider attempt or reviewed image already exists. Batch stopped before another paid request.';
