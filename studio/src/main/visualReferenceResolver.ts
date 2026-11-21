@@ -69,7 +69,7 @@ export function resolveVisualReferences(root:string,targetKey:string,ownerRefs:s
         throw new Error('REFERENCE_STALE');
       refs.push({kind:'character',anchorId:id,sourcePath:source.relativePath,
         sha256:source.sha256,mime:source.mime,sourceIdentity:
-          id+'@'+character.identityVersion+':'+source.referenceId,
+          id+'@'+source.sha256+':'+source.rightsLedgerKey,
         rightsSha256:source.rightsLedgerKey,required:true});
     }catch{block('REFERENCE_STALE');}
   }
