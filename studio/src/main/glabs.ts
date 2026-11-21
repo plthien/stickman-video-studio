@@ -366,6 +366,9 @@ function assertPreparedImageRequest(appPath:string,root:string,input:ImageReques
     throw new Error('GLABS_PREPARED_FINGERPRINT_INVALID');
   const candidate=prepareNativeImageTarget(appPath,root,input.targetKey);
   const ready=candidate?.draftIdentity.creativeFingerprint===input.preparedFingerprint?candidate:null;
+  if(ready?.visualReferencePlan?.enabled&&ready.visualReferencePlan.readiness!=='READY')
+    throw new Error(ready.visualReferencePlan.readiness==='NEEDS_MAPPING_REVIEW'?
+      'CHARACTER_MAPPING_REVIEW_REQUIRED':ready.visualReferencePlan.readiness);
   if(!ready||ready.state!=='READY'||ready.prompt.trim()!==input.prompt.trim()||
     JSON.stringify(ready.references)!==JSON.stringify(input.references))
     throw new Error('GLABS_PREPARED_TARGET_NOT_READY_OR_STALE');
@@ -478,9 +481,11 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
       });
       providerPayload={prompt:job.prompt,model:job.model,aspect_ratio:job.aspectRatio,reference_images:refs,upscale:[]};
       if(Buffer.byteLength(JSON.stringify(providerPayload),'utf8')>MAX_REQUEST)
-        throw new Error('GLABS_REQUEST_OVERSIZE');
-    }catch{
-      job.status='FAILED';job.reason='Request/reference validation failed BEFORE provider submission. No paid POST was made.';
+        throw new Error(job.referenceSetSha256?'REFERENCE_BUDGET_EXCEEDED':'GLABS_REQUEST_OVERSIZE');
+    }catch(error){
+      const code=error instanceof Error&&/^(?:REFERENCE_[A-Z0-9_]+|CONTINUITY_[A-Z0-9_]+|CHARACTER_[A-Z0-9_]+)/.test(error.message)?
+        error.message.split(':')[0]:'REFERENCE_STALE';
+      job.status='FAILED';job.reason=code+': request/reference validation failed BEFORE provider submission. No paid POST was made.';
       writeJob(root,job);return job;
     }
     if(!currentJobTarget(appPath,root,job))return job;
