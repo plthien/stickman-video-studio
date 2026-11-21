@@ -81,8 +81,24 @@ function HistoryCandidate({job,projectId}:{job:ImageJob;projectId:string}){
 /** Source-backed edits are local to one frozen target. Saving invokes the
  * existing Native compiler, which independently inserts mandatory B1–B4 style
  * authority and checks references; the card does not edit style guidance. */
-function CardPromptEditor({card,onSave}:{
-  card:GalleryCard;
+function IdentityReferenceThumb({projectId,relative}:{
+  projectId:string;relative:string
+}){
+  const [url,setUrl]=useState('');
+  useEffect(()=>{
+    let current=true;setUrl('');
+    void window.studio?.mediaUrl(projectId,relative).then(src=>{
+      if(current)setUrl(src);
+    }).catch(()=>{if(current)setUrl('');});
+    return()=>{current=false;};
+  },[projectId,relative]);
+  return url?<img src={url} alt={'Approved canonical or continuity reference '+relative}
+    loading="lazy" style={{width:'72px',height:'72px',maxWidth:'72px',
+      maxHeight:'72px',objectFit:'contain',border:'1px solid #365166'}}/>:
+    <small>Reference preview unavailable</small>;
+}
+function CardPromptEditor({card,onSave,projectId}:{
+  card:GalleryCard;projectId:string;
   onSave?:(key:string,prompt:string,references:string[])=>void
 }){
   const spec=card.spec;
@@ -109,8 +125,13 @@ function CardPromptEditor({card,onSave}:{
       {spec.identityPreviousSourceSha&&<div>
         Approved previous image SHA {spec.identityPreviousSourceSha.slice(0,16)}
       </div>}
-      {spec.identityRequiredReferences?.map(path=><div key={path}>
-        Canonical/continuity image: {path}</div>)}
+      <div className="visual-identity-required-refs">
+        {spec.identityRequiredReferences?.map(path=><div key={path}
+          style={{display:'flex',alignItems:'center',gap:'8px',minWidth:0,flexWrap:'wrap'}}>
+          <IdentityReferenceThumb projectId={projectId} relative={path}/>
+          <small>Verified required image: {path}</small>
+        </div>)}
+      </div>
     </div>}
     <label>Editable image description
       <textarea className="textarea" aria-label={'Edit image prompt '+card.target.layerId}
@@ -372,7 +393,7 @@ export function ShotImageGallery({
               <pre className="prompt">{card.spec.prompt}</pre>
               <pre className="prompt">{JSON.stringify(card.spec.references,null,2)}</pre>
             </>}
-            <CardPromptEditor card={card} onSave={onSavePrompt}/>
+            <CardPromptEditor card={card} projectId={projectId} onSave={onSavePrompt}/>
             {job&&<><div>Model {job.model} · Provider {job.providerTaskId??'not confirmed'} · Job {job.id}</div>
               {job.reason&&<div className="info error">{job.reason}</div>}
               {job.providerCompletedAt&&<div>Provider completed {job.providerCompletedAt} ·
