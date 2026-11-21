@@ -63,6 +63,7 @@ export function readApprovedNativeIdentity(root:string,appPath:string):ApprovedN
       candidate.anchor_id!==row.char_id||candidate.media_path!==entry.media_path||
       candidate.media_sha256!==entry.media_sha256||
       candidate.media_mime!==entry.media_mime||
+      candidate.visual_definition_sha256!==entry.visual_definition_sha256||
       sha(candidate.rights)!==entry.rights_sha256)
       throw Error('IDENTITY_NATIVE_ANCHOR_NOT_APPROVED');
     const evidence=(state.media??[]).find(m=>m.kind==='image'&&
