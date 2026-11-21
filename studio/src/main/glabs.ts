@@ -48,6 +48,12 @@ const jobFile=(root:string,id:string)=>{
   return resolveProjectFile(root,'.studio/glabs/jobs/'+id+'.json');
 };
 const timestamp=()=>new Date().toISOString();
+/** Persist only an application-owned error code, never arbitrary exception text. */
+function syncErrorCode(error:unknown,fallback:string):string{
+  const code=error instanceof Error?
+    /^(GLABS_[A-Z0-9_]+)(?::|$)/.exec(error.message)?.[1]:undefined;
+  return code??fallback;
+}
 const pureObject=(value:unknown):value is Record<string,unknown>=>Boolean(value)&&typeof value==='object'&&!Array.isArray(value);
 export function glabsEndpoint(raw:string){
   let u:URL;
@@ -544,8 +550,7 @@ export async function pollGlabsImage(appPath:string,root:string,userData:string,
     const latest=readJob(root,id);
     if(['VALIDATED','APPROVED','STALE','CANCELLED'].includes(latest.status))return latest;
     if(!currentJobTarget(appPath,root,latest))return latest;
-    const code=error instanceof Error&&/^GLABS_[A-Z0-9_]+$/.test(error.message)?
-      error.message:'GLABS_STATUS_READ_FAILED';
+    const code=syncErrorCode(error,'GLABS_STATUS_READ_FAILED');
     latest.lastSyncError={stage:'provider',code,at:timestamp()};
     if(!latest.providerCompletedAt)latest.syncPhase='provider';
     writeJob(root,latest);
@@ -614,8 +619,7 @@ export async function pollGlabsImage(appPath:string,root:string,userData:string,
     // currentJobTarget can mark this attempt STALE during an awaited GET.
     // Never resurrect an outdated Native image to RUNNING.
     if(job.status==='STALE'||job.status==='CANCELLED')return job;
-    const code=error instanceof Error&&/^GLABS_[A-Z0-9_]+$/.test(error.message)?
-      error.message:'GLABS_SYNC_READ_FAILED';
+    const code=syncErrorCode(error,'GLABS_SYNC_READ_FAILED');
     job.lastSyncError={stage:job.syncPhase??'result',code,at:timestamp()};
     writeJob(root,job);
     throw error;
