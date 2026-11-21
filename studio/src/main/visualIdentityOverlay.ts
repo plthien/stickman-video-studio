@@ -31,7 +31,9 @@ export function previewContinuityOverlay(root:string):Omit<ContinuityOverlay,'re
     // current Native creative fingerprint. No fallback to a previous target.
     const historical=jobs.filter(job=>job.targetKey===target.key);
     const current=historical.filter(job=>job.targetCreativeSha256===target.creativeFingerprint);
-    const latest=current.find(job=>job.status==='VALIDATED'||job.status==='APPROVED')??current[0];
+    const currentBound=current.find(job=>target.fulfilled&&job.status==='APPROVED'&&
+      job.approved?.sha256===target.boundSha256&&job.approved.path===target.boundPath);
+    const latest=currentBound??current[0];
     // Undefined selects exact current Native owner overrides (B4/manual);
     // current jobs instead retain the frozen explicit owner selections.
     const plan=resolveVisualReferences(root,target.key,latest?.identityOwnerReferences);
