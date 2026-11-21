@@ -32,7 +32,7 @@ export function previewContinuityOverlay(root:string):Omit<ContinuityOverlay,'re
     const historical=jobs.filter(job=>job.targetKey===target.key);
     const current=historical.filter(job=>job.targetCreativeSha256===target.creativeFingerprint);
     const currentBound=current.find(job=>target.fulfilled&&job.status==='APPROVED'&&
-      job.approved?.sha256===target.boundSha256&&job.approved.path===target.boundPath);
+      job.approved?.sha256===target.boundSha256&&job.approved?.path===target.boundPath);
     const latest=currentBound??current[0];
     // Undefined selects exact current Native owner overrides (B4/manual);
     // current jobs instead retain the frozen explicit owner selections.
