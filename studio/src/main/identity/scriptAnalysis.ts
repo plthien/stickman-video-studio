@@ -1,6 +1,6 @@
 /** Script Analysis is frozen against one approved Script, never Stage='native'. */
 import {randomUUID} from 'node:crypto';
-import {canonical,contentHash,loadSchema,validateWithSchema,
+import {contentHash,loadSchema,validateWithSchema,
   type ScriptAnalysis,type IdentityReviewOperation} from './contracts.js';
 export interface ApprovedScriptSnapshot {
   projectId:string;sha256:string;revision:number;
