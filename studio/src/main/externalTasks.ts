@@ -293,6 +293,15 @@ function verifiedMedia(root:string,state:StudioState,ref:MissingNativeReference,
 function collectMissing(root:string,state:StudioState,manifest:Record<string,unknown>){
   return nativeRefs(manifest).filter(ref=>!verifiedMedia(root,state,ref,ref.path));
 }
+/** Exact layer identities only. No renderer metadata is added to project.json. */
+export function nativeImageTargetsFromManifest(manifest:Record<string,unknown>){
+  return nativeRefs(manifest).filter(ref=>ref.kind==='image').map(ref=>{
+    if(!ref.shotId||!ref.layerId||typeof ref.shotIndex!=='number')
+      throw Error('NATIVE_IMAGE_TARGET_IDENTITY_REQUIRED');
+    return{key:ref.key,shotId:ref.shotId,layerId:ref.layerId,path:ref.path,
+      shotIndex:ref.shotIndex};
+  });
+}
 export function validateManifest(state: StudioState, root: string, payload: Record<string, unknown>) {
   exactKeys(payload, ['manifest','shot_ledger','sound_script','asset_needs']);
   for(const field of ['shot_ledger','sound_script','asset_needs'])if(!Array.isArray(payload[field]))throw new Error('Native correction must include a complete '+field+' array.');
