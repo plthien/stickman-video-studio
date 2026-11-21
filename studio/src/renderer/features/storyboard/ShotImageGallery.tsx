@@ -140,14 +140,16 @@ function IdentityReferencePreview({projectId,sourcePath,anchorId,onVerified}:{
 }){
   const [url,setUrl]=useState('');
   const [loaded,setLoaded]=useState(false);
+  const verifiedCallback=useRef(onVerified);
+  verifiedCallback.current=onVerified;
   useEffect(()=>{
-    let alive=true;setUrl('');setLoaded(false);onVerified(anchorId,false);
+    let alive=true;setUrl('');setLoaded(false);verifiedCallback.current(anchorId,false);
     if(!window.studio)return;
     void window.studio.mediaUrl(projectId,sourcePath).then(value=>{
       if(alive)setUrl(value);
     }).catch(()=>{if(alive)setUrl('');});
     return()=>{alive=false;};
-  },[projectId,sourcePath]);
+  },[projectId,sourcePath,anchorId]);
   return <div className="visual-identity-preview-reference">
     <strong>{anchorId}</strong>
     {url?<img src={url} alt={'Canonical character reference '+anchorId}
