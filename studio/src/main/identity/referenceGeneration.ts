@@ -90,10 +90,17 @@ function isCurrent(root:string,appPath:string,job:ReferenceJob){
   }catch{return false;}
 }
 function markStale(root:string,job:ReferenceJob){
+  const note='REFERENCE_SOURCE_STALE: old provider billing/history retained; cannot approve as current';
+  if(job.status==='UNKNOWN'){
+    // Preserve the potentially billable uncertain POST fence across upstream
+    // changes. A new paid request still needs explicit UNKNOWN acknowledgement.
+    if(!job.reason?.includes(note)){
+      job.reason=[job.reason,note].filter(Boolean).join(' | ');write(root,job);
+    }
+    return job;
+  }
   if(job.status!=='STALE'){
-    job.status='STALE';
-    job.reason='REFERENCE_SOURCE_STALE: old provider billing/history retained; cannot approve as current';
-    write(root,job);
+    job.status='STALE';job.reason=note;write(root,job);
   }
   return job;
 }
@@ -117,8 +124,9 @@ export async function submitReferenceJob(appPath:string,root:string,userData:str
   try{
     const probe=await glabsProbe(userData,cipher);
     if(!probe.authVerified)throw Error('REFERENCE_PROVIDER_HEALTH_AUTH_UNVERIFIED');
-    if(glabsReferenceSettings(userData).model!==config.model)
-      throw Error('REFERENCE_PROVIDER_MODEL_CHANGED');
+    const refreshed=glabsReferenceSettings(userData);
+    if(refreshed.model!==config.model||refreshed.endpoint!==config.endpoint)
+      throw Error('REFERENCE_PROVIDER_SETTINGS_CHANGED');
     if(!isCurrent(root,appPath,{
       schema:'stickman-reference-generate-job-v1',id:randomUUID(),
       projectId:readState(root).project.id,anchorId:input.anchorId,
