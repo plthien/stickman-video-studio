@@ -86,6 +86,15 @@ export function readIdentityWorkflow(root:string):IdentityWorkflowStore{
   }
   return data;
 }
+/** Preserve prior immutable canonical authority when upstream lineage changes. */
+function archiveReferenceSet(next:IdentityWorkflowStore){
+  const current=next.referenceApprovalSet;
+  if(!current)return;
+  const history=next.referenceApprovalHistory??[];
+  if(!history.some(previous=>previous.approval_set_sha256===
+    current.approval_set_sha256))
+    next.referenceApprovalHistory=[...history,current].slice(-100);
+}
 function save(root:string,prior:IdentityWorkflowStore,next:IdentityWorkflowStore,
   action:string,artifact:unknown):IdentityWorkflowStore{
   const updated:IdentityWorkflowStore={...next,revision:prior.revision+1,
@@ -246,6 +255,7 @@ export function importIdentityResult(root:string,text:string,expectedRevision:nu
     const payload=validateAnalysisEnvelope(raw,task,script);
     next.draftAnalysis=payload;next.draftSha256=contentHash(payload);
     next.independentReview=null;next.analysisApproved=null;
+    archiveReferenceSet(next);
     next.bible=null;next.bibleTextApproved=null;next.referenceApprovalSet=null;
   }
   next.currentTask={...entry,status:'IMPORTED'};
@@ -270,6 +280,7 @@ export function prepareProjectStyleBible(root:string,appPath:string,expectedRevi
   const bible=compileStyleBible(analysis,script,pinned(appPath,root));
   const next=clone(prior);
   if(next.bible?.style_bible_sha256!==bible.style_bible_sha256){
+    archiveReferenceSet(next);
     next.bible=bible;next.bibleTextApproved=null;next.referenceApprovalSet=null;
   }
   return save(root,prior,next,'prepare:style-bible',bible);
@@ -525,10 +536,7 @@ export function publishStyleBibleReferences(root:string,appPath:string,
   const approvalSet=publishApprovalSet(root,bible,selected as ReferenceCandidate[],
     (prior.referenceApprovalSet?.revision??0)+1,decode);
   const next=clone(prior);
-  if(prior.referenceApprovalSet){
-    next.referenceApprovalHistory=[...(prior.referenceApprovalHistory??[]),
-      prior.referenceApprovalSet].slice(-100);
-  }
+  archiveReferenceSet(next);
   next.referenceApprovalSet=approvalSet;
   return save(root,prior,next,'publish:reference-set',approvalSet);
 }
