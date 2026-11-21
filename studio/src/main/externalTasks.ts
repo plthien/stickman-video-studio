@@ -7,6 +7,7 @@ import { rejectNativeUnsafePaths, validateAuthoring } from './sourceCitations.js
 import { compileAuthority } from './externalAuthority.js';
 import {imageRequirementFingerprintSources} from './imageRequirements.js';
 import {readApprovedNativeIdentity,validateNativeBindingPayload} from './identity/nativeBinding.js';
+import {currentDraftIdentityReceipt,publishNativeIdentityReceipt} from './identity/finalGate.js';
 
 export function externalOutputFilename(
   stage:Stage,operation:'author'|'review'|'correct'|'recheck'|'media-review',
@@ -753,6 +754,8 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
   // candidate under a new v1 identity policy.
   if(state.identityPolicy==='v1')
     throw new Error('IDENTITY_NATIVE_EXACT_BINDINGS_NOT_READY');
+  const identityReceipt=state.identityPolicy==='v1'?
+    currentDraftIdentityReceipt(root,appPath):null;
   const seconds=validateSeconds(options.previewSeconds);
   const resolved=resolvePendingCandidate(root,state,pending);
   const missingInside=resolved.missing.filter(ref=>ref.scopeStart<seconds);
@@ -785,6 +788,9 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
     const again=resolvePendingCandidate(root,fresh,diskPending);
     if(JSON.stringify(again.manifest)!==JSON.stringify(resolved.manifest)||JSON.stringify(again.missing)!==JSON.stringify(resolved.missing))throw new Error('Native candidate or missing-media ledger changed during validation.');
     if(!fs.readFileSync(current).equals(beforeBytes))throw new Error('Last-good native manifest changed during validation; staged confirmation is stale.');
+    if(identityReceipt&&JSON.stringify(currentDraftIdentityReceipt(root,appPath))!==
+      JSON.stringify(identityReceipt))
+      throw new Error('IDENTITY_NATIVE_DRAFT_LINEAGE_CHANGED_DURING_CLI');
     const readiness:NonNullable<StudioState['nativeReadiness']>={sampleReady:true,fullReady:Boolean(full),previewSeconds:seconds,checkedSeconds:sample.checkedSeconds,
       validationSha256:sample.fingerprint,missingOutsideScope:resolved.missing.map(item=>item.key),
       reviewedDraft:!full&&options.allowSampleDraft===true,verifiedAt:new Date().toISOString()};
@@ -803,6 +809,8 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
     fresh.external.native={revision,artifact:{...again,missing:again.missing},importedAt:new Date().toISOString()};
     fresh.nativeReadiness=readiness;fresh.preview=undefined;fresh.approval=undefined;fresh.render=undefined;fresh.tasks!.native!.status='IMPORTED';fresh.tasks!.native!.confirmedResponseSha256=pending.responseSha256;fresh.tasks!.native!.confirmedResponsePath=pending.responsePath;
     committedState=fresh;writeState(root,fresh);stateCommitted=true;
+    if(identityReceipt)publishNativeIdentityReceipt(root,appPath,
+      identityReceipt,sha(fs.readFileSync(current)));
     atomicJson(path.join(root,'.studio','revisions','native-'+revision+'.json'),again.manifest);
     atomicJson(path.join(root,'.studio','revisions','native-authoring-'+revision+'.json'),{shot_ledger:again.shotLedger,sound_script:again.soundScript,asset_needs:again.assetNeeds,fulfillments:diskPending.fulfillments,missing:again.missing});
     fs.unlinkSync(pendingPath(root));return fresh;
