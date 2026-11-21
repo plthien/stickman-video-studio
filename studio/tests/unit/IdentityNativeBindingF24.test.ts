@@ -10,7 +10,7 @@ import {saveGlabsKey,submitGlabsImage,
   pollGlabsImage,approveGlabsImage} from '../../src/main/glabs';
 import {readState,writeState,atomicJson,sha} from '../../src/main/services';
 import {contentHash} from '../../src/main/identity/contracts';
-import {compileStyleBible,referencePromptForCharacter} from '../../src/main/identity/styleBible';
+import {compileStyleBible} from '../../src/main/identity/styleBible';
 import {approveCandidate,publishApprovalSet} from '../../src/main/identity/referencePublication';
 import {currentApprovedSource} from '../../src/main/identity/identityWorkflow';
 import {loadImageStyleProfile} from '../../src/main/imagePreparation';
@@ -53,13 +53,15 @@ function setup(){
   const pinned={id:'B1' as const,guidance:profile.guidance,sha256:profile.sha256};
   const bible=compileStyleBible(analysis,script,pinned);
   const ref=owned(root,'first');
-  const prompt=referencePromptForCharacter(bible,'char_001',pinned);
+  const ownerSha=contentHash({kind:'owner-reference-bytes-v1',
+    projectId:script.projectId,styleBibleSha:bible.style_bible_sha256,
+    anchorId:'char_001',mediaSha:ref.sha256});
   const pending:ReferenceCandidate={
     schema:'stickman-visual-reference-candidate-v1',project_id:script.projectId,
     candidate_id:'approved-candidate-1',anchor_type:'character',anchor_id:'char_001',
     source_definition_hash:bible.characters[0].source_definition_hash,
     style_bible_sha256:bible.style_bible_sha256,
-    prompt_sha256:prompt.prompt_sha256,
+    prompt_sha256:ownerSha,
     provider_job_id:null,model:'owner_imported',aspect_ratio:'1:1',
     media_path:ref.path,media_sha256:ref.sha256,media_mime:'image/png',
     width:1,height:1,rights:'Owner-created reference image; rights authorized',
