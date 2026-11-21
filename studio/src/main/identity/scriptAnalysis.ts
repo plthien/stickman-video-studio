@@ -94,6 +94,56 @@ export function validateScriptAnalysis(raw:unknown,script:ApprovedScriptSnapshot
   }
   return analysis;
 }
+/** The literal frozen task envelope is the only accepted external output.
+ * A complete JSON Schema is embedded so External ChatGPT never guesses keys. */
+export function analysisResultContract(task:AnalysisTask,payload:unknown){
+  return [
+    '## REQUIRED EXACT OUTPUT ENVELOPE (valid JSON object, no Markdown fences)',
+    JSON.stringify({schema:'mode-b-identity-external-result-v1',
+      stage:'script_analysis',project_id:task.project_id,
+      task_id:task.task_id,revision:task.revision,
+      input_sha256:task.input_sha256,payload},null,2),
+    'Keep ALL six envelope identity fields byte-for-value; only replace payload.',
+    'No additional envelope keys, no comments, no invented source spans.'
+  ].join('\n\n');
+}
+export function analysisAuthorContract(task:AnalysisTask){
+  return [
+    '## EXACT stickman-script-analysis-v1 JSON Schema (payload must conform)',
+    JSON.stringify(loadSchema('analysis'),null,2),
+    'Each char_id must match ^char_[0-9]{3}$ (e.g. char_001).',
+    'Character objects require ALL: char_id, label, description, entity_kind,',
+    'narrative_role, explicit_visual_traits, identity_markers, continuity_notes,',
+    'physical_constraints, occurrences, presence_ranges.',
+    'Each occurrence has {section_id,quote,start,end}; ranges have {start,end}.',
+    'Indices are 0-based UTF-16 offsets in EXACT joined Script, between',
+    'sections separated by two LF characters. End is exclusive.',
+    'No approximate quotes. Traits must have literal Script evidence;',
+    'otherwise use [] and do not fabricate appearance.',
+    analysisResultContract(task,{
+      schema:'stickman-script-analysis-v1',project_id:task.project_id,
+      source_script_sha256:task.source_script_sha256,
+      source_authoring_sha256:task.source_authoring_sha256,
+      continuity_catalog:{characters:[]}
+    })
+  ].join('\n\n');
+}
+export function analysisReviewContract(task:AnalysisTask,analysisSha:string){
+  return [
+    '## EXACT review JSON contract',
+    'The payload schema is stickman-analysis-review-v1 with only',
+    '{schema,project_id,analysis_sha256,independent_review,findings,approved}.',
+    'independent_review must be true. Every finding contains',
+    '{finding_id,severity,location,issue,evidence}.',
+    'severity is exactly P0, P1 or P2; approved=false if P0/P1 is unresolved.',
+    'The independent reviewer must actually examine source quotes and spans.',
+    analysisResultContract(task,{
+      schema:'stickman-analysis-review-v1',project_id:task.project_id,
+      analysis_sha256:analysisSha,independent_review:true,
+      findings:[],approved:false
+    })
+  ].join('\n\n');
+}
 export function freezeAnalysisTask(script:ApprovedScriptSnapshot,operation:IdentityReviewOperation,
   revision:number,promptInputs:Record<string,unknown>={}):AnalysisTask{
   const lineage=analysisLineage(script),input_sha256=contentHash({lineage,operation,revision,promptInputs});
@@ -110,10 +160,12 @@ export function freezeAnalysisTask(script:ApprovedScriptSnapshot,operation:Ident
     'AUTHORING CONTEXT (untrusted suggestions) '+JSON.stringify(script.authoring),
     'TASK ID '+task_id+' / INPUT SHA256 '+input_sha256
   ];
-  return{schema:'mode-b-identity-external-task-v1',stage:'script_analysis',operation,
-    project_id:lineage.projectId,task_id,revision,input_sha256,
-    source_script_sha256:lineage.scriptSha,
-    source_authoring_sha256:lineage.authoringSha,prompt:lines.join('\n\n')};
+  const task:AnalysisTask={schema:'mode-b-identity-external-task-v1',
+    stage:'script_analysis',operation,project_id:lineage.projectId,
+    task_id,revision,input_sha256,source_script_sha256:lineage.scriptSha,
+    source_authoring_sha256:lineage.authoringSha,prompt:''};
+  task.prompt=lines.join('\n\n')+'\n\n'+analysisAuthorContract(task);
+  return task;
 }
 export function validateAnalysisEnvelope(raw:unknown,task:AnalysisTask,script:ApprovedScriptSnapshot){
   const row=raw as Record<string,unknown>;
