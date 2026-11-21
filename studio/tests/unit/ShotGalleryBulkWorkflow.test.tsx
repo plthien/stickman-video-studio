@@ -172,7 +172,7 @@ describe('F09–F11 Native Shot gallery + explicit bulk approval',()=>{
     expect(approve).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
   });
-  it('F25-INT-02 thumbnail interaction leaves bulk selection and deliberate approval workflow intact',async()=>{
+  it('F25-TEST-08 / INT-02 thumbnail interaction leaves bulk selection and deliberate approval workflow intact',async()=>{
     const {approve,generate}=install();
     render(<AppStateProvider><Harness/></AppStateProvider>);
     const cards=await shotCards(4);
