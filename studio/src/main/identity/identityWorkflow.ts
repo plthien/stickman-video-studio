@@ -310,6 +310,60 @@ export function registerOwnerReference(root:string,appPath:string,input:{
   next.referenceApprovalSet=null;
   return save(root,prior,next,'candidate:owner-import',candidate);
 }
+/** Polling completion is only a candidate. Never turn DONE into owner approval. */
+export function registerValidatedGeneratedReference(root:string,appPath:string,
+  input:{expectedRevision:number;job:import('./referenceGeneration.js').ReferenceJob},
+  decode:IdentityDecoder){
+  const prior=readIdentityWorkflow(root),job=input.job;
+  if(prior.revision!==input.expectedRevision)
+    throw Error('IDENTITY_REVISION_CONFLICT');
+  if(job.status!=='VALIDATED'||!job.providerTaskId||!job.staged||
+    job.projectId!==readState(root).project.id)
+    throw Error('REFERENCE_GENERATION_NOT_VALIDATED');
+  const {script,analysis}=validApproved(root,prior);
+  const bible=compileStyleBible(analysis,script,pinned(appPath,root));
+  if(prior.bibleTextApproved?.sha256!==bible.style_bible_sha256||
+    job.styleBibleSha!==bible.style_bible_sha256||
+    job.styleProfileSha!==bible.style_profile_sha256||
+    job.analysisSha!==bible.analysis_sha256||
+    job.approvedScriptSha!==bible.source_script_sha256)
+    throw Error('REFERENCE_GENERATION_SOURCE_STALE');
+  const row=bible.characters.find(row=>row.char_id===job.anchorId);
+  if(!row||row.source_definition_hash!==job.sourceDefinitionHash)
+    throw Error('REFERENCE_GENERATION_ANCHOR_STALE');
+  const verified=verifyReferenceFile(root,job.staged.path,job.staged.sha256,'image/png');
+  const actual=decode(verified.bytes);
+  if(!actual||actual.width!==job.staged.width||
+    actual.height!==job.staged.height||actual.width!==actual.height)
+    throw Error('REFERENCE_GENERATION_DECODE_STALE');
+  const existing=prior.referenceCandidates.find(c=>c.provider_job_id===job.id);
+  if(existing){
+    if(existing.media_sha256!==job.staged.sha256||
+      existing.source_definition_hash!==row.source_definition_hash)
+      throw Error('REFERENCE_GENERATION_JOURNAL_CONFLICT');
+    return prior;
+  }
+  const prompt=referencePromptForCharacter(bible,job.anchorId,pinned(appPath,root));
+  if(prompt.prompt_sha256!==job.promptSha)
+    throw Error('REFERENCE_GENERATION_PROMPT_STALE');
+  const candidate:ReferenceCandidate={
+    schema:'stickman-visual-reference-candidate-v1',project_id:job.projectId,
+    candidate_id:randomUUID(),anchor_type:'character',anchor_id:job.anchorId,
+    source_definition_hash:row.source_definition_hash,
+    style_bible_sha256:bible.style_bible_sha256,
+    prompt_sha256:job.promptSha,provider_job_id:job.id,model:job.model,
+    aspect_ratio:'1:1',media_path:job.staged.path,media_sha256:job.staged.sha256,
+    media_mime:'image/png',width:actual.width,height:actual.height,
+    rights:'OWNER_AUTHORIZED_GLABS_GENERATED | job='+job.id+
+      ' | provider_license_not_independently_verified',
+    source:'GLABS_GENERATED',status:'VALIDATED',
+    approval_event_id:null,approved_at:null
+  };
+  const next=clone(prior);
+  next.referenceCandidates.push(candidate);
+  if(next.referenceCandidates.length>400)throw Error('IDENTITY_CANDIDATES_LIMIT');
+  return save(root,prior,next,'candidate:glabs-validated',candidate);
+}
 export function approveOwnerReference(root:string,appPath:string,input:{
   expectedRevision:number;candidateId:string;ownerInspected:true
 },decode:IdentityDecoder){
