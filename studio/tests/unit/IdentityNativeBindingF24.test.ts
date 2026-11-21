@@ -302,6 +302,8 @@ const mockOriginalNativeCli=async(_exe:string,args:string[])=>{
     expect(()=>assertPublishedIdentityCurrent(root,appPath,'SAMPLE')).not.toThrow();
     expect(()=>assertPublishedIdentityCurrent(root,appPath,'FULL'))
       .toThrow('IDENTITY_SAMPLE_NOT_FULLY_CERTIFIED');
+    expect(()=>assertPublishedIdentityCurrent(root,appPath,'SAMPLE',30))
+      .toThrow('IDENTITY_SAMPLE_SCOPE_EXCEEDED');
   });
   it('C08/C09 approved outputs require current canonical set and native receipt after confirm',async()=>{
     const {root}=setup(),accountRoot=account();fakeProvider();
