@@ -336,7 +336,7 @@ export function registerValidatedGeneratedReference(root:string,appPath:string,
   if(!actual||actual.width!==job.staged.width||
     actual.height!==job.staged.height||actual.width!==actual.height)
     throw Error('REFERENCE_GENERATION_DECODE_STALE');
-  const existing=prior.referenceCandidates.find(c=>c.provider_job_id===job.id);
+  const existing=prior.referenceCandidates.find(c=>c.media_path===job.staged?.path);
   if(existing){
     if(existing.media_sha256!==job.staged.sha256||
       existing.source_definition_hash!==row.source_definition_hash)
@@ -351,7 +351,7 @@ export function registerValidatedGeneratedReference(root:string,appPath:string,
     candidate_id:randomUUID(),anchor_type:'character',anchor_id:job.anchorId,
     source_definition_hash:row.source_definition_hash,
     style_bible_sha256:bible.style_bible_sha256,
-    prompt_sha256:job.promptSha,provider_job_id:job.id,model:job.model,
+    prompt_sha256:job.promptSha,provider_job_id:job.providerTaskId,model:job.model,
     aspect_ratio:'1:1',media_path:job.staged.path,media_sha256:job.staged.sha256,
     media_mime:'image/png',width:actual.width,height:actual.height,
     rights:'OWNER_AUTHORIZED_GLABS_GENERATED | job='+job.id+
