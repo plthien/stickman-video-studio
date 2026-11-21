@@ -54,11 +54,20 @@ export function readCharacterRegistry(root:string):Registry{
   if(doc.schema!=='stickman-character-registry-v1'||doc.projectId!==projectId||
     !Number.isSafeInteger(doc.revision)||doc.revision<0||typeof doc.strict!=='boolean'||
     !Array.isArray(doc.characters)||!Array.isArray(doc.history)||
-    doc.characters.some(c=>!validId(c.characterId)||typeof c.label!=='string'||
-      !Number.isInteger(c.identityVersion)||!['DRAFT','APPROVED','ARCHIVED'].includes(c.status)||
-      !Array.isArray(c.references)||!c.references.every(r=>validId(r.referenceId)&&
-        hex(r.sha256)&&typeof r.relativePath==='string'&&
-        ['image/png','image/jpeg','image/webp'].includes(r.mime)))||
+    doc.characters.some(c=>!c||!validId(c.characterId)||
+      typeof c.label!=='string'||!c.label.trim()||
+      !Number.isInteger(c.identityVersion)||c.identityVersion<1||
+      !['DRAFT','APPROVED','ARCHIVED'].includes(c.status)||
+      (c.canonicalReferenceId!==null&&!validId(c.canonicalReferenceId))||
+      (c.status==='APPROVED'&&!c.canonicalReferenceId)||
+      !Array.isArray(c.references)||new Set(c.references.map(r=>r.referenceId)).size!==c.references.length||
+      !c.references.every(r=>!!r&&validId(r.referenceId)&&hex(r.sha256)&&
+        typeof r.relativePath==='string'&&
+        ['image/png','image/jpeg','image/webp'].includes(r.mime)&&
+        ['OWNER_IMPORTED','APPROVED_GLABS'].includes(r.sourceKind)&&
+        hex(r.rightsLedgerKey)&&typeof r.approvedAt==='string')||
+      (c.canonicalReferenceId!==null&&
+        !c.references.some(r=>r.referenceId===c.canonicalReferenceId)))||
     new Set(doc.characters.map(c=>c.characterId)).size!==doc.characters.length)
     throw new Error('CHARACTER_REGISTRY_INVALID');
   return doc;
@@ -74,9 +83,18 @@ export function readTargetBindings(root:string):BindingStore{
     !Array.isArray(doc.bindings)||!Array.isArray(doc.history)||
     new Set(doc.bindings.map(v=>v.targetKey)).size!==doc.bindings.length||
     doc.bindings.some(v=>!v||typeof v.targetKey!=='string'||
-      typeof v.draftToken!=='string'||!hex(v.creativeFingerprint)||
-      !Array.isArray(v.characters)||v.characters.some(c=>!validId(c))||
-      typeof v.noRecurringCharacter!=='boolean'||v.confirmedByOwner!==true))
+      typeof v.shotId!=='string'||!v.shotId||typeof v.layerId!=='string'||!v.layerId||
+      typeof v.expectedPath!=='string'||typeof v.draftToken!=='string'||
+      !hex(v.creativeFingerprint)||!Array.isArray(v.characters)||
+      v.characters.some(c=>!validId(c))||
+      new Set(v.characters).size!==v.characters.length||
+      typeof v.noRecurringCharacter!=='boolean'||
+      (v.noRecurringCharacter?v.characters.length!==0:v.characters.length===0)||
+      v.confirmedByOwner!==true||!(
+        v.continuity===null||(typeof v.continuity==='object'&&
+        typeof v.continuity.sourceTargetKey==='string'&&
+        ['same_setup','match_subject','match_location','match_composition','graphic_sequence']
+          .includes(v.continuity.relation)))))
     throw new Error('CHARACTER_BINDINGS_INVALID');
   return doc;
 }
@@ -209,6 +227,11 @@ export function approveCharacter(root:string,input:{
 export function setStrictCharacterMode(root:string,input:{enabled:boolean;expectedRevision:number}){
   const current=readCharacterRegistry(root);
   if(current.revision!==input.expectedRevision)throw new Error('CHARACTER_REGISTRY_REVISION_CONFLICT');
+  if(typeof input.enabled!=='boolean')throw new Error('CHARACTER_STRICT_MODE_INVALID');
+  if(current.strict!==input.enabled){
+    const targets=getNativeImageGallery('',root).targets.map(t=>t.key);
+    assertNoBusyVisualJobs(root,targets);
+  }
   return commitRegistry(root,current,{...current,strict:input.enabled},'strict:'+input.enabled);
 }
 export function archiveCharacter(root:string,input:{characterId:string;expectedRevision:number;reviewedImpactSha256:string}){
