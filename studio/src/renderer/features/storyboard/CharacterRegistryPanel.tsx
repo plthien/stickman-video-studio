@@ -234,6 +234,21 @@ export function CharacterRegistryPanel({projectId,onChanged,onSnapshot}:{
             (target.noRecurringCharacter?'No recurring character':target.characters.join(', ')):
             'NEEDS_MAPPING_REVIEW'}</span>
           <span>{target.readiness}</span>
+          {target.fulfilled&&target.boundSha256&&<div className="visual-identity-bound-review">
+            <strong>Current bound image · SHA {target.boundSha256.slice(0,16)}</strong>
+            <ReferenceThumb projectId={projectId} path={target.boundPath}/>
+            <small>Compare this bound image with the canonical registry image(s) above.
+              No machine-generated likeness verdict is claimed.</small>
+            <Button disabled={busy||!registry.strict||target.readiness!=='READY'}
+              onClick={()=>void act(async()=>{
+                const plan=await window.studio!.visualIdentityResolve(projectId,target.key);
+                if(plan.readiness!=='READY')throw new Error(plan.readiness);
+                await window.studio!.visualIdentityAttestBound(projectId,{
+                  targetKey:target.key,boundSha256:target.boundSha256!,
+                  referenceSetSha256:plan.referenceSetSha256,ownerConfirmed:true
+                });
+              })}>I visually checked this bound image</Button>
+          </div>}
           <div className="visual-identity-form">
             <label>Previous approved image source
               <select className="input" aria-label={'Continuity source '+target.key}
