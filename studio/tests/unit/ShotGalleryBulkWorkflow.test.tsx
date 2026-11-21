@@ -152,7 +152,7 @@ describe('F09–F11 Native Shot gallery + explicit bulk approval',()=>{
     fireEvent.click(screen.getByRole('button',{name:/shot-2 1 images/}));
     const [card]=await shotCards(1);
     expect(card).toHaveAttribute('data-layer-id','second-shot');
-    const thumbnail=within(card).getByRole('button',{
+    const thumbnail=await within(card).findByRole('button',{
       name:'Expand image shot-2/second-shot'
     });
     expect(thumbnail).toBeDisabled();
