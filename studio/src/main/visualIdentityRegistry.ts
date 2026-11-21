@@ -177,7 +177,7 @@ function assertNoBusyVisualJobs(root:string,targets:string[]){
   const dir=resolveProjectFile(root,'.studio/glabs/jobs');
   if(!fs.existsSync(dir)||!targets.length)return;
   const currentProject=readState(root).project.id;
-  for(const name of fs.readdirSync(dir).filter(n=>/^[a-f0-9-]{36}\\.json$/i.test(n))){
+  for(const name of fs.readdirSync(dir).filter(n=>/^[a-f0-9-]{36}\.json$/i.test(n))){
     const job=strictJson(fs.readFileSync(resolveProjectFile(root,
       '.studio/glabs/jobs/'+name),'utf8')) as Record<string,unknown>;
     if(job.projectId===currentProject&&targets.includes(String(job.targetKey))&&
