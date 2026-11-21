@@ -17,6 +17,9 @@ export interface GLabsJob {
   authorTaskId?:string;draftRevisionAtSubmission?:number;targetCreativeSha256?:string;
   styleProfileId?:'B1'|'B2'|'B3'|'B4';styleProfileSha256?:string;
   prompt:string;promptSha256:string;references:Array<{path:string;sha256:string;mime:string;name:string;rightsSha256:string}>;model:string;aspectRatio:string;status:JobStatus;
+  identityBindingSnapshotSha?:string;identityApprovalSetSha?:string;
+  identityStyleBibleSha?:string;identityCharacterIds?:string[];
+  identityRequiredReferences?:string[];identityPreviousSourceSha?:string;
   providerTaskId?:string;staged?:{path:string;sha256:string;mime:string;width:number;height:number};
   journalRevision?:number;
   syncPhase?:'provider'|'result'|'download'|'decode'|'stage'|'validated';
@@ -246,6 +249,18 @@ function assertJobTarget(appPath:string,root:string,job:GLabsJob){
   if(state.project.style!==job.styleProfileId||
     loadImageStyleProfile(appPath,state.project.style as 'B1'|'B2'|'B3'|'B4').sha256!==job.styleProfileSha256)
     throw new Error('GLABS_JOB_STALE_STYLE_AUTHORITY: approved style source changed after image generation.');
+  if(state.identityPolicy==='v1'){
+    const prepared=prepareNativeImageTarget(appPath,root,job.targetKey);
+    if(!prepared||prepared.state!=='READY'||
+      !prepared.identityBindingSnapshotSha||
+      job.identityBindingSnapshotSha!==prepared.identityBindingSnapshotSha||
+      job.identityApprovalSetSha!==prepared.identityApprovalSetSha||
+      job.identityStyleBibleSha!==prepared.identityStyleBibleSha||
+      JSON.stringify(job.references.map(ref=>ref.path))!==
+        JSON.stringify(prepared.references))
+      throw new Error('IDENTITY_JOB_STALE_REFERENCE_BINDINGS');
+  }else if(job.identityBindingSnapshotSha)
+    throw new Error('IDENTITY_JOB_POLICY_CHANGED');
   return current;
 }
 /** Persist stale attempts so output history is retained, never silently re-bound. */
@@ -340,23 +355,26 @@ function assertPreparedImageRequest(appPath:string,root:string,input:ImageReques
   // Existing explicit manual owner-authored workflow remains supported.
   // Automatic Storyboard submissions carry a frozen creative fingerprint
   // and cannot bypass source readiness or reuse a stale saved prompt.
-  if(input.preparedFingerprint===undefined)return null;
+  if(input.preparedFingerprint===undefined){
+    if(readState(root).identityPolicy==='v1')
+      throw new Error('IDENTITY_PREPARED_FINGERPRINT_REQUIRED');
+    return null;
+  }
   if(typeof input.preparedFingerprint!=='string'||!/^[a-f0-9]{64}$/.test(input.preparedFingerprint))
     throw new Error('GLABS_PREPARED_FINGERPRINT_INVALID');
   const candidate=prepareNativeImageTarget(appPath,root,input.targetKey);
   const ready=candidate?.draftIdentity.creativeFingerprint===input.preparedFingerprint?candidate:null;
+  if(ready?.state==='BLOCKED'&&readState(root).identityPolicy==='v1')
+    throw new Error(ready.reason||'IDENTITY_PREPARED_TARGET_BLOCKED');
   if(!ready||ready.state!=='READY'||ready.prompt.trim()!==input.prompt.trim()||
-    JSON.stringify(ready.references)!==JSON.stringify(input.references))
+    JSON.stringify(ready.references)!==JSON.stringify(input.references)||
+    (readState(root).identityPolicy==='v1'&&!ready.identityBindingSnapshotSha))
     throw new Error('GLABS_PREPARED_TARGET_NOT_READY_OR_STALE');
   return ready;
 }
 export async function submitGlabsImage(appPath:string,root:string,userData:string,cipher:CredentialCipher,input:ImageRequest,decode:GLabsDecoder){
   const preflightStarted=performance.now();
   if(input.authorized!==true)throw new Error('GLABS_PAID_SUBMISSION_REQUIRES_EXPLICIT_OWNER_AUTHORIZATION');
-  // F24 policy is opt-in/new-project only; never allow the legacy manual
-  // preparedFingerprint path to bypass an unfinished identity binding.
-  if(readState(root).identityPolicy==='v1')
-    throw new Error('IDENTITY_NATIVE_REFERENCE_BINDINGS_NOT_READY: no paid POST made.');
   if(typeof input.prompt!=='string'||input.prompt.trim().length<12||input.prompt.length>18000)
     throw new Error('GLABS_PROMPT_REQUIRED: owner must confirm an actual image requirement.');
   const prepared=assertPreparedImageRequest(appPath,root,input);
@@ -418,6 +436,15 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
     targetPath:match.path,candidateSha256:sha(JSON.stringify(pending.after)),
     authorTaskId:creative.authorTaskId,draftRevisionAtSubmission:creative.draftRevision,targetCreativeSha256:creative.fingerprint,
     styleProfileId:styleProfile.id,styleProfileSha256:styleProfile.sha256,
+    ...(prepared?.identityBindingSnapshotSha?{
+      identityBindingSnapshotSha:prepared.identityBindingSnapshotSha,
+      identityApprovalSetSha:prepared.identityApprovalSetSha,
+      identityStyleBibleSha:prepared.identityStyleBibleSha,
+      identityCharacterIds:[...(prepared.identityCharacterIds??[])],
+      identityRequiredReferences:[...(prepared.identityRequiredReferences??[])],
+      ...(prepared.identityPreviousSourceSha?{
+        identityPreviousSourceSha:prepared.identityPreviousSourceSha}:{})
+    }:{}),
     prompt:providerPrompt,promptSha256:sha(providerPrompt),
     references:referenceFiles,model:input.model,aspectRatio:input.aspectRatio,status:'QUEUED',createdAt:timestamp(),updatedAt:timestamp()};
   const lock=job.projectId+':'+job.token+':'+job.targetKey;
@@ -754,6 +781,7 @@ export function approveGlabsImage(appPath:string,root:string,id:string,rights:st
       throw new Error('GLABS_JOB_STALE_PROMPT_EVIDENCE: stored image prompt SHA does not match the original provider payload.');
     // Crash-safe idempotency: only the exact same generated job can recover its
     // already committed binding; there must never be a second import.
+    if(readState(root).identityPolicy==='v1')assertJobTarget(appPath,root,job);
     const recovered=recoverCommittedGeneratedApproval(appPath,root,job,decode);
     if(recovered)return recovered;
     // Undefined is the new G-Labs project-use approval. A legacy explicit
