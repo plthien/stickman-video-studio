@@ -188,10 +188,18 @@ export function resolveVisualReferences(root:string,targetKey:string,ownerRefs:s
     ...binding.characters.map(id=>'Character '+id+': use its verified attached canonical image as the appearance authority.'),
     'Do not invent facial features, clothing, body proportions or identity traits.'
   ].join('\n'):'';
+  const relationDirective:Record<Exclude<import('./visualIdentityRegistry.js').ContinuityRelation,'none'>,string>={
+    same_setup:'Keep approved temporary setup and environmental state where consistent with this exact Native action.',
+    match_subject:'Match only the expressly linked subject; do not carry incidental actors, props or text.',
+    match_location:'Match the verified location, not unrelated character poses or foreground objects.',
+    match_composition:'Preserve applicable layout geometry only; do not override current Shot requirements.',
+    graphic_sequence:'Follow the approved graphic progression only where compatible with the current source action.'
+  };
   const continuityPrompt=binding.continuity?
     '\n\nAPPROVED PREVIOUS IMAGE CONTINUITY ['+binding.continuity.relation+
-    ']\nSource target '+binding.continuity.sourceTargetKey+
-    '. Canonical character references control identity; previous image controls only the declared transient relationship. Do not copy unrelated actors or props.':'';
+    ']\nSource target '+binding.continuity.sourceTargetKey+'\n'+
+    relationDirective[binding.continuity.relation]+
+    '\nCanonical character references control identity. Never copy unrelated people, objects, captions or appearance traits.':'';
   return{enabled:true,targetKey,characterIds:[...binding.characters],
     references:refs,referenceSetSha256,readiness,blockers,
     sourceSnapshotSha256,effectivePromptAppendix:effectivePromptAppendix+continuityPrompt,
