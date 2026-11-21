@@ -121,7 +121,7 @@ function registerIpc() {
       throw new Error('CHARACTER_OWNER_SOURCE_RIGHTS_REQUIRED');
     const root=rootFor(id);
     const pick=await dialog.showOpenDialog({properties:['openFile'],
-      filters:[{name:'Approved character images',extensions:['png','jpg','jpeg']}]});
+      filters:[{name:'Approved character images',extensions:['png','jpg','jpeg','webp']}]});
     if(pick.canceled)return null;
     const imported=importMediaFile(root,pick.filePaths[0],'image',input.rights);
     return addCharacterReference(root,{characterId:input.characterId,
