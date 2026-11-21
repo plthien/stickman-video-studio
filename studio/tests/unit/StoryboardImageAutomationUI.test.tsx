@@ -171,6 +171,26 @@ describe('Storyboard P1: real renderer queue and paid-action isolation',()=>{
     expect(retry).toBeEnabled();
     expect(generate).not.toHaveBeenCalled();
   });
+  it('UI-09 explicit creative mismatch cannot become a visible or approvable current image',async()=>{
+    install();
+    const current=window.studio!;
+    Object.defineProperty(window,'studio',{configurable:true,value:{
+      ...current,glabsJobs:async()=>[{
+        id:'old-creative-validated',token:'token-A',targetKey:'image:0:layer-a',
+        shotId:'sh-a',layerId:'layer-a',targetPath:'assets/images/a.png',
+        status:'VALIDATED',model:'nano_banana_2',aspectRatio:'9:16',
+        targetCreativeSha256:'f'.repeat(64),styleProfileId:'B2',
+        styleProfileSha256:'a'.repeat(64),
+        staged:{path:'assets/images/old.png',sha256:'f'.repeat(64),width:768,height:1365}
+      }],mediaUrl:async()=> 'studio-media://test/old.png'
+    }});
+    render(<AppStateProvider><Harness/></AppStateProvider>);
+    const card=(await screen.findAllByTestId('shot-image-card'))[0];
+    await waitFor(()=>expect(card).toHaveTextContent('Not Generated'));
+    expect(card.querySelector('img')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:'Approve Image'})).not.toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'Regenerate Image · layer-a'})).toBeEnabled();
+  });
   it('UI-05 original manual Import & Bind remains available only on demand',async()=>{
     install();render(<AppStateProvider><Harness/></AppStateProvider>);
     await waitFor(()=>expect(screen.getByTestId('image-queue-counts')).toHaveTextContent('READY 2'));
