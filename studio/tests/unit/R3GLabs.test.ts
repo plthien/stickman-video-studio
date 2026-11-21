@@ -726,6 +726,137 @@ describe('F17 durable provider completion and read-only ingestion recovery',()=>
     expect(calls.filter(c=>c.route==='/api/files/out.png')).toHaveLength(2);
   });
 });
+describe('F19/F22 MIME-safe provider ingestion and GET-only recovery',()=>{
+  it('F19-01 canonical PNG and permitted generic/missing/alias headers validate with one POST each',async()=>{
+    for(const header of ['image/png',' IMAGE/PNG ; charset=binary','application/octet-stream',null,'image/x-png']){
+      const dir=credential(),{root,targets}=nativeTarget();
+      const {calls}=transport();
+      const base=globalThis.fetch;
+      vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL,options?:RequestInit)=>{
+        if(new URL(String(input)).pathname==='/api/files/out.png')return new Response(new Uint8Array(portraitPng),{
+          status:200,headers:header===null?{}:{'Content-Type':header}
+        });
+        return base(input,options);
+      }));
+      const created=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+      const validated=await pollGlabsImage(appPath,root,dir,cipher,created.id,decode);
+      expect(validated).toMatchObject({status:'VALIDATED',sourceMime:'image/png',
+        staged:{mime:'image/png',sha256:sha(portraitPng),width:90,height:160}});
+      expect(validated.mimeDiagnostic?.classification).toBe(header===null?'missing':
+        header==='application/octet-stream'?'generic':header==='image/x-png'?'alias':undefined);
+      expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
+      vi.unstubAllGlobals();
+    }
+  });
+  it('F19-02 supported image/jpeg and image/webp signatures are decoded into validated PNG',async()=>{
+    const jpg=Buffer.from('/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4pLSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk//2wBDAQ4ODhMREyYVFSZPNS01T09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0//wAARCAACAAIDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDbooor44+iP//Z','base64');
+    const webp=Buffer.from('UklGRjoAAABXRUJQVlA4IC4AAADQAQCdASoCAAIAAoBCJaACdLoB+AADsAD+7Srf/WV/Mr+ZX+1d/8s+fw2dGAAA','base64');
+    for(const [bytes,header,mime,classification] of [
+      [jpg,'image/jpg','image/jpeg','alias'],
+      [webp,'image/webp','image/webp',undefined],
+      [jpg,'image/png','image/jpeg','mismatch']
+    ] as const){
+      const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport();
+      const base=globalThis.fetch;
+      vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL,options?:RequestInit)=>{
+        if(new URL(String(input)).pathname==='/api/files/out.png')return new Response(new Uint8Array(bytes),{
+          status:200,headers:{'Content-Type':header}
+        });
+        return base(input,options);
+      }));
+      // Electron's production decoder re-encodes into PNG; the isolated test
+      // decoder models that successful, dimension-bounded decode explicitly.
+      const decodeImage=()=>({png:portraitPng,width:90,height:160});
+      const created=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decodeImage);
+      const validated=await pollGlabsImage(appPath,root,dir,cipher,created.id,decodeImage);
+      expect(validated).toMatchObject({status:'VALIDATED',sourceMime:mime,
+        staged:{mime:'image/png',sha256:sha(portraitPng),width:90,height:160}});
+      expect(validated.mimeDiagnostic?.classification).toBe(classification);
+      expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
+      vi.unstubAllGlobals();
+    }
+  });
+  it('F19-03 HTML JSON XML non-image and unsupported MIME never stage or approve image',async()=>{
+    const cases=[
+      {bytes:Buffer.from('<html>error</html>'),header:'text/html',code:'GLABS_IMAGE_BODY_NOT_SUPPORTED'},
+      {bytes:Buffer.from('{"error":"missing"}'),header:'application/json',code:'GLABS_IMAGE_BODY_NOT_SUPPORTED'},
+      {bytes:Buffer.from('<svg></svg>'),header:'image/svg+xml',code:'GLABS_IMAGE_BODY_NOT_SUPPORTED'},
+      {bytes:Buffer.from('not an image'),header:'image/png',code:'GLABS_IMAGE_BODY_NOT_SUPPORTED'},
+      {bytes:portraitPng,header:'text/html',code:'GLABS_DECLARED_MIME_UNSUPPORTED'},
+      {bytes:portraitPng,header:'image/svg+xml',code:'GLABS_DECLARED_MIME_UNSUPPORTED'}
+    ];
+    for(const sample of cases){
+      const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport();
+      const base=globalThis.fetch;
+      vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL,options?:RequestInit)=>{
+        if(new URL(String(input)).pathname==='/api/files/out.png')return new Response(new Uint8Array(sample.bytes),{
+          status:200,headers:{'Content-Type':sample.header}
+        });
+        return base(input,options);
+      }));
+      const created=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+      await expect(pollGlabsImage(appPath,root,dir,cipher,created.id,decode))
+        .rejects.toThrow(sample.code);
+      const persisted=listGlabsJobs(root).find(row=>row.id===created.id)!;
+      expect(persisted.status).not.toBe('VALIDATED');
+      expect(persisted.lastSyncError?.code).toBe(sample.code);
+      expect(persisted.staged).toBeUndefined();
+      expect(getPendingMedia(appPath,root)?.missing).toHaveLength(1);
+      expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
+      await expect(submitGlabsImage(appPath,root,dir,cipher,{
+        ...request(targets[0].key),regenerate:true
+      },decode)).rejects.toThrow(/EXISTING_ACTIVE_ATTEMPT/);
+      expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
+      vi.unstubAllGlobals();
+    }
+  });
+  it('F19-04 incompatible MIME then corrected GET-only retry preserves original provider ID and paid POST count',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls,stub}=transport();
+    let incompatible=true;
+    vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL,options?:RequestInit)=>{
+      if(new URL(String(input)).pathname==='/api/files/out.png'&&incompatible)
+        return new Response(new Uint8Array(portraitPng),{status:200,headers:{'Content-Type':'text/html'}});
+      return stub(input,options);
+    }));
+    const created=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    await expect(pollGlabsImage(appPath,root,dir,cipher,created.id,decode))
+      .rejects.toThrow('GLABS_DECLARED_MIME_UNSUPPORTED');
+    const failed=listGlabsJobs(root).find(row=>row.id===created.id)!;
+    expect(failed.providerCompletedAt).toBeTruthy();
+    expect(failed.lastSyncError).toMatchObject({stage:'download',code:'GLABS_DECLARED_MIME_UNSUPPORTED'});
+    incompatible=false;
+    const recovered=await pollGlabsImage(appPath,root,dir,cipher,created.id,decode);
+    expect(recovered.status).toBe('VALIDATED');
+    expect(recovered.providerTaskId).toBe('ab12cd34');
+    expect(recovered.providerCompletedAt).toBe(failed.providerCompletedAt);
+    expect(recovered.staged).toMatchObject({sha256:sha(portraitPng),width:90,height:160});
+    expect(recovered.lastSyncError).toBeUndefined();
+    expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
+  });
+  it('F22-01 status GET failure persists per-job diagnostic; later GET-only completion recovers',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls,stub}=transport();
+    let failStatus=true;
+    vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL,options?:RequestInit)=>{
+      if(new URL(String(input)).pathname==='/api/status/ab12cd34'&&failStatus)
+        throw new Error('injected provider status read timeout');
+      return stub(input,options);
+    }));
+    const created=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    await expect(pollGlabsImage(appPath,root,dir,cipher,created.id,decode))
+      .rejects.toThrow('GLABS_TRANSPORT_UNKNOWN');
+    const recorded=listGlabsJobs(root).find(row=>row.id===created.id)!;
+    expect(recorded).toMatchObject({status:'RUNNING',syncPhase:'provider',providerTaskId:'ab12cd34',
+      lastSyncError:{stage:'provider',code:'GLABS_TRANSPORT_UNKNOWN',at:expect.any(String)}});
+    expect(recorded.providerCompletedAt).toBeUndefined();
+    expect(recorded.journalRevision).toBeGreaterThan(created.journalRevision!);
+    failStatus=false;
+    const recovered=await pollGlabsImage(appPath,root,dir,cipher,created.id,decode);
+    expect(recovered.status).toBe('VALIDATED');
+    expect(recovered.lastSyncError).toBeUndefined();
+    expect(recovered.providerTaskId).toBe(created.providerTaskId);
+    expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
+  });
+});
 describe('F11 crash-safe generated-image approval journal recovery',()=>{
   it('F11-INTEGRITY-03 rejects a forged generated-image prompt SHA before any Native binding',async()=>{
     const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport();
