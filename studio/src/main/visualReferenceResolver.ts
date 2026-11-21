@@ -98,7 +98,16 @@ export function resolveVisualReferences(root:string,targetKey:string,
     if(!blockers.includes(status))blockers.push(status);
   };
   let matched:ReturnType<typeof current>|null=null;
-  try{matched=current(root,targetKey);}catch{block('NEEDS_MAPPING_REVIEW');}
+  try{matched=current(root,targetKey);}
+  catch(error){
+    // Only absent/stale owner mapping is a reviewable condition.
+    // Malformed/cyclic project sidecars are integrity failures and must not
+    // be masked as ordinary missing mapping (or recursively followed).
+    if(!(error instanceof Error)||![
+      'NEEDS_MAPPING_REVIEW','CHARACTER_TARGET_CURRENT_DRAFT_REQUIRED'
+    ].includes(error.message))throw error;
+    block('NEEDS_MAPPING_REVIEW');
+  }
   if(!matched)return{...base,readiness,blockers,referenceSetSha256:hash([])};
   const {gallery,binding}=matched;
   if(!binding.noRecurringCharacter&&!binding.characters.length)block('NEEDS_MAPPING_REVIEW');
