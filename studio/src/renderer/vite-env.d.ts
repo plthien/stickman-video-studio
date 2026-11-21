@@ -24,7 +24,8 @@ interface Window { studio?: Readonly<{
   identityApproveReference:(id:string,input:{
     expectedRevision:number;candidateId:string;ownerInspected:true
   })=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
-  identityPublishReferences:(id:string,revision:number,selectedIds:string[])=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
+  identityPreviewReferenceImpact:(id:string,selectedIds:string[])=>Promise<ReturnType<typeof import('../main/identity/impact').previewReferenceSwitchImpact>>;
+  identityPublishReferences:(id:string,revision:number,selectedIds:string[],impactSha256?:string)=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
   identityReferenceJobs:(id:string)=>Promise<import('../main/identity/referenceGeneration').ReferenceJob[]>;
   identityGenerateReference:(id:string,input:{anchorId:string;authorized:true;regenerate?:boolean;acknowledgeUnknown?:boolean})=>Promise<import('../main/identity/referenceGeneration').ReferenceJob>;
   identitySyncReference:(id:string,jobId:string)=>Promise<import('../main/identity/referenceGeneration').ReferenceJob>;
