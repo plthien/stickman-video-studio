@@ -96,12 +96,14 @@ function isCurrent(root:string,appPath:string,job:ReferenceJob){
 }
 function markStale(root:string,job:ReferenceJob){
   const note='REFERENCE_SOURCE_STALE: old provider billing/history retained; cannot approve as current';
-  if(job.status==='UNKNOWN'){
-    // Preserve the potentially billable uncertain POST fence across upstream
-    // changes. A new paid request still needs explicit UNKNOWN acknowledgement.
-    if(!job.reason?.includes(note)){
-      job.reason=[job.reason,note].filter(Boolean).join(' | ');write(root,job);
-    }
+  if(['SUBMITTED','RUNNING','UNKNOWN'].includes(job.status)){
+    // A POST may already have charged while this reference source changed.
+    // Even a confirmed provider ID must not let an older attempt become
+    // a free-to-retry STALE record. Preserve the paid/UNKNOWN barrier.
+    const changed=job.status!=='UNKNOWN'||!job.reason?.includes(note);
+    job.status='UNKNOWN';
+    job.reason=[job.reason?.includes(note)?'':job.reason,note].filter(Boolean).join(' | ');
+    if(changed)write(root,job);
     return job;
   }
   if(job.status!=='STALE'){
