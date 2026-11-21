@@ -353,6 +353,10 @@ function assertPreparedImageRequest(appPath:string,root:string,input:ImageReques
 export async function submitGlabsImage(appPath:string,root:string,userData:string,cipher:CredentialCipher,input:ImageRequest,decode:GLabsDecoder){
   const preflightStarted=performance.now();
   if(input.authorized!==true)throw new Error('GLABS_PAID_SUBMISSION_REQUIRES_EXPLICIT_OWNER_AUTHORIZATION');
+  // F24 policy is opt-in/new-project only; never allow the legacy manual
+  // preparedFingerprint path to bypass an unfinished identity binding.
+  if(readState(root).identityPolicy==='v1')
+    throw new Error('IDENTITY_NATIVE_REFERENCE_BINDINGS_NOT_READY: no paid POST made.');
   if(typeof input.prompt!=='string'||input.prompt.trim().length<12||input.prompt.length>18000)
     throw new Error('GLABS_PROMPT_REQUIRED: owner must confirm an actual image requirement.');
   const prepared=assertPreparedImageRequest(appPath,root,input);
