@@ -304,3 +304,152 @@ describe('F09 Native Shot full-card gallery without selecting Layers',()=>{
     expect(screen.getAllByTestId('shot-image-card')).toHaveLength(5);
   });
 });
+
+
+describe('F25 compact fixed-card thumbnail gallery and accessible original-size lightbox',()=>{
+  const css=fs.readFileSync(path.resolve('src/renderer/styles/global.css'),'utf8');
+  function openPortrait(){
+    const portrait=screen.getAllByTestId('shot-image-card')[0];
+    const trigger=within(portrait).getByRole('button',{name:'Expand image shot-1/portrait'});
+    loaded(within(portrait).getByRole('img'));
+    expect(trigger).toBeEnabled();
+    trigger.focus();
+    fireEvent.click(trigger);
+    return{portrait,trigger,dialog:screen.getByRole('dialog',{name:'Expanded generated image'})};
+  }
+  it('F25-TEST-01 one card and five cards both use non-stretch 200px grid tracks and 160px stages',()=>{
+    render(<Harness shown={[cards[0]]}/>);
+    expect(screen.getAllByTestId('shot-image-card')).toHaveLength(1);
+    const grid=screen.getByTestId('shot-image-card').parentElement!;
+    const oneStage=screen.getByTestId('shot-image-stage');
+    expect(grid).toHaveClass('shot-image-gallery-grid');
+    expect(oneStage).not.toHaveAttribute('style');
+    cleanup();
+    render(<Harness/>);
+    expect(screen.getAllByTestId('shot-image-card')).toHaveLength(5);
+    expect(screen.getAllByTestId('shot-image-stage')).toHaveLength(5);
+    const style=document.createElement('style');
+    style.textContent=css.slice(css.indexOf('/* F25 compact Native Shot gallery.'));
+    document.head.appendChild(style);
+    try{
+      const computed=window.getComputedStyle(screen.getAllByTestId('shot-image-card')[0]);
+      expect(computed.maxWidth).toBe('200px');
+      for(const stage of screen.getAllByTestId('shot-image-stage')){
+        expect(window.getComputedStyle(stage).height).toBe('160px');
+        expect(window.getComputedStyle(stage).minHeight).toBe('160px');
+        expect(stage).not.toHaveAttribute('style');
+      }
+      const layout=window.getComputedStyle(screen.getAllByTestId('shot-image-card')[0].parentElement!);
+      expect(layout.display).toBe('grid');
+      expect(layout.gap).toBe('12px');
+    }finally{style.remove();}
+  });
+  it('F25-TEST-02 mixed image ratios and empty state keep image dimensions without cropping or reflow',()=>{
+    render(<Harness/>);
+    for(const item of images){
+      const card=screen.getAllByTestId('shot-image-card')
+        .find(node=>node.getAttribute('data-layer-id')===item.layerId)!;
+      const stage=within(card).getByTestId('shot-image-stage');
+      expect(stage.className).toContain('shot-image-card-stage');
+      expect(stage).not.toHaveAttribute('style');
+      if(item.status==='NONE'){
+        expect(stage).toHaveClass('is-placeholder');
+        expect(stage).toHaveTextContent('Not Generated');
+      }else{
+        const image=within(stage).getByRole('img');
+        expect(image).toHaveAttribute('width',String(item.width));
+        expect(image).toHaveAttribute('height',String(item.height));
+        expect(image).toHaveStyle({objectFit:'contain'});
+      }
+    }
+  });
+  it('F25-TEST-03 a verified thumbnail opens the exact candidate; missing/unloaded URL is not actionable',()=>{
+    const generate=vi.fn(),approve=vi.fn();
+    render(<Harness generate={generate} approve={approve}/>);
+    const card=screen.getAllByTestId('shot-image-card')[2];
+    const trigger=within(card).getByRole('button',{name:'Expand image shot-1/landscape'});
+    expect(trigger).toBeDisabled();
+    fireEvent.click(trigger);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    loaded(within(card).getByRole('img'));
+    expect(trigger).toBeEnabled();
+    fireEvent.click(trigger);
+    const modal=screen.getByRole('dialog',{name:'Expanded generated image'});
+    expect(within(modal).getByRole('img')).toHaveAttribute('src',urls['candidate-2']);
+    expect(within(modal).getByRole('img')).toHaveAttribute('width','1280');
+    expect(within(modal).getByRole('img')).toHaveAttribute('height','720');
+    expect(modal).toHaveAttribute('aria-modal','true');
+    expect(generate).not.toHaveBeenCalled();
+    expect(approve).not.toHaveBeenCalled();
+    const missing=screen.getAllByTestId('shot-image-card')[4];
+    expect(within(missing).queryByRole('button',{name:/Expand image/})).not.toBeInTheDocument();
+  });
+  it('F25-TEST-04 Fit Screen is default and Original is exact CSS pixel size with scrollable viewport',()=>{
+    render(<Harness/>);
+    const {dialog}=openPortrait();
+    const fit=within(dialog).getByRole('button',{name:'Fit Screen'});
+    const original=within(dialog).getByRole('button',{name:'100% Original'});
+    const image=within(dialog).getByRole('img');
+    expect(fit).toHaveAttribute('aria-pressed','true');
+    expect(original).toHaveAttribute('aria-pressed','false');
+    expect(image).toHaveStyle({width:'auto',height:'auto',maxWidth:'100%',maxHeight:'100%'});
+    expect(within(dialog).getByTestId('shot-image-preview-viewport')).toHaveClass('is-fit');
+    fireEvent.click(original);
+    expect(original).toHaveAttribute('aria-pressed','true');
+    expect(image).toHaveStyle({
+      width:'768px',height:'1365px',maxWidth:'none',maxHeight:'none',objectFit:'contain'
+    });
+    expect(within(dialog).getByTestId('shot-image-preview-viewport')).toHaveClass('is-original');
+    fireEvent.click(fit);
+    expect(image).toHaveStyle({width:'auto',height:'auto',maxWidth:'100%',maxHeight:'100%'});
+    expect(within(dialog).getByTestId('shot-image-preview-viewport')).toHaveClass('is-fit');
+  });
+  it('F25-TEST-05 ESC, Close and backdrop dismiss and restore focus without event fallthrough',()=>{
+    const approve=vi.fn(),generate=vi.fn();
+    render(<Harness approve={approve} generate={generate}/>);
+    let {trigger,dialog}=openPortrait();
+    expect(document.activeElement).toBe(within(dialog).getByRole('button',{name:'Close Preview'}));
+    fireEvent.keyDown(document,{key:'Escape'});
+    expect(screen.queryByRole('dialog',{name:'Expanded generated image'})).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(trigger);
+    fireEvent.click(trigger);
+    dialog=screen.getByRole('dialog',{name:'Expanded generated image'});
+    fireEvent.click(within(dialog).getByRole('button',{name:'Close Preview'}));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(trigger);
+    fireEvent.click(trigger);
+    dialog=screen.getByRole('dialog',{name:'Expanded generated image'});
+    fireEvent.click(within(dialog).getByRole('button',{name:'Fit Screen'}));
+    expect(dialog).toBeInTheDocument();
+    fireEvent.click(dialog);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(trigger);
+    expect(generate).not.toHaveBeenCalled();
+    expect(approve).not.toHaveBeenCalled();
+  });
+  it('F25-TEST-06/07 loading and navigating preview never approves, generates or regenerates',()=>{
+    const approve=vi.fn(),generate=vi.fn();render(<Harness approve={approve} generate={generate}/>);
+    const card=screen.getAllByTestId('shot-image-card')[0];
+    const approveButton=within(card).getByRole('button',{name:'Approve Image'});
+    expect(approveButton).toBeDisabled();
+    loaded(within(card).getByRole('img'));
+    expect(approveButton).toBeEnabled();
+    const {dialog}=openPortrait();
+    fireEvent.click(within(dialog).getByRole('button',{name:'100% Original'}));
+    fireEvent.click(within(dialog).getByRole('button',{name:'Fit Screen'}));
+    fireEvent.click(within(dialog).getByRole('button',{name:'Close Preview'}));
+    expect(approve).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(screen.getAllByTestId('shot-image-card')).toHaveLength(5);
+  });
+  it('F25-TEST-09 responsive grid uses a bounded track with no fractional expansion',()=>{
+    render(<Harness/>);
+    const grid=screen.getAllByTestId('shot-image-card')[0].parentElement!;
+    expect(grid).toHaveClass('shot-image-gallery-grid');
+    expect(css).toMatch(/\.shot-image-gallery-grid\{[^}]*grid-template-columns:repeat\(auto-fill,min\(200px, 100%\)\)/);
+    expect(css).not.toMatch(/\.shot-image-gallery-grid\{[^}]*grid-template-columns:[^;}]*1fr/);
+    expect(css).toMatch(/\.shot-image-card\{[^}]*max-width:200px/);
+    expect(css).toMatch(/\.shot-image-card-stage\{[^}]*height:160px/);
+    expect(css).toMatch(/\.shot-image-lightbox-viewport\.is-original\{[^}]*overflow:auto/);
+  });
+});
