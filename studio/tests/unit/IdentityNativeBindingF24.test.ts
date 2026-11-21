@@ -174,30 +174,32 @@ describe('F24 Native canonical bytes, billing gate and final source receipt',()=
     },decode)).rejects.toThrow('IDENTITY_PREPARED_FINGERPRINT_REQUIRED');
     expect(posts()).toHaveLength(0);
   });
+async function approveAllNativeLayers(root:string,auth:string){
+  for(const spec of prepareNativeImages(appPath,root).jobs){
+    const created=await submitGlabsImage(appPath,root,auth,cipher,
+      request(root,spec.targetKey),decode);
+    const validated=await pollGlabsImage(appPath,root,auth,cipher,created.id,decode);
+    expect(validated.status).toBe('VALIDATED');
+    const bound=approveGlabsImage(appPath,root,created.id,undefined,decode);
+    expect(bound.job.status).toBe('APPROVED');
+  }
+}
+const mockOriginalNativeCli=async(_exe:string,args:string[])=>{
+  const candidate=fs.readFileSync(args[2]);
+  return{code:0,stdout:JSON.stringify({valid:true,fingerprint:sha(candidate),
+    checked_seconds:30}),stderr:''};
+};
   it('C08/C09 approved outputs require current canonical set and native receipt after confirm',async()=>{
     const {root}=setup(),accountRoot=account();fakeProvider();
-    const keys=prepareNativeImages(appPath,root).jobs.map(job=>job.targetKey);
-    for(const key of keys){
-      const created=await submitGlabsImage(appPath,root,accountRoot,cipher,
-        request(root,key),decode);
-      const validated=await pollGlabsImage(appPath,root,accountRoot,cipher,created.id,decode);
-      expect(validated.status).toBe('VALIDATED');
-      const bound=approveGlabsImage(appPath,root,created.id,undefined,decode);
-      expect(bound.job.status).toBe('APPROVED');
-    }
+    await approveAllNativeLayers(root,accountRoot);
     expect(getNativeImageGallery(appPath,root).targets.every(t=>t.fulfilled)).toBe(true);
     // Native validate/confirm use a stubbed original CLI but real staged media SHA,
     // rights, G-Labs job and frozen identity snapshots.
     const original=readState(root);
     expect(original.tasks?.native?.status).toBe('FROZEN');
-    const simulated=async(_exe:string,args:string[])=>{
-      const candidate=fs.readFileSync(args[2]);
-      return{code:0,stdout:JSON.stringify({valid:true,
-        fingerprint:sha(candidate),checked_seconds:30}),stderr:''};
-    };
     await confirmImport(appPath,root,
       (await import('../../src/main/externalTasks')).getPendingMedia(appPath,root)!.token,
-      {previewSeconds:20,validator:simulated});
+      {previewSeconds:20,validator:mockOriginalNativeCli});
     expect(()=>assertPublishedIdentityCurrent(root,appPath)).not.toThrow();
     const pathToReceipt=path.join(root,'.studio/identity/native-publication-v1.json');
     expect(fs.existsSync(pathToReceipt)).toBe(true);
@@ -217,5 +219,26 @@ describe('F24 Native canonical bytes, billing gate and final source receipt',()=
       decode,impact.impactSha256);
     expect(()=>assertPublishedIdentityCurrent(root,appPath))
       .toThrow('IDENTITY_PUBLISHED_REFERENCE_LINEAGE_STALE');
+  });
+  it('C10 an injected late Native revision write failure rolls back F24 receipt, state and Core manifest',async()=>{
+    const {root}=setup(),auth=account();fakeProvider();
+    await approveAllNativeLayers(root,auth);
+    const before=fs.readFileSync(path.join(root,'project.json'));
+    const token=(await import('../../src/main/externalTasks'))
+      .getPendingMedia(appPath,root)!.token;
+    // Native Confirm writes the receipt after the Core+state promotion but
+    // before its revision sidecar. Turning the final destination into a
+    // directory simulates a late filesystem rename failure.
+    const blockedRevision=path.join(root,'.studio/revisions/native-1.json');
+    fs.mkdirSync(blockedRevision,{recursive:true});
+    await expect(confirmImport(appPath,root,token,{
+      previewSeconds:20,validator:mockOriginalNativeCli
+    })).rejects.toThrow();
+    expect(fs.readFileSync(path.join(root,'project.json'))).toEqual(before);
+    expect(readState(root).tasks?.native?.status).toBe('FROZEN');
+    expect(fs.existsSync(path.join(root,'.studio/identity/native-publication-v1.json')))
+      .toBe(false);
+    expect((await import('../../src/main/externalTasks')).getPendingMedia(appPath,root)?.token)
+      .toBe(token);
   });
 });
