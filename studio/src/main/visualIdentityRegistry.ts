@@ -96,6 +96,18 @@ export function readTargetBindings(root:string):BindingStore{
         ['same_setup','match_subject','match_location','match_composition','graphic_sequence']
           .includes(v.continuity.relation)))))
     throw new Error('CHARACTER_BINDINGS_INVALID');
+  // Corrupt sidecars must never create recursive previous-image resolution.
+  const sourceFor=new Map(doc.bindings.map(b=>
+    [b.targetKey,b.continuity?.sourceTargetKey??null] as const));
+  for(const binding of doc.bindings){
+    let cursor:string|null=binding.targetKey;
+    const visited=new Set<string>();
+    while(cursor){
+      if(visited.has(cursor))throw new Error('CONTINUITY_CYCLE');
+      visited.add(cursor);
+      cursor=sourceFor.get(cursor)??null;
+    }
+  }
   return doc;
 }
 function commitRegistry(root:string,current:Registry,next:Registry,reason:string){
