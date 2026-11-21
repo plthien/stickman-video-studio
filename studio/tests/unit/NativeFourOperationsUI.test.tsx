@@ -304,8 +304,16 @@ describe('Storyboard — source-grounded paid image generation for current Nativ
     expect(first).toHaveAttribute('data-layer-id','layer-1');
     expect(first).toHaveTextContent('Owner-approved image for layer-1');
     fireEvent.click(first.querySelector('.shot-image-card-details > summary')!);
-    expect(await screen.findByText('Approved B1 style. Exact owner-approved image for layer-1',
-      {selector:'pre'})).toBeInTheDocument();
+    // The expanded card intentionally renders the compiled prompt twice:
+    // once in its diagnostics and once in the source-backed prompt editor.
+    // Query within the exact Layer and accept both truthful representations.
+    const compiled=await waitFor(()=>{
+      const matches=Array.from(first.querySelectorAll('pre.prompt')).filter(node=>
+        node.textContent==='Approved B1 style. Exact owner-approved image for layer-1');
+      expect(matches.length).toBeGreaterThan(0);
+      return matches;
+    });
+    expect(compiled[0]).toBeInTheDocument();
     expect(glabsGenerate).not.toHaveBeenCalled();
     fireEvent.click(generate);
     await waitFor(()=>expect(glabsGenerate).toHaveBeenCalledWith('A',expect.objectContaining({
