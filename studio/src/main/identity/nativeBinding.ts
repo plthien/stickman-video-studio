@@ -5,7 +5,7 @@ import {compileStyleBible} from './styleBible.js';
 import {loadImageStyleProfile} from '../imagePreparation.js';
 import {contentHash,type NativeImageNeedV2,type StyleBible} from './contracts.js';
 import {validateNativeIdentityNeeds} from './nativeNeeds.js';
-import {verifyReferenceFile,type ReferenceApprovalSet,type ReferenceCandidate} from './referencePublication.js';
+import {verifyReferenceFile} from './referencePublication.js';
 import {nativeImageTargetsFromManifest,readNativeDraft} from '../externalTasks.js';
 
 export interface ApprovedAnchor{
