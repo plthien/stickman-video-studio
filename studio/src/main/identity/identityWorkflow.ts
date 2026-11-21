@@ -284,8 +284,10 @@ export function registerOwnerReference(root:string,appPath:string,input:{
   if(prior.bibleTextApproved?.sha256!==bible.style_bible_sha256)
     throw Error('STYLE_BIBLE_TEXT_APPROVAL_REQUIRED');
   const row=bible.characters.find(c=>c.char_id===input.anchorId);
-  if(!row||row.visual_readiness!=='READY_FOR_REFERENCE')
-    throw Error('REFERENCE_CHARACTER_NOT_READY');
+  // An explicitly owned real reference image may supply visual appearance
+  // absent from narration. This NEVER invents textual traits or authorizes
+  // automatic generation from an underspecified character.
+  if(!row)throw Error('REFERENCE_CHARACTER_NOT_FOUND');
   const media=readState(root);
   const own=media.media?.find(item=>item.path===input.relativePath&&
     item.kind==='image'&&item.rights?.trim()&&
