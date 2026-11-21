@@ -64,14 +64,17 @@ function setup(){
   };
   const approved=approveCandidate(pending,bible,root,true,decode);
   const set=publishApprovalSet(root,bible,[approved],1,decode);
+  const review={
+    schema:'stickman-analysis-review-v1',project_id:script.projectId,
+    analysis_sha256:contentHash(analysis),independent_review:true,
+    findings:[],approved:true
+  };
   const record={
     schema:'stickman-identity-workflow-v1',projectId:script.projectId,revision:1,
     currentTask:null,draftAnalysis:analysis,draftSha256:contentHash(analysis),
-    independentReview:{schema:'stickman-analysis-review-v1',project_id:script.projectId,
-      analysis_sha256:contentHash(analysis),independent_review:true,
-      findings:[],approved:true},
+    independentReview:review,
     analysisApproved:{sha256:contentHash(analysis),approvedAt:new Date().toISOString(),
-      reviewSha256:'1'.repeat(64)},
+      reviewSha256:contentHash(review)},
     bible,bibleTextApproved:{sha256:bible.style_bible_sha256,
       approvedAt:new Date().toISOString()},
     referenceCandidates:[approved],referenceApprovalSet:set,events:[]
