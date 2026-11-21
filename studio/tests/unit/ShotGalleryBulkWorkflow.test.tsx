@@ -51,6 +51,8 @@ const job=(index:number)=>({
   targetKey:targets[index].key,shotId:targets[index].shotId,
   layerId:targets[index].layerId,targetPath:targets[index].path,
   status:'VALIDATED',model:'nano_banana_2',aspectRatio:'9:16',
+  authorTaskId:'native-A',targetCreativeSha256:String(index+1).repeat(64),
+  styleProfileId:'B2',styleProfileSha256:'c'.repeat(64),
   prompt:'Source verified image for '+targets[index].layerId,
   staged:{path:'assets/images/candidate-'+index+'.png',
     sha256:String(index+1).repeat(64),width:shapes[index][0],height:shapes[index][1]}
@@ -92,8 +94,11 @@ function install({initial=4,rejectIndex=-1,superseded=false}:{
     if(index===rejectIndex)throw new Error('Injected backend approval failure');
     if(current.status!=='VALIDATED')return{job:current};
     fulfilled.add(current.targetKey);
-    records=records.map(record=>record.id===jobId?{...record,status:'APPROVED'}:record);
-    return{job:{...current,status:'APPROVED'}};
+    const approved={rights:'owner-authorized test binding',
+      path:'assets/images/approved.png',sha256:current.staged.sha256};
+    records=records.map(record=>record.id===jobId?
+      {...record,status:'APPROVED',approved}:record);
+    return{job:{...current,status:'APPROVED',approved}};
   });
   const generate=vi.fn(async(_id:string,input:{targetKey:string})=>{
     const index=targets.findIndex(t=>t.key===input.targetKey);
