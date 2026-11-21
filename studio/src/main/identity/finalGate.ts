@@ -1,7 +1,7 @@
 /** F24 final publish/render gate. Never edits Native Core project.json. */
 import fs from 'node:fs';
 import {atomicJson,readState,resolveProjectFile,sha,strictJson} from '../services.js';
-import {getNativeImageGallery,readNativeDraft,nativeImageTargetsFromManifest} from '../externalTasks.js';
+import {getNativeImageGallery,readNativeDraft} from '../externalTasks.js';
 import {listGlabsJobs} from '../glabs.js';
 import {readApprovedNativeIdentity,validateNativeBindingPayload} from './nativeBinding.js';
 import {resolveApprovedPreviousImage} from './continuityGraph.js';
