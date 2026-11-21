@@ -133,7 +133,15 @@ export function StyleBibleWorkspace(){
               {job.providerTaskId&&<small>Provider task {job.providerTaskId}</small>}
               {job.reason&&<small>{job.reason}</small>}
               {job.status==='UNKNOWN'&&<strong>UNKNOWN may have charged.
-                No automatic paid retry.</strong>}
+                No automatic paid retry. Retry Sync first whenever the provider task ID exists.</strong>}
+              {job.status==='UNKNOWN'&&<button type="button" className="button"
+                disabled={busy||active}
+                onClick={()=>action(id=>window.studio!.identityGenerateReference(id,{
+                  anchorId:character.char_id,authorized:true,
+                  regenerate:true,acknowledgeUnknown:true
+                }))}>
+                I acknowledge possible previous charge — Generate again (Paid)
+              </button>}
               {['RUNNING','SUBMITTED','UNKNOWN'].includes(job.status)&&
                 <button type="button" className="button" disabled={busy||active&&
                   referenceJobs.some(other=>other.id!==job.id&&
