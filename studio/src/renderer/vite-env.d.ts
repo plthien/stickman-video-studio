@@ -9,6 +9,23 @@ interface Window { studio?: Readonly<{
   readHistory:(id:string,stage:string,operation:'author'|'review'|'correct'|'recheck'|'media-review',mediaKind?:'voice'|'captions'|'preview'|'film')=>Promise<import('../shared/externalHistory').ExternalHistoryRecord[]>;
   readFrozen:(id:string,stage:string,operation:'author'|'review'|'correct'|'recheck'|'media-review')=>Promise<({id:string;prompt:string;artifactContext?:'DRAFT'|'PUBLISHED';editableIds?:string[];editablePaths?:string[];targetIds?:string[];findingIds?:string[];mediaTransferAttested?:boolean;mediaKind?:'preview'|'film'|'voice'|'captions'})|null>;freezeLifecycle:(id:string,stage:string,operation:'review'|'correct'|'recheck',scope:Record<string,unknown>,rebuild?:boolean)=>Promise<{id:string;prompt:string}>;stageLifecycle:(id:string,stage:string,operation:'review'|'correct'|'recheck',text:string)=>Promise<StudioStagedImport>;confirmLifecycle:(id:string,token:string,options?:{previewSeconds?:number;allowSampleDraft?:boolean})=>Promise<import('./types/app').NativeStudioState>;
   elevenLabsStatus:()=>Promise<{configured:boolean;source:'secure-storage'|'environment'|'none';secureStorageAvailable:boolean}>; elevenLabsSaveKey:(key:string)=>Promise<{configured:boolean;source:'secure-storage'|'environment'|'none';secureStorageAvailable:boolean}>; elevenLabsClearKey:()=>Promise<{configured:boolean;source:'secure-storage'|'environment'|'none';secureStorageAvailable:boolean}>;
+  visualIdentitySnapshot:(id:string)=>Promise<{
+    registry:import('../main/visualIdentityRegistry').Registry;
+    bindings:import('../main/visualIdentityRegistry').BindingStore;
+    coverage:ReturnType<typeof import('../main/visualReferenceResolver').characterCoverage>;
+    reviews:ReturnType<typeof import('../main/visualIdentityReview').readVisualReviews>;
+  }>;
+  visualIdentityCreateCharacter:(id:string,input:Parameters<typeof import('../main/visualIdentityRegistry').registerCharacter>[1])=>Promise<import('../main/visualIdentityRegistry').Registry>;
+  visualIdentitySetStrict:(id:string,input:Parameters<typeof import('../main/visualIdentityRegistry').setStrictCharacterMode>[1])=>Promise<import('../main/visualIdentityRegistry').Registry>;
+  visualIdentityImpact:(id:string,characterId:string)=>Promise<ReturnType<typeof import('../main/visualIdentityRegistry').previewCharacterImpact>>;
+  visualIdentityApproveCharacter:(id:string,input:Parameters<typeof import('../main/visualIdentityRegistry').approveCharacter>[1])=>Promise<import('../main/visualIdentityRegistry').Registry>;
+  visualIdentityArchiveCharacter:(id:string,input:Parameters<typeof import('../main/visualIdentityRegistry').archiveCharacter>[1])=>Promise<import('../main/visualIdentityRegistry').Registry>;
+  visualIdentityMapTarget:(id:string,input:Parameters<typeof import('../main/visualIdentityRegistry').saveTargetBinding>[1])=>Promise<import('../main/visualIdentityRegistry').BindingStore>;
+  visualIdentityAddExistingReference:(id:string,input:Parameters<typeof import('../main/visualIdentityRegistry').addCharacterReference>[1])=>Promise<import('../main/visualIdentityRegistry').Registry>;
+  visualIdentityImportReference:(id:string,input:{characterId:string;referenceId:string;expectedRevision:number;rights:string})=>Promise<import('../main/visualIdentityRegistry').Registry|null>;
+  visualIdentityAttestCandidate:(id:string,input:Parameters<typeof import('../main/visualIdentityReview').attestVisualCandidate>[1])=>Promise<ReturnType<typeof import('../main/visualIdentityReview').readVisualReviews>>;
+  visualIdentityAttestBound:(id:string,input:Parameters<typeof import('../main/visualIdentityReview').attestBoundVisual>[1])=>Promise<ReturnType<typeof import('../main/visualIdentityReview').readVisualReviews>>;
+  visualIdentityResolve:(id:string,key:string)=>Promise<import('../main/visualReferenceResolver').ReferencePlan>;
   galleryImages?:(id:string)=>Promise<{token:string|null;styleProfileSha256?:string;shots:Array<{id:string;index:number;imageCount:number}>;targets:Array<{
     key:string;shotId:string;layerId:string;path:string;boundPath:string;boundSha256?:string;creativeFingerprint?:string;fulfilled:boolean;managed:boolean
   }>;}>;
