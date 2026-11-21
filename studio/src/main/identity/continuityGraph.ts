@@ -37,7 +37,11 @@ export function resolveApprovedPreviousImage(appPath:string,root:string,
     job.status==='APPROVED'&&job.approved?.path===source.boundPath&&
     job.approved.sha256===source.boundSha256&&
     job.targetCreativeSha256===source.creativeFingerprint&&
-    job.identityBindingSnapshotSha===current.targetBindingSha&&
+    job.identityTargetBindingSha===current.targetBindingSha&&
+    job.identityStyleBibleSha===current.styleBibleSha&&
+    job.approved?.rights===readState(root).media?.find(m=>
+      m.path===source.boundPath&&m.sha256===source.boundSha256&&
+      m.shotId===source.shotId&&m.layerId===source.layerId)?.rights&&
     job.identityApprovalSetSha===current.approvalSetSha);
   if(!accepted)throw Error('CONTINUITY_APPROVED_SOURCE_JOB_REQUIRED');
   const ledger=readState(root).media?.find(m=>m.kind==='image'&&
