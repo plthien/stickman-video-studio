@@ -9,8 +9,9 @@ import {analysisLineage,freezeAnalysisTask,validateAnalysisEnvelope,
   validateScriptAnalysis,verifyIndependentReview,type ApprovedScriptSnapshot,
   type AnalysisTask,type AnalysisReview,type IdentityReviewOperation} from './scriptAnalysis.js';
 import {compileStyleBible,type PinnedStyle} from './styleBible.js';
-import {approveCandidate,publishApprovalSet,validateCandidate,validatePublishedSet,
+import {approveCandidate,publishApprovalSet,validatePublishedSet,verifyReferenceFile,
   type ReferenceCandidate,type ReferenceApprovalSet,type IdentityDecoder} from './referencePublication.js';
+import {referencePromptForCharacter} from './styleBible.js';
 
 type TaskState='FROZEN'|'IMPORTED'|'STALE';
 interface TaskEntry{task:AnalysisTask;status:TaskState;frozenArtifactSha:string|null;at:string}
@@ -104,14 +105,8 @@ export function identityWorkflowSnapshot(root:string,appPath:string){
         else if(record.bibleTextApproved?.sha256!==current.style_bible_sha256)
           readiness='STYLE_BIBLE_TEXT_REVIEW_REQUIRED';
         else{
-          readiness='STYLE_BIBLE_APPROVED';
-          if(record.referenceApprovalSet){
-            validatePublishedSet(root,current,record.referenceApprovalSet,
-              record.referenceCandidates.filter(c=>c.status==='APPROVED'),
-              // Readiness does not decode untrusted reference bytes.
-              // Publication gets full decoder verification at its actual gate.
-              ()=>{throw Error('REFERENCE_SNAPSHOT_READ_ONLY');});
-          }
+          readiness=record.referenceApprovalSet?.style_bible_sha256===
+            current.style_bible_sha256?'REFERENCES_PUBLISHED':'STYLE_BIBLE_APPROVED';
         }
       }
     }catch(error){readiness=error instanceof Error?error.message:'IDENTITY_INTEGRITY_ERROR';}
@@ -230,6 +225,66 @@ export function approveProjectStyleBible(root:string,appPath:string,
   next.bibleTextApproved={sha256:current.style_bible_sha256,approvedAt:new Date().toISOString()};
   return save(root,prior,next,'approve:style-bible',next.bibleTextApproved);
 }
+/** Promote a real previously imported owner image as an unapproved candidate.
+ * Import alone never asserts a four-view presentation or visual correctness. */
+export function registerOwnerReference(root:string,appPath:string,input:{
+  expectedRevision:number;anchorId:string;relativePath:string;ownerSource:string
+},decode:IdentityDecoder){
+  const prior=readIdentityWorkflow(root);
+  if(prior.revision!==input.expectedRevision)throw Error('IDENTITY_REVISION_CONFLICT');
+  const {script,analysis}=validApproved(root,prior);
+  const bible=compileStyleBible(analysis,script,pinned(appPath,root));
+  if(prior.bibleTextApproved?.sha256!==bible.style_bible_sha256)
+    throw Error('STYLE_BIBLE_TEXT_APPROVAL_REQUIRED');
+  const row=bible.characters.find(c=>c.char_id===input.anchorId);
+  if(!row||row.visual_readiness!=='READY_FOR_REFERENCE')
+    throw Error('REFERENCE_CHARACTER_NOT_READY');
+  const media=readState(root);
+  const own=media.media?.find(item=>item.path===input.relativePath&&
+    item.kind==='image'&&item.rights?.trim()&&
+    media.imports?.includes(item.path));
+  if(!own||!input.ownerSource?.trim())throw Error('REFERENCE_OWNER_PROVENANCE_REQUIRED');
+  const verified=verifyReferenceFile(root,input.relativePath,own.sha256);
+  const details=decode(verified.bytes);
+  const prompt=referencePromptForCharacter(bible,input.anchorId,pinned(appPath,root));
+  const candidate:ReferenceCandidate={
+    schema:'stickman-visual-reference-candidate-v1',project_id:media.project.id,
+    candidate_id:randomUUID(),anchor_type:'character',anchor_id:input.anchorId,
+    source_definition_hash:row.source_definition_hash,
+    style_bible_sha256:bible.style_bible_sha256,
+    prompt_sha256:prompt.prompt_sha256,provider_job_id:null,model:'owner_imported',
+    aspect_ratio:'1:1',media_path:input.relativePath,media_sha256:verified.sha,
+    media_mime:verified.mime,width:details.width,height:details.height,
+    rights:own.rights+' | '+input.ownerSource.trim(),source:'OWNER_IMPORTED',
+    status:'VALIDATED',approval_event_id:null,approved_at:null
+  };
+  // Verify byte signatures and pixel dimensions before journaling the candidate.
+  // Owner must still inspect identity and 2x2 views; no generated media claims.
+  if(details.width!==details.height)throw Error('REFERENCE_SQUARE_IMAGE_REQUIRED');
+  const next=clone(prior);
+  next.referenceCandidates.push(candidate);
+  if(next.referenceCandidates.length>400)throw Error('IDENTITY_CANDIDATES_LIMIT');
+  next.referenceApprovalSet=null;
+  return save(root,prior,next,'candidate:owner-import',candidate);
+}
+export function approveOwnerReference(root:string,appPath:string,input:{
+  expectedRevision:number;candidateId:string;ownerInspected:true
+},decode:IdentityDecoder){
+  const prior=readIdentityWorkflow(root);
+  if(prior.revision!==input.expectedRevision)throw Error('IDENTITY_REVISION_CONFLICT');
+  const {script,analysis}=validApproved(root,prior);
+  const bible=compileStyleBible(analysis,script,pinned(appPath,root));
+  if(prior.bibleTextApproved?.sha256!==bible.style_bible_sha256)
+    throw Error('STYLE_BIBLE_TEXT_APPROVAL_REQUIRED');
+  const candidate=prior.referenceCandidates.find(c=>c.candidate_id===input.candidateId);
+  if(!candidate)throw Error('REFERENCE_CANDIDATE_NOT_FOUND');
+  const approved=approveCandidate(candidate,bible,root,input.ownerInspected,decode);
+  const next=clone(prior);
+  next.referenceCandidates=next.referenceCandidates.map(c=>
+    c.candidate_id===approved.candidate_id?approved:c);
+  next.referenceApprovalSet=null;
+  return save(root,prior,next,'approve:reference',approved);
+}
 export function publishStyleBibleReferences(root:string,appPath:string,
   expectedRevision:number,selectedIds:string[],decode:IdentityDecoder){
   const prior=readIdentityWorkflow(root);
@@ -256,6 +311,10 @@ export function assertIdentityUpstreamCurrent(root:string,appPath:string,
   if(journal.bibleTextApproved?.sha256!==bible.style_bible_sha256||
     !journal.referenceApprovalSet)
     throw Error('IDENTITY_UPSTREAM_NOT_PUBLISHED');
+  const selected=journal.referenceApprovalSet.entries.map(entry=>
+    journal.referenceCandidates.find(c=>c.candidate_id===entry.candidate_id&&
+      c.status==='APPROVED'));
+  if(selected.some(c=>!c))throw Error('REFERENCE_APPROVAL_SET_MISSING_CANDIDATE');
   return validatePublishedSet(root,bible,journal.referenceApprovalSet,
-    journal.referenceCandidates.filter(c=>c.status==='APPROVED'),decode);
+    selected as ReferenceCandidate[],decode);
 }
