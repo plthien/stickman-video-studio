@@ -2,6 +2,7 @@
 import {canonical,contentHash,hash,loadSchema,validateWithSchema,
   type StyleBible,type ScriptAnalysis,type BibleCharacter} from './contracts.js';
 import {validateScriptAnalysis,type ApprovedScriptSnapshot} from './scriptAnalysis.js';
+import type {OwnerVisualDefinition} from './visualDefinitions.js';
 export interface PinnedStyle {
   id:'B1'|'B2'|'B3'|'B4';guidance:string;sha256:string;
 }
@@ -44,12 +45,17 @@ export function validateStyleBibleCurrent(bible:StyleBible,
 }
 /** Print view labels only in prompt instructions; generated pixels must have NO text. */
 export function referencePromptForCharacter(bible:StyleBible,
-  charId:string,pinned:PinnedStyle){
+  charId:string,pinned:PinnedStyle,ownerDefinition?:OwnerVisualDefinition){
   if(bible.style_profile_sha256!==pinned.sha256||bible.style_profile_id!==pinned.id)
     throw Error('STYLE_BIBLE_STYLE_STALE');
   const row=bible.characters.find(c=>c.char_id===charId);
   if(!row)throw Error('STYLE_BIBLE_CHARACTER_NOT_FOUND');
-  if(row.visual_readiness!=='READY_FOR_REFERENCE')throw Error('STYLE_BIBLE_NEEDS_OWNER_DEFINITION');
+  if(ownerDefinition&&(ownerDefinition.charId!==charId||
+    ownerDefinition.styleBibleSha!==bible.style_bible_sha256||
+    ownerDefinition.approvedByOwner!==true))
+    throw Error('STYLE_BIBLE_OWNER_DEFINITION_STALE');
+  if(row.visual_readiness!=='READY_FOR_REFERENCE'&&!ownerDefinition)
+    throw Error('STYLE_BIBLE_NEEDS_OWNER_DEFINITION');
   const format=row.entity_kind==='human_group'?[
     'ONE GROUP OVERVIEW. One coherent approved group in a single image.',
     'Do not render four copies or invent new group members. No printed labels.'
@@ -69,6 +75,12 @@ export function referencePromptForCharacter(bible:StyleBible,
     'Grounded description: '+row.description,
     'Approved stable traits: '+JSON.stringify(row.explicit_visual_traits),
     'Approved identity markers: '+JSON.stringify(row.identity_markers),
+    ...(ownerDefinition?[
+      'Explicit owner-approved visual definition SHA: '+ownerDefinition.definitionSha,
+      'Owner-verified visual traits: '+JSON.stringify(ownerDefinition.traits),
+      'Visual definition provenance: '+ownerDefinition.provenance,
+      'This addendum is explicitly approved by owner; do NOT infer other traits.'
+    ]:[]),
     'Physical constraints: '+JSON.stringify(row.physical_constraints),
     'Narrative role context (NOT appearance instructions): '+row.narrative_role,
     'EXACT B'+pinned.id.slice(-1)+' VISUAL STYLE / SHA '+pinned.sha256,pinned.guidance,
