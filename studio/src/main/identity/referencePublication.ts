@@ -12,6 +12,7 @@ export interface ReferenceCandidate {
   schema:'stickman-visual-reference-candidate-v1';
   project_id:string;candidate_id:string;anchor_type:'character';anchor_id:string;
   source_definition_hash:string;style_bible_sha256:string;
+  visual_definition_sha256?:string;
   prompt_sha256:string;provider_job_id:string|null;model:string;aspect_ratio:'1:1';
   media_path:string;media_sha256:string;media_mime:Mime;
   width:number;height:number;rights:string;source:'OWNER_IMPORTED'|'GLABS_GENERATED';
@@ -22,7 +23,8 @@ export interface ReferenceApprovalSet {
   source_script_sha256:string;analysis_sha256:string;style_bible_sha256:string;
   entries:Array<{anchor_type:'character';anchor_id:string;source_definition_hash:string;
     media_path:string;media_sha256:string;media_mime:Mime;
-    approval_event_id:string;rights_sha256:string;candidate_id:string}>;
+    approval_event_id:string;rights_sha256:string;candidate_id:string;
+    visual_definition_sha256?:string}>;
   approval_set_sha256:string;
 }
 function projectPath(root:string,relative:string){
@@ -99,7 +101,9 @@ export function publishApprovalSet(root:string,bible:StyleBible,
       source_definition_hash:candidate.source_definition_hash,
       media_path:candidate.media_path,media_sha256:candidate.media_sha256,
       media_mime:candidate.media_mime,approval_event_id:candidate.approval_event_id,
-      rights_sha256:hash(candidate.rights),candidate_id:candidate.candidate_id};
+      rights_sha256:hash(candidate.rights),candidate_id:candidate.candidate_id,
+      ...(candidate.visual_definition_sha256?{
+        visual_definition_sha256:candidate.visual_definition_sha256}:{})};
   }).sort((a,b)=>a.anchor_id.localeCompare(b.anchor_id));
   if(new Set(entries.map(e=>e.anchor_id)).size!==entries.length||
     entries.some(e=>!bible.characters.some(c=>c.char_id===e.anchor_id)))
