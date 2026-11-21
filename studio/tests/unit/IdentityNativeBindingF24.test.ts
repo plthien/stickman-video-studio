@@ -18,7 +18,8 @@ import {loadImageStyleProfile} from '../../src/main/imagePreparation';
 import {assertPublishedIdentityCurrent,readNativeIdentityReceipt} from '../../src/main/identity/finalGate';
 import {readApprovedNativeIdentity} from '../../src/main/identity/nativeBinding';
 import {readIdentityWorkflow,publishStyleBibleReferences,
-  registerOwnerReference,approveOwnerReference} from '../../src/main/identity/identityWorkflow';
+  registerOwnerReference,approveOwnerReference,
+  approveOwnerVisualDefinition} from '../../src/main/identity/identityWorkflow';
 import {previewReferenceSwitchImpact} from '../../src/main/identity/impact';
 import type {ReferenceCandidate} from '../../src/main/identity/referencePublication';
 
@@ -211,6 +212,22 @@ describe('F24 Native canonical bytes, billing gate and final source receipt',()=
       .toBe(set.approval_set_sha256);
     expect(published.referenceApprovalSet?.approval_set_sha256)
       .not.toBe(set.approval_set_sha256);
+  });
+  it('F24-AUD-06 approving new visual text never silently replaces an existing canonical reference',()=>{
+    const {root,set}=setup();
+    const previous=prepareNativeImages(appPath,root).jobs.map(job=>
+      job.identityBindingSnapshotSha);
+    const journal=readIdentityWorkflow(root);
+    const updated=approveOwnerVisualDefinition(root,appPath,{
+      expectedRevision:journal.revision,anchorId:'char_001',
+      provenance:'OWNER_BRIEF',traits:['blue scarf'],
+      evidence:'Owner explicitly drew a blue scarf for the character.',
+      ownerInspected:true
+    });
+    expect(updated.referenceApprovalSet?.approval_set_sha256)
+      .toBe(set.approval_set_sha256);
+    expect(prepareNativeImages(appPath,root).jobs.map(job=>
+      job.identityBindingSnapshotSha)).toEqual(previous);
   });
   it('F24-AUD-02 follows an actual approved earlier image and sends both canonical and previous PNG bytes',async()=>{
     const {root,ref}=setup(true),auth=account(),{posts}=fakeProvider(secondPng);
