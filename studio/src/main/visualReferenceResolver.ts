@@ -1,6 +1,7 @@
 /** F24 authoritative reference planner. No API, paid POST, inferred actor or image mutation. */
+import fs from 'node:fs';
 import {getNativeImageGallery} from './externalTasks.js';
-import {readState,sha} from './services.js';
+import {readState,resolveProjectFile,sha,strictJson} from './services.js';
 import {readCharacterRegistry,readTargetBindings,verifyIdentityMedia,
   type IdentityMime,type TargetIdentityBinding} from './visualIdentityRegistry.js';
 
@@ -34,6 +35,35 @@ const current=(root:string,key:string)=>{
     FAIL('NEEDS_MAPPING_REVIEW');
   return{gallery,target,binding:binding as TargetIdentityBinding};
 };
+/** Verify the source is not itself stale under a newly changed ancestor/master.
+ * Read-only, no Native binding mutations or paid generation. */
+function approvedSourceCurrent(root:string,key:string,sourceSha:string):boolean{
+  const ancestor=resolveVisualReferences(root,key);
+  if(!ancestor.enabled||ancestor.readiness!=='READY')return false;
+  const file=resolveProjectFile(root,'.studio/visual-identity/visual-review-v1.json');
+  if(!fs.existsSync(file))return false;
+  const value=strictJson(fs.readFileSync(file,'utf8')) as {
+    projectId?:string;attestations?:Array<{
+      targetKey:string;sha256:string;referenceSetSha256:string;
+      kind:string;jobId?:string
+    }>
+  };
+  if(value.projectId!==readState(root).project.id||!Array.isArray(value.attestations))
+    return false;
+  return value.attestations.some(row=>{
+    if(row.targetKey!==key||row.sha256!==sourceSha||
+      row.referenceSetSha256!==ancestor.referenceSetSha256)return false;
+    if(row.kind==='BOUND')return true;
+    if(row.kind!=='CANDIDATE'||!row.jobId||!/^[a-f0-9-]{36}$/i.test(row.jobId))
+      return false;
+    const jobFile=resolveProjectFile(root,'.studio/glabs/jobs/'+row.jobId+'.json');
+    if(!fs.existsSync(jobFile))return false;
+    const job=strictJson(fs.readFileSync(jobFile,'utf8')) as Record<string,unknown>;
+    return job.status==='APPROVED'&&job.targetKey===key&&
+      (job.approved as {sha256?:string}|undefined)?.sha256===sourceSha&&
+      job.referenceSetSha256===row.referenceSetSha256;
+  });
+}
 export function resolveVisualReferences(root:string,targetKey:string,ownerRefs:string[]=[]):ReferencePlan{
   const registry=readCharacterRegistry(root);
   const base:ReferencePlan={enabled:registry.strict,targetKey,characterIds:[],
@@ -92,7 +122,8 @@ export function resolveVisualReferences(root:string,targetKey:string,ownerRefs:s
           const sourceLedger=state.media?.find(m=>m.kind==='image'&&
             m.path===source.boundPath&&m.sha256===source.boundSha256&&
             m.shotId===source.shotId&&m.layerId===source.layerId&&m.rights?.trim());
-          if(!sourceLedger)throw new Error('CONTINUITY_SOURCE_NOT_READY');
+          if(!sourceLedger||!approvedSourceCurrent(root,source.key,verified.sha256))
+            throw new Error('CONTINUITY_SOURCE_NOT_READY');
           // Published/old-token G-Labs history does not replace this exact current Native binding.
           const snapshot={sourceTargetKey,relation,token:gallery.token,
             creativeFingerprint:source.creativeFingerprint,path:source.boundPath,
