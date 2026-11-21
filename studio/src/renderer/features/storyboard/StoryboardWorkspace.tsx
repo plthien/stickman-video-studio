@@ -4,12 +4,14 @@ import {useAppState} from '../../app/AppState';
 import {Badge,Button,Card,CardHeader} from '../../components/ui';
 import {LegacyStoryboardWorkspace} from './LegacyStoryboardWorkspace';
 import {ShotImageGallery,type GalleryTarget,type GalleryCard} from './ShotImageGallery';
+import {CharacterRegistryPanel} from './CharacterRegistryPanel';
 
 type Studio=NonNullable<Window['studio']>;
 type Pending=Awaited<ReturnType<Studio['pendingMedia']>>;
 type Prepared=Awaited<ReturnType<Studio['prepareImages']>>;
 type ImageJob=Awaited<ReturnType<Studio['glabsJobs']>>[number];
 type Gallery=Awaited<ReturnType<NonNullable<Studio['galleryImages']>>>;
+type IdentitySnapshot=Awaited<ReturnType<Studio['visualIdentitySnapshot']>>;
 const message=(error:unknown)=>error instanceof Error?error.message:String(error);
 type JobView=Awaited<ReturnType<NonNullable<Window['studio']>['glabsJobs']>>[number];
 const legacyStatusRank=(status:string)=>({
@@ -35,6 +37,7 @@ export function StoryboardWorkspace(){
   const [prepared,setPrepared]=useState<Prepared|null>(null);
   const [jobs,setJobs]=useState<ImageJob[]>([]);
   const [gallery,setGallery]=useState<Gallery|null>(null);
+  const [identitySnapshot,setIdentitySnapshot]=useState<IdentitySnapshot|null>(null);
   const [selectedApproved,setSelectedApproved]=useState<Set<string>>(new Set());
   const approving=useRef(false);
   const approvalBatch=useRef<{cancelled:boolean}|null>(null);
@@ -77,11 +80,12 @@ export function StoryboardWorkspace(){
     // Show corruption as an explicit error instead of an empty queue.
     const nextPending=await studio.pendingMedia(scope.projectId)
       .catch(cause=>{throw new Error('Pending media ERROR: '+message(cause));});
-    const [nextJobs,nextConfig,nextPrepared,nextGallery]=await Promise.all([
+    const [nextJobs,nextConfig,nextPrepared,nextGallery,nextIdentity]=await Promise.all([
       studio.glabsJobs(scope.projectId),
       studio.glabsSettings(),
       studio.prepareImages?.(scope.projectId)??Promise.resolve(null),
-      studio.galleryImages?.(scope.projectId)??Promise.resolve(null)
+      studio.galleryImages?.(scope.projectId)??Promise.resolve(null),
+      studio.visualIdentitySnapshot?.(scope.projectId)??Promise.resolve(null)
     ]);
     // Avoid N image URL IPC roundtrips for projects with hundreds of jobs.
     // Only the selected candidate's preview is resolved on demand below.
@@ -96,7 +100,7 @@ export function StoryboardWorkspace(){
         merged.unshift(newer);
     }
     setPending(nextPending);setJobs(merged);setConfig(nextConfig.config);
-    setPrepared(nextPrepared);setGallery(nextGallery);
+    setPrepared(nextPrepared);setGallery(nextGallery);setIdentitySnapshot(nextIdentity);
     return{pending:nextPending,jobs:merged};
   };
   useEffect(()=>{
@@ -104,6 +108,7 @@ export function StoryboardWorkspace(){
     receivedJobUpdates.current.clear();
     if(approvalBatch.current)approvalBatch.current.cancelled=true;
     setPending(null);setPrepared(null);setJobs([]);setGallery(null);setConfig(null);setUrls({});
+    setIdentitySnapshot(null);
     setSelectedApproved(new Set());setApprovalResults([]);
     setPreviewReady({});setPreviewErrors({});setPreviewAttempts({});setError('');setBusy(false);
     setUnknownReview(null);recoveryEpoch.current+=1;
@@ -706,6 +711,8 @@ export function StoryboardWorkspace(){
         <div className="info">{prepared?.shotCount??shotIds.length} Shots · {prepared?.uniquePaths??new Set(imageTargets.map(item=>item.path)).size} distinct paths</div>
       </details>
     </Card>
+    {id&&native?.nativeDraft&&<CharacterRegistryPanel key={id} projectId={id}
+      onChanged={()=>refresh()} onSnapshot={setIdentitySnapshot}/>}
     <Card>
       <CardHeader title={shotId?shotId+' · Shot Image Gallery':'Shot Image Gallery'}/>
       <div className="storyboard-compact-toolbar">
@@ -737,6 +744,19 @@ export function StoryboardWorkspace(){
           ' unique asset paths: each eligible target can be billed separately; no shared binding is implied.'}
       </div>
       <ShotImageGallery projectId={id??''} shotId={shotId} cards={cards} urls={urls}
+        identityReviews={identitySnapshot?.reviews.attestations??[]}
+        onIdentityReviewed={(jobId,targetKey,candidateSha256,referenceSetSha256)=>{
+          const scope=captureProjectSession();
+          if(!scope||!window.studio?.visualIdentityAttestCandidate)return;
+          setBusy(true);setError('');
+          void window.studio.visualIdentityAttestCandidate(scope.projectId,{
+            jobId,targetKey,candidateSha256,referenceSetSha256,ownerConfirmed:true
+          }).then(()=>{
+            if(isCurrentProjectSession(scope))return refresh(scope);
+          }).catch(e=>{
+            if(isCurrentProjectSession(scope))setError(message(e));
+          }).finally(()=>{if(isCurrentProjectSession(scope))setBusy(false);});
+        }}
         previewReady={previewReady} previewErrors={previewErrors}
         previewIdentity={previewIdentity}
         busy={busy||Boolean(submission)||Boolean(batchSession.current)}
