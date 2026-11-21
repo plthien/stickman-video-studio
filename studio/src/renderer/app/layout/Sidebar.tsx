@@ -6,6 +6,7 @@ const workspaceNavigation = [
   ['02', 'Tổng quan', '/overview'],
   ['03', 'External ChatGPT', '/external'],
   ['04', 'Kịch bản', '/script'],
+  ['04b', 'Style Bible', '/style-bible'],
   ['05', 'Voice & Captions', '/voice'],
   ['06', 'Storyboard & Image', '/storyboard'],
   ['07', 'Video Editor', '/editor'],
