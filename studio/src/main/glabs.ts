@@ -480,10 +480,19 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
         return{data:'data:'+ref.mime+';base64,'+checked.bytes.toString('base64'),name:ref.name};
       });
       providerPayload={prompt:job.prompt,model:job.model,aspect_ratio:job.aspectRatio,reference_images:refs,upscale:[]};
-      if(Buffer.byteLength(JSON.stringify(providerPayload),'utf8')>MAX_REQUEST)
-        throw new Error('GLABS_REQUEST_OVERSIZE');
-    }catch{
-      job.status='FAILED';job.reason='Request/reference validation failed BEFORE provider submission. No paid POST was made.';
+      const payloadBytes=Buffer.byteLength(JSON.stringify(providerPayload),'utf8');
+      if(payloadBytes>MAX_REQUEST)
+        throw new Error(state.identityPolicy==='v1'?
+          'REFERENCE_BUDGET_EXCEEDED: '+job.references.length+'/8 images; '+
+          payloadBytes+'/'+MAX_REQUEST+' JSON bytes':'GLABS_REQUEST_OVERSIZE');
+    }catch(error){
+      // Keep exact safe budget diagnostics while never disclosing credentials,
+      // external provider URLs, or arbitrary parser/transport exception text.
+      const safe=error instanceof Error&&
+        /^REFERENCE_BUDGET_EXCEEDED: [0-9]+\/8 images; [0-9]+\/[0-9]+ JSON bytes$/.test(error.message)?
+        error.message+': ':'';
+      job.status='FAILED';job.reason=safe+
+        'Request/reference validation failed BEFORE provider submission. No paid POST was made.';
       writeJob(root,job);return job;
     }
     if(!currentJobTarget(appPath,root,job))return job;
