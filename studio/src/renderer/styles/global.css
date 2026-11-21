@@ -159,3 +159,10 @@
 .identity-impact{display:flex;flex-direction:column;gap:6px;overflow-wrap:anywhere}
 .identity-catalog{padding:10px;border:1px solid #315062;border-radius:6px;min-width:0}
 .identity-catalog>div{padding:4px 0}
+
+/* F24 owner-authored visual definitions are explicit data, never inferred traits. */
+.identity-owner-visual-definition{display:flex;flex-direction:column;gap:8px;padding:9px;
+  border:1px solid #365166;border-radius:6px;min-width:0}
+.identity-owner-visual-definition label{display:flex;flex-direction:column;gap:4px;min-width:0}
+.identity-owner-visual-definition .input,.identity-owner-visual-definition .textarea{
+  box-sizing:border-box;width:100%;min-width:0}
