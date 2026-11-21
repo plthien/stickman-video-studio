@@ -22,7 +22,7 @@ export interface ImageJobSpec {
   draftIdentity:{projectId:string;authorTaskId:string;token:string;revision:number;creativeFingerprint:string};
   occurrencesAtPath:number; ownerEdited:boolean;
   /** Current policy's mandatory reference snapshot; absent on legacy jobs. */
-  identityBindingSnapshotSha?:string;
+  identityBindingSnapshotSha?:string;identityTargetBindingSha?:string;
   identityApprovalSetSha?:string;identityStyleBibleSha?:string;
   identityRequiredReferences?:string[];
   identityOwnerReferences?:string[];
@@ -291,7 +291,8 @@ function withUpstreamIdentity(appPath:string,root:string,item:ImageJobSpec):Imag
     const effectivePrompt=item.effectivePrompt?
       item.effectivePrompt+'\n\n'+appendix:'';
     return{...item,references:paths,
-      identityBindingSnapshotSha,identityApprovalSetSha:binding.approvalSetSha,
+      identityBindingSnapshotSha,identityTargetBindingSha:binding.targetBindingSha,
+      identityApprovalSetSha:binding.approvalSetSha,
       identityStyleBibleSha:binding.styleBibleSha,
       identityRequiredReferences:mandatory,identityOwnerReferences:ownerRefs,
       identityCharacterIds:binding.characterIds,
