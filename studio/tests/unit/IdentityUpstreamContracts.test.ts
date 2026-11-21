@@ -1,6 +1,7 @@
 import {describe,it,expect} from 'vitest';
 import {hash,contentHash,readAndValidate,loadSchema} from '../../src/main/identity/contracts';
 import {validateScriptAnalysis,freezeAnalysisTask,validateAnalysisEnvelope,
+  analysisAuthorContract,analysisReviewContract,
   verifyIndependentReview} from '../../src/main/identity/scriptAnalysis';
 import {compileStyleBible,referencePromptForCharacter,
   validateStyleBibleCurrent} from '../../src/main/identity/styleBible';
@@ -63,6 +64,27 @@ describe('F24 upstream source-grounded contract gates',()=>{
     expect(()=>validateAnalysisEnvelope(response,task,script)).not.toThrow();
     expect(()=>validateAnalysisEnvelope({...response,stage:'native'},task,script))
       .toThrow('SCRIPT_ANALYSIS_ENVELOPE_INVALID');
+  });
+  it('F24-AUD-03 embeds complete character schema and exact frozen Author/Correct/Recheck envelope',()=>{
+    for(const operation of ['author','correct'] as const){
+      const frozen=freezeAnalysisTask(script,operation,operation==='author'?1:2);
+      const contract=operation==='author'?frozen.prompt:
+        analysisAuthorContract(frozen);
+      expect(contract).toContain('"mode-b-identity-external-result-v1"');
+      expect(contract).toContain('"script-analysis-v1"');
+      expect(contract).toContain('"char_id"');
+      expect(contract).toContain('"presence_ranges"');
+      expect(contract).toContain('"input_sha256": "'+frozen.input_sha256+'"');
+      expect(contract).toContain('"task_id": "'+frozen.task_id+'"');
+      expect(contract).toContain('"stage": "script_analysis"');
+      expect(contract).toContain('UTF-16');
+    }
+    const review=freezeAnalysisTask(script,'recheck',3);
+    const contract=analysisReviewContract(review,contentHash(analysis()));
+    expect(contract).toContain('"stickman-analysis-review-v1"');
+    expect(contract).toContain('"independent_review": true');
+    expect(contract).toContain('"analysis_sha256": "');
+    expect(contract).toContain('"input_sha256": "'+review.input_sha256+'"');
   });
   it('U05 rejects unreviewed authoritative identity defects',()=>{
     const review={schema:'stickman-analysis-review-v1' as const,project_id:projectId,
