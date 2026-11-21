@@ -6,6 +6,9 @@ import {performance} from 'node:perf_hooks';
 import type {CredentialCipher} from './elevenlabsCredentials.js';
 import {getPendingMedia,importMediaFile,fulfillMedia,nativeImageTargetIdentity,readNativeDraft} from './externalTasks.js';
 import {prepareNativeImageTarget,loadImageStyleProfile} from './imagePreparation.js';
+import {readCharacterRegistry} from './visualIdentityRegistry.js';
+import {assertVisualReferenceCurrent} from './visualReferenceResolver.js';
+import {assertVisualCandidateReviewed} from './visualIdentityReview.js';
 import {atomicJson,nativeSkillRoot,readState,resolveProjectFile,sha,strictJson} from './services.js';
 
 export const GLABS_MODELS=['nano_banana_2','nano_banana_pro'] as const;
@@ -17,6 +20,9 @@ export interface GLabsJob {
   authorTaskId?:string;draftRevisionAtSubmission?:number;targetCreativeSha256?:string;
   styleProfileId?:'B1'|'B2'|'B3'|'B4';styleProfileSha256?:string;
   prompt:string;promptSha256:string;references:Array<{path:string;sha256:string;mime:string;name:string;rightsSha256:string}>;model:string;aspectRatio:string;status:JobStatus;
+  /** Optional F24 authority for strict jobs; absent on all pre-F24 history. */
+  referenceSetSha256?:string;identityOwnerReferences?:string[];
+  continuitySnapshotSha256?:string;
   providerTaskId?:string;staged?:{path:string;sha256:string;mime:string;width:number;height:number};
   journalRevision?:number;
   syncPhase?:'provider'|'result'|'download'|'decode'|'stage'|'validated';
@@ -336,11 +342,26 @@ export interface ImageRequest{
   targetKey:string;prompt:string;model:string;aspectRatio:string;
   references:string[];authorized:boolean;acknowledgeUnknown?:boolean;regenerate?:boolean;preparedFingerprint?:string;
 }
+/** Revalidate immutable owner mapping, canonical file SHA and previous source before POST/approval. */
+function assertIdentityJob(root:string,job:GLabsJob){
+  if(!readCharacterRegistry(root).strict){
+    if(job.referenceSetSha256)throw new Error('REFERENCE_STALE');
+    return;
+  }
+  assertVisualReferenceCurrent(root,{
+    targetKey:job.targetKey,referenceSetSha256:job.referenceSetSha256,
+    ownerReferences:job.identityOwnerReferences??[],
+    compiledReferences:job.references.map(ref=>ref.path)
+  });
+}
 function assertPreparedImageRequest(appPath:string,root:string,input:ImageRequest){
   // Existing explicit manual owner-authored workflow remains supported.
   // Automatic Storyboard submissions carry a frozen creative fingerprint
   // and cannot bypass source readiness or reuse a stale saved prompt.
-  if(input.preparedFingerprint===undefined)return null;
+  if(input.preparedFingerprint===undefined){
+    if(readCharacterRegistry(root).strict)throw new Error('CHARACTER_PREPARED_TARGET_REQUIRED');
+    return null;
+  }
   if(typeof input.preparedFingerprint!=='string'||!/^[a-f0-9]{64}$/.test(input.preparedFingerprint))
     throw new Error('GLABS_PREPARED_FINGERPRINT_INVALID');
   const candidate=prepareNativeImageTarget(appPath,root,input.targetKey);
@@ -391,7 +412,7 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
       const pinned=verifiedB4Reference(appPath,root,relative);
       return{path:relative,sha256:pinned.sha256,mime:pinned.mime,name:'ref_'+String(index+1).padStart(3,'0')+'.png',rightsSha256:pinned.rightsSha256};
     }
-    if(typeof relative!=='string'||!/^assets\/images\/[^/]+\.(png|jpe?g)$/i.test(relative))
+    if(typeof relative!=='string'||!/^assets\/images\/[^/]+\.(png|jpe?g|webp)$/i.test(relative))
       throw new Error('GLABS_REFERENCE_PATH_INVALID');
     const entry=(state.media??[]).find(m=>m.path===relative&&m.kind==='image'&&Boolean(m.rights?.trim()));
     if(!entry)throw new Error('GLABS_REFERENCE_UNAPPROVED');
@@ -414,6 +435,12 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
     targetPath:match.path,candidateSha256:sha(JSON.stringify(pending.after)),
     authorTaskId:creative.authorTaskId,draftRevisionAtSubmission:creative.draftRevision,targetCreativeSha256:creative.fingerprint,
     styleProfileId:styleProfile.id,styleProfileSha256:styleProfile.sha256,
+    ...(prepared?.referenceSetSha256?{
+      referenceSetSha256:prepared.referenceSetSha256,
+      identityOwnerReferences:[...(prepared.identityOwnerReferences??[])],
+      ...(prepared.visualReferencePlan?.sourceSnapshotSha256?{
+        continuitySnapshotSha256:prepared.visualReferencePlan.sourceSnapshotSha256}:{})
+    }:{}),
     prompt:providerPrompt,promptSha256:sha(providerPrompt),
     references:referenceFiles,model:input.model,aspectRatio:input.aspectRatio,status:'QUEUED',createdAt:timestamp(),updatedAt:timestamp()};
   const lock=job.projectId+':'+job.token+':'+job.targetKey;
@@ -424,6 +451,7 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
     // Re-check inside the local job lock so concurrent callers cannot send two paid POSTs.
     assertJobTarget(appPath,root,job);
     assertPreparedImageRequest(appPath,root,input);
+    assertIdentityJob(root,job);
     const latest=listGlabsJobs(root).filter(j=>j.token===job.token&&j.targetKey===job.targetKey);
     if(latest.some(j=>['QUEUED','SUBMITTED','RUNNING','DOWNLOADED'].includes(j.status)))
       throw new Error('GLABS_EXISTING_ACTIVE_ATTEMPT');
@@ -442,6 +470,7 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
       // Creative draft or source rights may have changed during the async probe.
       assertJobTarget(appPath,root,job);
       assertPreparedImageRequest(appPath,root,input);
+      assertIdentityJob(root,job);
       assertJobReferences(appPath,root,job,decode);
       const refs=job.references.map(ref=>{
         const checked=ref.path.startsWith('@modeb/b4/')?verifiedB4Reference(appPath,root,ref.path):validatedImage(root,ref.path,ref.sha256);
@@ -750,6 +779,8 @@ export function approveGlabsImage(appPath:string,root:string,id:string,rights:st
       throw new Error('GLABS_JOB_STALE_PROMPT_EVIDENCE: stored image prompt SHA does not match the original provider payload.');
     // Crash-safe idempotency: only the exact same generated job can recover its
     // already committed binding; there must never be a second import.
+    assertIdentityJob(root,job);
+    assertVisualCandidateReviewed(root,job);
     const recovered=recoverCommittedGeneratedApproval(appPath,root,job,decode);
     if(recovered)return recovered;
     // Undefined is the new G-Labs project-use approval. A legacy explicit
