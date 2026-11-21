@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import {afterEach,describe,expect,it,vi} from 'vitest';
 import {appPath,cleanup,fixture,nativePayload,stageNative,png} from './SixIssueFixtures';
-import {importMediaFile,confirmImport,getNativeImageGallery} from '../../src/main/externalTasks';
+import {importMediaFile,confirmImport,getNativeImageGallery,
+  readNativeDraft,publishNativeDraftCorrection} from '../../src/main/externalTasks';
 import {prepareNativeImages} from '../../src/main/imagePreparation';
 import {saveGlabsKey,submitGlabsImage,
   pollGlabsImage,approveGlabsImage} from '../../src/main/glabs';
@@ -255,6 +256,29 @@ const mockOriginalNativeCli=async(_exe:string,args:string[])=>{
   return{code:0,stdout:JSON.stringify({valid:true,fingerprint:sha(candidate),
     checked_seconds:30}),stderr:''};
 };
+  it('F24-AUD-05 Native Correct keeps unchanged Layer reference snapshot SHA and invalidates only edited Layer',()=>{
+    const {root}=setup();
+    const before=prepareNativeImages(appPath,root).jobs;
+    expect(before.every(job=>job.state==='READY')).toBe(true);
+    const draft=readNativeDraft(root)!;
+    const corrected=structuredClone(draft.artifact) as Record<string,unknown>;
+    const needs=corrected.asset_needs as Array<Record<string,unknown>>;
+    needs[1].content='Changed second-image action without touching image-1';
+    const next=publishNativeDraftCorrection(appPath,root,draft.sha256,corrected,{
+      correctTaskId:'test-correct-second-layer',reviewTaskId:'test-reviewed-finding',
+      editableIds:['shot-2'],editablePaths:['asset_needs[1]'],findingIds:['F24-AUD-05']
+    });
+    expect(next.revision).toBe(draft.revision+1);
+    const after=prepareNativeImages(appPath,root).jobs;
+    expect(after[0].draftIdentity.revision).toBeGreaterThan(
+      before[0].draftIdentity.revision);
+    expect(after[0].draftIdentity.creativeFingerprint)
+      .toBe(before[0].draftIdentity.creativeFingerprint);
+    expect(after[0].identityBindingSnapshotSha)
+      .toBe(before[0].identityBindingSnapshotSha);
+    expect(after[1].identityBindingSnapshotSha)
+      .not.toBe(before[1].identityBindingSnapshotSha);
+  });
   it('F24-AUD-04 Native Confirm accepts sample-scoped first image while FULL render remains blocked',async()=>{
     const {root}=setup(),auth=account();fakeProvider(secondPng);
     const first=prepareNativeImages(appPath,root).jobs.find(v=>v.layerId==='image-1')!;
