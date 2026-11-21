@@ -25,6 +25,9 @@ interface Window { studio?: Readonly<{
     expectedRevision:number;candidateId:string;ownerInspected:true
   })=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
   identityPublishReferences:(id:string,revision:number,selectedIds:string[])=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
+  identityReferenceJobs:(id:string)=>Promise<import('../main/identity/referenceGeneration').ReferenceJob[]>;
+  identityGenerateReference:(id:string,input:{anchorId:string;authorized:true;regenerate?:boolean;acknowledgeUnknown?:boolean})=>Promise<import('../main/identity/referenceGeneration').ReferenceJob>;
+  identitySyncReference:(id:string,jobId:string)=>Promise<import('../main/identity/referenceGeneration').ReferenceJob>;
   galleryImages?:(id:string)=>Promise<{token:string|null;styleProfileSha256?:string;shots:Array<{id:string;index:number;imageCount:number}>;targets:Array<{
     key:string;shotId:string;layerId:string;path:string;boundPath:string;boundSha256?:string;creativeFingerprint?:string;fulfilled:boolean;managed:boolean
   }>;}>;
