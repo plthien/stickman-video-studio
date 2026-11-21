@@ -295,16 +295,22 @@ export function registerOwnerReference(root:string,appPath:string,input:{
   if(!own||!input.ownerSource?.trim())throw Error('REFERENCE_OWNER_PROVENANCE_REQUIRED');
   const verified=verifyReferenceFile(root,input.relativePath,own.sha256);
   const details=decode(verified.bytes);
-  const prompt=referencePromptForCharacter(bible,input.anchorId,pinned(appPath,root));
+  // An owner-imported image never went through the provider prompt. Give
+  // its actual owner-import provenance an independent domain-separated SHA.
+  const ownerAuthoritySha=contentHash({kind:'owner-reference-bytes-v1',
+    projectId:media.project.id,styleBibleSha:bible.style_bible_sha256,
+    anchorId:input.anchorId,mediaSha:verified.sha});
   const candidate:ReferenceCandidate={
     schema:'stickman-visual-reference-candidate-v1',project_id:media.project.id,
     candidate_id:randomUUID(),anchor_type:'character',anchor_id:input.anchorId,
     source_definition_hash:row.source_definition_hash,
     style_bible_sha256:bible.style_bible_sha256,
-    prompt_sha256:prompt.prompt_sha256,provider_job_id:null,model:'owner_imported',
+    prompt_sha256:ownerAuthoritySha,provider_job_id:null,model:'owner_imported',
     aspect_ratio:'1:1',media_path:input.relativePath,media_sha256:verified.sha,
     media_mime:verified.mime,width:details.width,height:details.height,
-    rights:own.rights+' | '+input.ownerSource.trim(),source:'OWNER_IMPORTED',
+    // Ledger rights must stay byte-exact; owner source attestation is an
+    // independently hashed audit event, not fabricated new media rights.
+    rights:own.rights,source:'OWNER_IMPORTED',
     status:'VALIDATED',approval_event_id:null,approved_at:null
   };
   // Verify byte signatures and pixel dimensions before journaling the candidate.
@@ -314,7 +320,8 @@ export function registerOwnerReference(root:string,appPath:string,input:{
   next.referenceCandidates.push(candidate);
   if(next.referenceCandidates.length>400)throw Error('IDENTITY_CANDIDATES_LIMIT');
   next.referenceApprovalSet=null;
-  return save(root,prior,next,'candidate:owner-import',candidate);
+  return save(root,prior,next,
+    'candidate:owner-import:source-sha-'+sha(input.ownerSource.trim()),candidate);
 }
 /** Polling completion is only a candidate. Never turn DONE into owner approval. */
 export function registerValidatedGeneratedReference(root:string,appPath:string,
