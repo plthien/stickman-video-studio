@@ -16,6 +16,8 @@ import {referencePromptForCharacter} from './styleBible.js';
 import {importMediaFile} from '../externalTasks.js';
 import {previewReferenceSwitchImpact,assertNoIdentityBusyJobs} from './impact.js';
 import {readReferenceJob} from './referenceGeneration.js';
+import {ownerVisualDefinitionDigest,validateOwnerVisualDefinition,
+  type OwnerVisualDefinition} from './visualDefinitions.js';
 
 type TaskState='FROZEN'|'IMPORTED'|'STALE';
 interface TaskEntry{task:AnalysisTask;status:TaskState;frozenArtifactSha:string|null;at:string}
@@ -31,6 +33,7 @@ export interface IdentityWorkflowStore{
   referenceCandidates:ReferenceCandidate[];
   referenceApprovalSet:ReferenceApprovalSet|null;
   referenceApprovalHistory?:ReferenceApprovalSet[];
+  ownerVisualDefinitions?:OwnerVisualDefinition[];
   events:JournalEvent[];
 }
 const file=(root:string)=>resolveProjectFile(root,'.studio/identity/workflow-v1.json');
@@ -39,7 +42,8 @@ function empty(projectId:string):IdentityWorkflowStore{
   return{schema:'stickman-identity-workflow-v1',projectId,revision:0,
     currentTask:null,draftAnalysis:null,draftSha256:null,
     independentReview:null,analysisApproved:null,bible:null,bibleTextApproved:null,
-    referenceCandidates:[],referenceApprovalSet:null,referenceApprovalHistory:[],events:[]};
+    referenceCandidates:[],referenceApprovalSet:null,referenceApprovalHistory:[],
+    ownerVisualDefinitions:[],events:[]};
 }
 export const identityPolicy=(state:StudioState):'legacy'|'v1'=>state.identityPolicy??'legacy';
 export function currentApprovedSource(root:string):ApprovedScriptSnapshot{
@@ -67,7 +71,12 @@ export function readIdentityWorkflow(root:string):IdentityWorkflowStore{
     data.events.length>2000||data.referenceCandidates.length>400||
     (data.referenceApprovalHistory!==undefined&&
       (!Array.isArray(data.referenceApprovalHistory)||
-       data.referenceApprovalHistory.length>100)))
+       data.referenceApprovalHistory.length>100))||
+    (data.ownerVisualDefinitions!==undefined&&
+      (!Array.isArray(data.ownerVisualDefinitions)||
+       data.ownerVisualDefinitions.length>100||
+       new Set(data.ownerVisualDefinitions.map(v=>v.charId)).size!==
+         data.ownerVisualDefinitions.length)))
     throw Error('IDENTITY_WORKFLOW_CORRUPT');
   for(const priorSet of data.referenceApprovalHistory??[]){
     if(!priorSet||priorSet.schema!=='stickman-reference-approval-set-v1')
@@ -277,6 +286,52 @@ export function approveProjectStyleBible(root:string,appPath:string,
   const next=clone(prior);
   next.bibleTextApproved={sha256:current.style_bible_sha256,approvedAt:new Date().toISOString()};
   return save(root,prior,next,'approve:style-bible',next.bibleTextApproved);
+}
+/** Explicit visual traits at Style Bible stage. No automatically authored appearance.
+ * Does not mutate the currently published reference set or earlier image bytes. */
+export function approveOwnerVisualDefinition(root:string,appPath:string,input:{
+  expectedRevision:number;anchorId:string;provenance:'SCRIPT_AUTHOR'|'OWNER_BRIEF';
+  evidence:string;traits:string[];ownerInspected:true
+}){
+  const prior=readIdentityWorkflow(root);
+  if(prior.revision!==input.expectedRevision)throw Error('IDENTITY_REVISION_CONFLICT');
+  if(input.ownerInspected!==true)throw Error('OWNER_VISUAL_DEFINITION_APPROVAL_REQUIRED');
+  const {script,analysis}=validApproved(root,prior);
+  const bible=compileStyleBible(analysis,script,pinned(appPath,root));
+  if(prior.bibleTextApproved?.sha256!==bible.style_bible_sha256)
+    throw Error('STYLE_BIBLE_TEXT_APPROVAL_REQUIRED');
+  const prepared={
+    charId:input.anchorId,styleBibleSha:bible.style_bible_sha256,
+    sourceScriptSha:script.sha256,sourceAuthoringSha:contentHash(script.authoring),
+    provenance:input.provenance,evidence:input.evidence.trim(),
+    traits:input.traits.map(trait=>trait.trim()),approvedByOwner:true as const,
+    approvedAt:new Date().toISOString()
+  };
+  const definition:OwnerVisualDefinition={
+    ...prepared,definitionSha:ownerVisualDefinitionDigest(prepared)};
+  validateOwnerVisualDefinition(definition,script,bible);
+  const previous=prior.ownerVisualDefinitions?.find(v=>v.charId===input.anchorId);
+  if(previous&&previous.provenance===definition.provenance&&
+    previous.evidence===definition.evidence&&
+    JSON.stringify(previous.traits)===JSON.stringify(definition.traits))
+    return prior;
+  const next=clone(prior);
+  next.ownerVisualDefinitions=[
+    ...(next.ownerVisualDefinitions??[]).filter(v=>v.charId!==input.anchorId),
+    definition
+  ];
+  // A visual definition changes future generated reference prompts only.
+  // Already published canonical refs retain their old approval event/SHA
+  // until the owner explicitly reviews and publishes replacements.
+  return save(root,prior,next,'approve:visual-definition',definition);
+}
+export function currentOwnerVisualDefinition(root:string,appPath:string,charId:string){
+  const prior=readIdentityWorkflow(root);
+  const found=prior.ownerVisualDefinitions?.find(v=>v.charId===charId);
+  if(!found)return null;
+  const {script,analysis}=validApproved(root,prior);
+  return validateOwnerVisualDefinition(found,script,
+    compileStyleBible(analysis,script,pinned(appPath,root)));
 }
 /** Promote a real previously imported owner image as an unapproved candidate.
  * Import alone never asserts a four-view presentation or visual correctness. */
