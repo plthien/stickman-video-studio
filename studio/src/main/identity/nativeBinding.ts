@@ -37,7 +37,8 @@ export function readApprovedNativeIdentity(root:string,appPath:string):ApprovedN
   const bible=compileStyleBible(store.draftAnalysis,script,{
     id:style.id,guidance:style.guidance,sha256:style.sha256
   });
-  if(!store.bible||store.bible.style_bible_sha256!==bible.style_bible_sha256||
+  if(!store.bible||contentHash(store.bible)!==contentHash(bible)||
+    store.bible.style_bible_sha256!==bible.style_bible_sha256||
     store.bibleTextApproved?.sha256!==bible.style_bible_sha256)
     throw Error('IDENTITY_NATIVE_STYLE_BIBLE_STALE');
   const set=store.referenceApprovalSet;
