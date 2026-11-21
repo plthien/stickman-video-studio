@@ -145,6 +145,57 @@ describe('F09–F11 Native Shot gallery + explicit bulk approval',()=>{
     }
     expect(screen.getByRole('button',{name:'Generate All in Shot (0 paid attempts)'})).toBeDisabled();
   });
+  it('F25-INT-01 a one-image Shot opens its thumbnail without paid or approval side effects',async()=>{
+    const {approve,generate}=install({initial:5});
+    render(<AppStateProvider><Harness/></AppStateProvider>);
+    await shotCards(4);
+    fireEvent.click(screen.getByRole('button',{name:/shot-2 1 images/}));
+    const [card]=await shotCards(1);
+    expect(card).toHaveAttribute('data-layer-id','second-shot');
+    const thumbnail=within(card).getByRole('button',{
+      name:'Expand image shot-2/second-shot'
+    });
+    expect(thumbnail).toBeDisabled();
+    await load(card);
+    expect(thumbnail).toBeEnabled();
+    fireEvent.click(thumbnail);
+    const dialog=screen.getByRole('dialog',{name:'Expanded generated image'});
+    expect(within(dialog).getByRole('img')).toHaveAttribute('src',
+      'studio-media://A/assets/images/candidate-4.png');
+    expect(within(dialog).getByRole('img')).toHaveAttribute('width','768');
+    fireEvent.click(within(dialog).getByRole('button',{name:'100% Original'}));
+    expect(within(dialog).getByRole('img')).toHaveStyle({width:'768px',height:'1365px'});
+    fireEvent.click(within(dialog).getByRole('button',{name:'Close Preview'}));
+    expect(screen.getAllByTestId('shot-image-card')).toHaveLength(1);
+    expect(screen.getByRole('button',{name:'Approve All Inspected Ready in Shot (1)'}))
+      .toBeEnabled();
+    expect(approve).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+  });
+  it('F25-INT-02 thumbnail interaction leaves bulk selection and deliberate approval workflow intact',async()=>{
+    const {approve,generate}=install();
+    render(<AppStateProvider><Harness/></AppStateProvider>);
+    const cards=await shotCards(4);
+    await load(cards[0]);await load(cards[1]);
+    const thumbnail=within(cards[0]).getByRole('button',{name:'Expand image shot-1/portrait'});
+    fireEvent.click(thumbnail);
+    const dialog=screen.getByRole('dialog',{name:'Expanded generated image'});
+    fireEvent.click(within(dialog).getByRole('button',{name:'Fit Screen'}));
+    fireEvent.click(within(dialog).getByRole('button',{name:'100% Original'}));
+    fireEvent.click(dialog);
+    expect(approve).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(screen.getByRole('button',{name:'Generate All in Shot (0 paid attempts)'}))
+      .toBeDisabled();
+    expect(within(cards[0]).getByRole('button',{name:'Regenerate Image (Paid) · portrait'}))
+      .toBeEnabled();
+    fireEvent.click(within(cards[0]).getByRole('checkbox',{name:'Select portrait'}));
+    expect(screen.getByRole('button',{name:'Approve Selected (1)'})).toBeEnabled();
+    fireEvent.click(screen.getByRole('button',{name:'Approve Selected (1)'}));
+    await waitFor(()=>expect(approve).toHaveBeenCalledTimes(1));
+    expect(approve).toHaveBeenCalledWith('A','job-0');
+    expect(generate).not.toHaveBeenCalled();
+  });
   it('F11-INT-02 one click approves exactly one loaded candidate without a rights/source field',async()=>{
     const {approve,fulfilled}=install();
     render(<AppStateProvider><Harness/></AppStateProvider>);
