@@ -360,7 +360,14 @@ describe('Storyboard — source-grounded paid image generation for current Nativ
     fireEvent.click(screen.getByRole('button',{name:'Commit current corrected DRAFT'}));
     await waitFor(()=>expect(pendingMedia).toHaveBeenCalledTimes(2));
     await waitFor(()=>expect(screen.getByText(/Image:/).closest('div')).toHaveTextContent('layer-2'));
-    expect(screen.queryByRole('button',{name:/Owner-approved image for layer-1/})).not.toBeInTheDocument();
+    // The complete Shot gallery may still list that frozen Layer, but its
+    // old prepared prompt is no longer actionable after the DRAFT correction.
+    expect(screen.getByTestId('shot-image-gallery')).not.toHaveTextContent(
+      'Owner-approved image for layer-1');
+    expect(screen.queryByRole('button',{name:'Generate Image · layer-1'}))
+      .not.toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'Generate Image · layer-2'}))
+      .toBeEnabled();
   });
   it('SB-IMG-03 missing Native candidate never offers a paid Generate action',async()=>{
     const {glabsGenerate}=installStoryboard(null);
