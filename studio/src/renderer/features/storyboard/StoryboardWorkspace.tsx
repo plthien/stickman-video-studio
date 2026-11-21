@@ -230,13 +230,19 @@ export function StoryboardWorkspace(){
     const active=history.find(job=>job.token===pending?.token&&
       job.status!=='APPROVED'&&compatibleAuthority(job)&&job.status!=='STALE');
     const job=bound??(!item.fulfilled?active:null)??null;
-    return{target:item,job,history,spec,currentlyBound:Boolean(bound),
+    const continuityStatus=identitySnapshot?.overlay?.rows.find(row=>row.targetKey===item.key)?.status;
+    return{target:item,job,history,spec,continuityStatus,
+      currentlyBound:Boolean(bound),
       superseded:!bound&&history.some(value=>value.status==='APPROVED'),
       hasCurrentAttempt:Boolean(active)};
   });
   const cards=resolvedCards.filter(card=>card.target.shotId===shotId);
   const inspectedReadyCards=resolvedCards.filter((card):card is GalleryCard&{job:ImageJob}=>Boolean(
     !card.target.fulfilled&&card.job?.status==='VALIDATED'&&card.job.staged&&
+    (!card.continuityStatus||card.continuityStatus==='READY')&&
+    (!card.spec?.visualReferencePlan?.enabled||(
+      card.spec.visualReferencePlan.readiness==='READY'&&
+      card.job.referenceSetSha256===card.spec.referenceSetSha256))&&
     urls[card.job.id]&&!previewErrors[card.job.id]&&
     previewReady[card.job.id]===previewIdentity(card.job)
   ));
