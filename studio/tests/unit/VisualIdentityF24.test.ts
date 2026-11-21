@@ -16,6 +16,7 @@ import {characterCoverage,resolveVisualReferences} from '../../src/main/visualRe
 import {attestBoundVisual,attestVisualCandidate,assertStrictProjectPublicationReady,
   assertVisualCandidateReviewed} from '../../src/main/visualIdentityReview';
 import {approveGlabsImage,listGlabsJobs,pollGlabsImage,saveGlabsKey,submitGlabsImage} from '../../src/main/glabs';
+import {previewContinuityOverlay,reconcileContinuityOverlay,readContinuityOverlay} from '../../src/main/visualIdentityOverlay';
 
 afterEach(()=>{cleanup();vi.restoreAllMocks();vi.unstubAllGlobals();
   for(const directory of tempCredentials.splice(0))fs.rmSync(directory,{force:true,recursive:true});
@@ -319,6 +320,62 @@ describe('F24 source-grounded registry, reference payload and strict gates',()=>
     expect(()=>map(root,targets[0].key,['char_001'],false,
       {sourceTargetKey:targets[2].key,relation:'same_setup'}))
       .toThrow('CONTINUITY_SOURCE_NOT_EARLIER');
+  });
+  it('VCR-13 old creative/token approved history is never a current continuity source',()=>{
+    const {root,targets,payload}=stage(2),a=character(root,'char_001',34);
+    strict(root);map(root,targets[0].key,['char_001']);
+    map(root,targets[1].key,[],true,
+      {sourceTargetKey:targets[0].key,relation:'same_setup'});
+    const token=getNativeImageGallery(appPath,root).token!;
+    fulfillMedia(appPath,root,token,targets[0].key,a.media.path,
+      'Owner produced and approved image char_001');
+    const sourcePlan=resolveVisualReferences(root,targets[0].key);
+    attestBoundVisual(root,{targetKey:targets[0].key,boundSha256:a.ref.sha256,
+      referenceSetSha256:sourcePlan.referenceSetSha256,ownerConfirmed:true});
+    expect(resolveVisualReferences(root,targets[1].key).readiness).toBe('READY');
+    const draft=readNativeDraft(root)!;
+    const corrected=structuredClone(payload);
+    (corrected.asset_needs[0] as {content:string}).content+=' Native correction.';
+    publishNativeDraftCorrection(appPath,root,draft.sha256,corrected,{
+      correctTaskId:'vcr-source-revised',reviewTaskId:'vcr-rechecked',
+      editableIds:[],editablePaths:[],findingIds:[]
+    });
+    expect(resolveVisualReferences(root,targets[1].key).readiness)
+      .toBe('CONTINUITY_SOURCE_NOT_READY');
+    expect(fs.existsSync(path.join(root,a.media.path))).toBe(true);
+  });
+  it('VCR-14 overlay is durable, transitive and idempotent; unrelated D stays READY',()=>{
+    const {root,targets}=stage(4);character(root,'char_001',43);strict(root);
+    map(root,targets[0].key,['char_001']);
+    map(root,targets[1].key,[],true,
+      {sourceTargetKey:targets[0].key,relation:'same_setup'});
+    map(root,targets[2].key,[],true,
+      {sourceTargetKey:targets[1].key,relation:'match_subject'});
+    map(root,targets[3].key,[],true);
+    const first=reconcileContinuityOverlay(root);
+    expect(first.rows.map(row=>row.status)).toEqual([
+      'READY','CONTINUITY_SOURCE_NOT_READY',
+      'CONTINUITY_SOURCE_NOT_READY','READY'
+    ]);
+    expect(readContinuityOverlay(root)).toEqual(first);
+    expect(reconcileContinuityOverlay(root).revision).toBe(first.revision);
+    expect(previewContinuityOverlay(root).sourceDigest).toBe(first.sourceDigest);
+    expect(previewCharacterImpact(root,'char_001').targets)
+      .toEqual(targets.slice(0,3).map(t=>t.key).sort());
+  });
+  it('VCR-15 corrupted continuity-binding cycle is rejected before recursive planning',()=>{
+    const {root,targets}=stage(2);strict(root);
+    map(root,targets[0].key,[],true);
+    map(root,targets[1].key,[],true,
+      {sourceTargetKey:targets[0].key,relation:'same_setup'});
+    const bindings=readTargetBindings(root);
+    bindings.bindings[0].continuity={
+      sourceTargetKey:targets[1].key,relation:'same_setup'
+    };
+    const filename=path.join(root,'.studio/visual-identity/target-bindings-v1.json');
+    fs.writeFileSync(filename,JSON.stringify(bindings));
+    expect(()=>readTargetBindings(root)).toThrow('CONTINUITY_CYCLE');
+    expect(()=>resolveVisualReferences(root,targets[1].key)).toThrow('CONTINUITY_CYCLE');
   });
   it('VCR-16 a once reviewed bound image becomes unpublishable when canonical SHA changes',()=>{
     const {root,targets}=stage(1);
