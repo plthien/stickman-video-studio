@@ -289,16 +289,13 @@ const mockOriginalNativeCli=async(_exe:string,args:string[])=>{
   });
   it('F24-AUD-07 20-target preparation does not re-read verified Style Bible for each image',()=>{
     const {root}=setup(false,18);
-    const original=fs.readFileSync;
-    let journalReads=0;
-    const spy=vi.spyOn(fs,'readFileSync').mockImplementation((...args)=>{
-      if(String(args[0]).endsWith('workflow-v1.json'))journalReads++;
-      return (original as (...input:typeof args)=>ReturnType<typeof original>)(...args);
-    });
+    const spy=vi.spyOn(fs,'readFileSync');
     try{
       const jobs=prepareNativeImages(appPath,root).jobs;
       expect(jobs).toHaveLength(20);
       expect(jobs.every(job=>job.state==='READY')).toBe(true);
+      const journalReads=spy.mock.calls.filter(args=>
+        String(args[0]).endsWith('workflow-v1.json')).length;
       expect(journalReads).toBeLessThan(12);
     }finally{spy.mockRestore();}
   });
