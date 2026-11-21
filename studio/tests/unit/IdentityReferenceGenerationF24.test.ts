@@ -115,7 +115,7 @@ describe('F24 isolated 1:1 reference generation with explicit billing/approval b
       media.path===approved.media_path&&media.sha256===approved.media_sha256&&
       media.rights===approved.rights)).toBe(true);
     expect(mock.posts()).toHaveLength(1);
-    expect(mock.calls.filter(call=>call.startsWith('GET /api/'))).toHaveLength(6);
+    expect(mock.calls.filter(call=>call.startsWith('GET /api/'))).toHaveLength(5);
     expect(sha(fs.readFileSync(path.join(root,approved.media_path))))
       .toBe(validated.staged?.sha256);
   });
