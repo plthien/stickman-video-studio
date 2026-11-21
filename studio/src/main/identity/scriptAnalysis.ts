@@ -80,8 +80,17 @@ export function validateScriptAnalysis(raw:unknown,script:ApprovedScriptSnapshot
     }
     for(const hit of occurrences){if(!ranges.some(r=>r.start<=hit.start&&r.end>=hit.end))
       throw Error('SCRIPT_ANALYSIS_OCCURRENCE_OUTSIDE_PRESENCE');}
-    // Source-bearing appearance traits must remain owner-reviewable: a quote
-    // proves the cited words, never an inferred appearance detail.
+    // A character ID can be inferred from recurring narration mentions, but
+    // appearance traits cannot. A literal source phrase is minimum evidence;
+    // the independent owner review still checks its attribution to this actor.
+    const approvedText=script.sections.map(section=>section.text).join('\n\n')
+      .toLocaleLowerCase('en');
+    for(const trait of [...char.explicit_visual_traits,...char.identity_markers,
+      ...char.physical_constraints]){
+      if(typeof trait!=='string'||!trait.trim()||
+        !approvedText.includes(trait.trim().toLocaleLowerCase('en')))
+        throw Error('SCRIPT_ANALYSIS_UNSUPPORTED_VISUAL_TRAIT: '+char.char_id);
+    }
   }
   return analysis;
 }
