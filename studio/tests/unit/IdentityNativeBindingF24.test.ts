@@ -16,7 +16,8 @@ import {currentApprovedSource} from '../../src/main/identity/identityWorkflow';
 import {loadImageStyleProfile} from '../../src/main/imagePreparation';
 import {assertPublishedIdentityCurrent} from '../../src/main/identity/finalGate';
 import {readApprovedNativeIdentity} from '../../src/main/identity/nativeBinding';
-import {readIdentityWorkflow,publishStyleBibleReferences} from '../../src/main/identity/identityWorkflow';
+import {readIdentityWorkflow,publishStyleBibleReferences,
+  registerOwnerReference,approveOwnerReference} from '../../src/main/identity/identityWorkflow';
 import {previewReferenceSwitchImpact} from '../../src/main/identity/impact';
 import type {ReferenceCandidate} from '../../src/main/identity/referencePublication';
 
@@ -33,7 +34,7 @@ const owned=(root:string,suffix:string)=>{
   fs.writeFileSync(original,png());
   return importMediaFile(root,original,'image','Owner-created reference image; rights authorized');
 };
-function setup(){
+function setup(continuity=false){
   const {root}=fixture();
   const state=readState(root);state.identityPolicy='v1';writeState(root,state);
   const script=currentApprovedSource(root);
@@ -90,14 +91,20 @@ function setup(){
     {shot_id:'shot-1',layer_id:'image-1',expected_path:'assets/images/missing.png',
       content:'Source-grounded first frame',character_ids:['char_001']},
     {shot_id:'shot-2',layer_id:'image-2',expected_path:'assets/images/late.png',
-      content:'Source-grounded second frame',character_ids:['char_001']}
+      content:'Source-grounded second frame',character_ids:['char_001'],
+      ...(continuity?{continuity_source:{
+        shot_id:'shot-1',layer_id:'image-1',relation:'match_subject'
+      }}:{})}
   ];
   const source={...raw,asset_needs:needs};
   stageNative(root,source);
   return{root,ref,bible,set,source};
 }
 type RequestCapture={method:string;pathname:string;body:Record<string,unknown>|null};
-function fakeProvider(){
+const secondPng=Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGOQTDkBAAHfAUZ76qvRAAAAAElFTkSuQmCC',
+  'base64');
+function fakeProvider(image=png()){
   const calls:RequestCapture[]=[];
   vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
     const url=new URL(String(input)),method=init?.method??'GET';
@@ -116,7 +123,7 @@ function fakeProvider(){
       return send({task_id:'ab12cd34',status:'completed',
         results:['http://127.0.0.1:8765/api/files/image.png']});
     if(pathname==='/api/files/image.png')
-      return new Response(new Uint8Array(png()),{
+      return new Response(new Uint8Array(image),{
         status:200,headers:{'Content-Type':'image/png'}});
     throw new Error('Unexpected '+method+' '+pathname);
   }));
@@ -163,6 +170,65 @@ describe('F24 Native canonical bytes, billing gate and final source receipt',()=
       .toThrow('IDENTITY_NATIVE_ANALYSIS_STALE');
     expect(()=>prepareNativeImages(appPath,root))
       .toThrow('IDENTITY_NATIVE_ANALYSIS_STALE');
+  });
+  it('F24-AUD-01 keeps published canonical during candidate import/approval and fences UNKNOWN on replacement',()=>{
+    const {root,ref,set}=setup();
+    const first=readIdentityWorkflow(root);
+    const added=registerOwnerReference(root,appPath,{
+      expectedRevision:first.revision,anchorId:'char_001',
+      relativePath:ref.path,ownerSource:'Owner-original digital reference'
+    },decode);
+    expect(added.referenceApprovalSet?.approval_set_sha256).toBe(set.approval_set_sha256);
+    const next=added.referenceCandidates.at(-1)!;
+    const reviewed=approveOwnerReference(root,appPath,{
+      expectedRevision:added.revision,candidateId:next.candidate_id,ownerInspected:true
+    },decode);
+    expect(reviewed.referenceApprovalSet?.approval_set_sha256).toBe(set.approval_set_sha256);
+    const impact=previewReferenceSwitchImpact(root,[next.candidate_id]);
+    expect(impact.changedCharacterIds).toEqual(['char_001']);
+    const mockJobId='00000000-0000-0000-0000-000000000001';
+    atomicJson(path.join(root,'.studio/glabs/jobs',mockJobId+'.json'),{
+      projectId:readState(root).project.id,status:'UNKNOWN',targetKey:'image:0:image-1'
+    });
+    expect(()=>publishStyleBibleReferences(root,appPath,reviewed.revision,
+      [next.candidate_id],decode,impact.impactSha256))
+      .toThrow('IDENTITY_CHANGE_BUSY_OR_UNKNOWN_PROVIDER_JOB');
+    expect(readIdentityWorkflow(root).referenceApprovalSet?.approval_set_sha256)
+      .toBe(set.approval_set_sha256);
+    fs.unlinkSync(path.join(root,'.studio/glabs/jobs',mockJobId+'.json'));
+    const published=publishStyleBibleReferences(root,appPath,reviewed.revision,
+      [next.candidate_id],decode,impact.impactSha256);
+    expect(published.referenceApprovalHistory?.at(-1)?.approval_set_sha256)
+      .toBe(set.approval_set_sha256);
+    expect(published.referenceApprovalSet?.approval_set_sha256)
+      .not.toBe(set.approval_set_sha256);
+  });
+  it('F24-AUD-02 follows an actual approved earlier image and sends both canonical and previous PNG bytes',async()=>{
+    const {root,ref}=setup(true),auth=account(),{posts}=fakeProvider(secondPng);
+    const initial=prepareNativeImages(appPath,root).jobs;
+    expect(initial.find(job=>job.layerId==='image-2')?.state).toBe('BLOCKED');
+    const first=initial.find(job=>job.layerId==='image-1')!;
+    expect(first.state).toBe('READY');
+    const started=await submitGlabsImage(appPath,root,auth,cipher,
+      request(root,first.targetKey),decode);
+    await pollGlabsImage(appPath,root,auth,cipher,started.id,decode);
+    expect(approveGlabsImage(appPath,root,started.id,undefined,decode).job.status)
+      .toBe('APPROVED');
+    const dependent=prepareNativeImages(appPath,root).jobs.find(job=>
+      job.layerId==='image-2')!;
+    expect(dependent.state).toBe('READY');
+    expect(dependent.references).toHaveLength(2);
+    expect(dependent.references[0]).toBe(ref.path);
+    expect(dependent.identityPreviousSourceSha).toMatch(/^[a-f0-9]{64}$/);
+    await submitGlabsImage(appPath,root,auth,cipher,
+      request(root,dependent.targetKey),decode);
+    const payload=posts().at(-1)?.body?.reference_images as Array<{data:string}>;
+    expect(payload).toHaveLength(2);
+    expect(sha(Buffer.from(payload[0].data.split(',')[1],'base64')))
+      .toBe(ref.sha256);
+    expect(sha(Buffer.from(payload[1].data.split(',')[1],'base64')))
+      .toBe(sha(secondPng));
+    expect(posts()).toHaveLength(2);
   });
   it('N08 direct manual paid POST without prepared exact Native identity cannot bypass F24',async()=>{
     const {root}=setup(),accountRoot=account(),{posts}=fakeProvider();
