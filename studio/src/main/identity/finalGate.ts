@@ -4,7 +4,7 @@ import {atomicJson,readState,resolveProjectFile,sha,strictJson} from '../service
 import {getNativeImageGallery,readNativeDraft} from '../externalTasks.js';
 import {listGlabsJobs,readGlabsJob} from '../glabs.js';
 import {readApprovedNativeIdentity,validateNativeBindingPayload} from './nativeBinding.js';
-import {resolveApprovedPreviousImage} from './continuityGraph.js';
+import {createContinuityResolver} from './continuityGraph.js';
 import {verifyReferenceFile} from './referencePublication.js';
 import {contentHash} from './contracts.js';
 
@@ -64,6 +64,7 @@ export function currentDraftIdentityReceipt(root:string,appPath:string,
   const selected=verified.plans.filter(plan=>
     sampleSeconds===undefined||targetStarts(native.manifest,plan.targetKey)<sampleSeconds);
   const jobs=listGlabsJobs(root),rows:NativeIdentityReceiptRow[]=[];
+  const continuity=selected.length?createContinuityResolver(appPath,root):null;
   for(const plan of selected){
     const target=gallery.targets.find(row=>row.key===plan.targetKey);
     if(!target||!target.fulfilled||!target.boundSha256)
@@ -83,7 +84,7 @@ export function currentDraftIdentityReceipt(root:string,appPath:string,
       m.rights===source.approved?.rights);
     if(!stored)throw Error('IDENTITY_NATIVE_BINDING_RIGHTS_CHANGED');
     verifyReferenceFile(root,target.boundPath,target.boundSha256);
-    const previous=resolveApprovedPreviousImage(appPath,root,plan.targetKey);
+    const previous=continuity!.resolve(plan.targetKey);
     if((source.identityPreviousSourceSha??null)!==(previous?.dependencySha??null))
       throw Error('IDENTITY_NATIVE_CONTINUITY_CHANGED: '+plan.targetKey);
     rows.push({targetKey:plan.targetKey,shotId:plan.shotId,
