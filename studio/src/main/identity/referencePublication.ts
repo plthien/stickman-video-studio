@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {hash,contentHash,type StyleBible} from './contracts.js';
-import {referencePromptForCharacter,type PinnedStyle} from './styleBible.js';
+
 export type Mime='image/png'|'image/jpeg'|'image/webp';
 /** Required production decoder: Electron nativeImage or a verified image library. */
 export type IdentityDecoder=(bytes:Buffer)=>{width:number;height:number;png:Buffer};
