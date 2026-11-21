@@ -11,7 +11,6 @@ export interface ContinuityImage{
   sourceJobId:string;sourceBindingSha:string;sourceSnapshotSha:string;
   dependencySha:string;
 }
-const active=new Set<string>();
 export function resolveApprovedPreviousImage(appPath:string,root:string,
   targetKey:string,visited=new Set<string>()):ContinuityImage|null{
   if(visited.has(targetKey))throw Error('CONTINUITY_CYCLE');
