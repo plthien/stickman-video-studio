@@ -144,7 +144,11 @@ export function CharacterRegistryPanel({projectId,onChanged,onSnapshot}:{
                   setReviewedImpact(prev=>({...prev,[character.characterId]:impact.impactSha256}));
                   // Explicit impact display precedes the replacement commit.
                   if(reviewedImpact[character.characterId]!==impact.impactSha256){
-                    throw new Error('Impact review required: '+impact.targets.join(', ')+
+                    throw new Error('Impact review required: '+impact.impacts.map(item=>
+                      item.targetKey+' ['+item.reason+
+                      (item.currentlyBound?', BOUND':'')+
+                      (item.jobs.length?', jobs '+item.jobs.map(job=>job.status).join('/'):'' )+
+                      ']').join('; ')+
                       '. Click Set Canonical again after inspecting affected Layers.');
                   }
                 }
@@ -180,7 +184,11 @@ export function CharacterRegistryPanel({projectId,onChanged,onSnapshot}:{
               const impact=await window.studio!.visualIdentityImpact(projectId,character.characterId);
               if(reviewedImpact[character.characterId]!==impact.impactSha256){
                 setReviewedImpact(prev=>({...prev,[character.characterId]:impact.impactSha256}));
-                throw new Error('Review impact before archive: '+impact.targets.join(', ')+
+                throw new Error('Review impact before archive: '+impact.impacts.map(item=>
+                  item.targetKey+' ['+item.reason+
+                  (item.currentlyBound?', BOUND':'')+
+                  (item.jobs.length?', jobs '+item.jobs.map(job=>job.status).join('/'):'' )+
+                  ']').join('; ')+
                   '. Click Archive again to confirm.');
               }
               await window.studio!.visualIdentityArchiveCharacter(projectId,{
