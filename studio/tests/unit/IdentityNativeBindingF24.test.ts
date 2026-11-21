@@ -14,7 +14,7 @@ import {compileStyleBible} from '../../src/main/identity/styleBible';
 import {approveCandidate,publishApprovalSet} from '../../src/main/identity/referencePublication';
 import {currentApprovedSource} from '../../src/main/identity/identityWorkflow';
 import {loadImageStyleProfile} from '../../src/main/imagePreparation';
-import {assertPublishedIdentityCurrent} from '../../src/main/identity/finalGate';
+import {assertPublishedIdentityCurrent,readNativeIdentityReceipt} from '../../src/main/identity/finalGate';
 import {readApprovedNativeIdentity} from '../../src/main/identity/nativeBinding';
 import {readIdentityWorkflow,publishStyleBibleReferences,
   registerOwnerReference,approveOwnerReference} from '../../src/main/identity/identityWorkflow';
@@ -255,6 +255,30 @@ const mockOriginalNativeCli=async(_exe:string,args:string[])=>{
   return{code:0,stdout:JSON.stringify({valid:true,fingerprint:sha(candidate),
     checked_seconds:30}),stderr:''};
 };
+  it('F24-AUD-04 Native Confirm accepts sample-scoped first image while FULL render remains blocked',async()=>{
+    const {root}=setup(),auth=account();fakeProvider(secondPng);
+    const first=prepareNativeImages(appPath,root).jobs.find(v=>v.layerId==='image-1')!;
+    const started=await submitGlabsImage(appPath,root,auth,cipher,
+      request(root,first.targetKey),decode);
+    expect((await pollGlabsImage(appPath,root,auth,cipher,started.id,decode)).status)
+      .toBe('VALIDATED');
+    expect(approveGlabsImage(appPath,root,started.id,undefined,decode).job.status)
+      .toBe('APPROVED');
+    const token=(await import('../../src/main/externalTasks'))
+      .getPendingMedia(appPath,root)!.token;
+    const promoted=await confirmImport(appPath,root,token,{
+      previewSeconds:20,allowSampleDraft:true,validator:mockOriginalNativeCli
+    });
+    expect(promoted.nativeReadiness?.sampleReady).toBe(true);
+    expect(promoted.nativeReadiness?.fullReady).toBe(false);
+    const receipt=readNativeIdentityReceipt(root);
+    expect(receipt?.scope).toBe('SAMPLE');
+    expect(receipt?.totalTargets).toBe(2);
+    expect(receipt?.rows).toHaveLength(1);
+    expect(()=>assertPublishedIdentityCurrent(root,appPath,'SAMPLE')).not.toThrow();
+    expect(()=>assertPublishedIdentityCurrent(root,appPath,'FULL'))
+      .toThrow('IDENTITY_SAMPLE_NOT_FULLY_CERTIFIED');
+  });
   it('C08/C09 approved outputs require current canonical set and native receipt after confirm',async()=>{
     const {root}=setup(),accountRoot=account();fakeProvider();
     await approveAllNativeLayers(root,accountRoot);
