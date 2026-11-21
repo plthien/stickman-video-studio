@@ -14,6 +14,7 @@ import {approveCandidate,publishApprovalSet,validatePublishedSet,verifyReference
 import {referencePromptForCharacter} from './styleBible.js';
 import {importMediaFile} from '../externalTasks.js';
 import {previewReferenceSwitchImpact,assertNoIdentityBusyJobs} from './impact.js';
+import {readReferenceJob} from './referenceGeneration.js';
 
 type TaskState='FROZEN'|'IMPORTED'|'STALE';
 interface TaskEntry{task:AnalysisTask;status:TaskState;frozenArtifactSha:string|null;at:string}
@@ -323,6 +324,15 @@ export function registerValidatedGeneratedReference(root:string,appPath:string,
   if(job.status!=='VALIDATED'||!job.providerTaskId||!job.staged||
     job.projectId!==readState(root).project.id)
     throw Error('REFERENCE_GENERATION_NOT_VALIDATED');
+  const persisted=readReferenceJob(root,job.id);
+  if(persisted.status!=='VALIDATED'||persisted.projectId!==job.projectId||
+    persisted.anchorId!==job.anchorId||
+    persisted.providerTaskId!==job.providerTaskId||
+    persisted.styleBibleSha!==job.styleBibleSha||
+    persisted.sourceDefinitionHash!==job.sourceDefinitionHash||
+    persisted.staged?.path!==job.staged.path||
+    persisted.staged?.sha256!==job.staged.sha256)
+    throw Error('REFERENCE_GENERATED_JOB_PROVENANCE_INVALID');
   const {script,analysis}=validApproved(root,prior);
   const bible=compileStyleBible(analysis,script,pinned(appPath,root));
   if(prior.bibleTextApproved?.sha256!==bible.style_bible_sha256||
@@ -384,6 +394,18 @@ export function approveOwnerReference(root:string,appPath:string,input:{
   const verified=approveCandidate(candidate,bible,root,input.ownerInspected,decode);
   let approved=verified;
   if(verified.source==='GLABS_GENERATED'){
+    const match=/^assets\/images\/identity-ref-([a-f0-9-]{36})\.png$/i.exec(verified.media_path);
+    if(!match)throw Error('REFERENCE_GENERATED_JOB_PROVENANCE_INVALID');
+    const source=readReferenceJob(root,match[1]);
+    if(source.status!=='VALIDATED'||source.projectId!==verified.project_id||
+      source.anchorId!==verified.anchor_id||
+      source.providerTaskId!==verified.provider_job_id||
+      source.sourceDefinitionHash!==verified.source_definition_hash||
+      source.styleBibleSha!==verified.style_bible_sha256||
+      source.promptSha!==verified.prompt_sha256||
+      source.staged?.path!==verified.media_path||
+      source.staged?.sha256!==verified.media_sha256)
+      throw Error('REFERENCE_GENERATED_JOB_PROVENANCE_INVALID');
     const imported=importMediaFile(root,resolveProjectFile(root,verified.media_path),
       'image',verified.rights);
     if(imported.sha256!==verified.media_sha256)
