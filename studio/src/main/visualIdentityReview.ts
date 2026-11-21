@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import {readCharacterRegistry,verifyIdentityMedia} from './visualIdentityRegistry.js';
 import {assertVisualReferenceCurrent,resolveVisualReferences} from './visualReferenceResolver.js';
 import {getNativeImageGallery} from './externalTasks.js';
-import {atomicJson,readState,resolveProjectFile,sha,strictJson} from './services.js';
+import {atomicJson,readState,resolveProjectFile,strictJson} from './services.js';
 
 interface Attestation {
   targetKey:string;sha256:string;referenceSetSha256:string;
