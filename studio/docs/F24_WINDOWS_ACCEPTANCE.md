@@ -66,3 +66,15 @@ Also run existing Windows Electron dev and packaged production startup with proj
 - [ ] Interrupted POST is UNKNOWN; interrupted GET is recoverable without repeat POST
 - [ ] Native error/rollback cannot make stale film appear approved
 - [ ] No nonrequested checkboxes, queue-another actions or automatic paid generation
+
+## 7. Audit repair regression gates (HEAD-specific; NOT VERIFIED until executed)
+
+- [ ] AUD-01 P0: Register owner candidate while a canonical set is published: current set SHA is unchanged; Approve candidate preserves current set; owner canonical replacement requires impact review and blocks active/UNKNOWN; previous approved set remains in verified immutable history
+- [ ] AUD-02 P1: Two actual sequential Native image targets. Before source approval dependent is BLOCKED; after source G-Labs APPROVED, second paid request contains two distinct real PNG/SHA references (canonical+previous); source/right/lineage changes block transitive dependent
+- [ ] AUD-03 P1: Frozen Script Analysis Author/Correct prompts contain exact checked-in JSON schema and task-bound JSON envelope; Review/Recheck contain typed review payload, current SHA and exact task identity
+- [ ] AUD-04 P1: Sample-only Native Confirm with first image fulfilled and later image missing emits SAMPLE receipt; preview cannot exceed receipt sampleSeconds; full render/unscoped validate refuse SAMPLE certification
+- [ ] AUD-05 P1: Native Correct modifying only image-2 changes its target/reference snapshot but preserves image-1 target SHA even though Draft container revision advanced
+- [ ] AUD-06 P2: Unspecified narration never invents appearance; approved literal Script Author text or separately owner-approved visual brief is required for 1:1 generation, with provenance hash stored in generated candidate/Approval Set; future definition edits do not automatically replace current canonical set
+- [ ] AUD-07 P2: Single batch snapshot of Native identities, canonical bytes/rights and continuity graph across all prepared targets; paid single-target preflight still reads fresh evidence. Benchmark at 200+ images and record Windows CPU/time/memory without ungrounded PASS claim
+
+**Do not merge while any P0/P1 regression remains or execution evidence is absent.**
