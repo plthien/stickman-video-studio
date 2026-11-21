@@ -18,6 +18,10 @@ interface Window { studio?: Readonly<{
   identityApproveAnalysis:(id:string,revision:number)=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
   identityPrepareBible:(id:string,revision:number)=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
   identityApproveBible:(id:string,revision:number)=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
+  identityApproveVisualDefinition:(id:string,input:{
+    expectedRevision:number;anchorId:string;provenance:'SCRIPT_AUTHOR'|'OWNER_BRIEF';
+    evidence:string;traits:string[];ownerInspected:true
+  })=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
   identityRegisterOwnerReference:(id:string,input:{
     expectedRevision:number;anchorId:string;relativePath:string;ownerSource:string
   })=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
