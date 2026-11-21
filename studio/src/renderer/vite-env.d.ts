@@ -9,6 +9,22 @@ interface Window { studio?: Readonly<{
   readHistory:(id:string,stage:string,operation:'author'|'review'|'correct'|'recheck'|'media-review',mediaKind?:'voice'|'captions'|'preview'|'film')=>Promise<import('../shared/externalHistory').ExternalHistoryRecord[]>;
   readFrozen:(id:string,stage:string,operation:'author'|'review'|'correct'|'recheck'|'media-review')=>Promise<({id:string;prompt:string;artifactContext?:'DRAFT'|'PUBLISHED';editableIds?:string[];editablePaths?:string[];targetIds?:string[];findingIds?:string[];mediaTransferAttested?:boolean;mediaKind?:'preview'|'film'|'voice'|'captions'})|null>;freezeLifecycle:(id:string,stage:string,operation:'review'|'correct'|'recheck',scope:Record<string,unknown>,rebuild?:boolean)=>Promise<{id:string;prompt:string}>;stageLifecycle:(id:string,stage:string,operation:'review'|'correct'|'recheck',text:string)=>Promise<StudioStagedImport>;confirmLifecycle:(id:string,token:string,options?:{previewSeconds?:number;allowSampleDraft?:boolean})=>Promise<import('./types/app').NativeStudioState>;
   elevenLabsStatus:()=>Promise<{configured:boolean;source:'secure-storage'|'environment'|'none';secureStorageAvailable:boolean}>; elevenLabsSaveKey:(key:string)=>Promise<{configured:boolean;source:'secure-storage'|'environment'|'none';secureStorageAvailable:boolean}>; elevenLabsClearKey:()=>Promise<{configured:boolean;source:'secure-storage'|'environment'|'none';secureStorageAvailable:boolean}>;
+  identitySnapshot:(id:string)=>Promise<ReturnType<typeof import('../main/identity/identityWorkflow').identityWorkflowSnapshot>>;
+  identityPreviewUpgrade:(id:string)=>Promise<ReturnType<typeof import('../main/identity/identityWorkflow').previewIdentityUpgrade>>;
+  identityUpgrade:(id:string,input:{impactSha256:string;ownerConfirmed:true})=>Promise<ReturnType<typeof import('../main/identity/identityWorkflow').previewIdentityUpgrade>>;
+  identityFreeze:(id:string,operation:import('../main/identity/contracts').IdentityReviewOperation,
+    revision:number)=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
+  identityImport:(id:string,json:string,revision:number)=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
+  identityApproveAnalysis:(id:string,revision:number)=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
+  identityPrepareBible:(id:string,revision:number)=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
+  identityApproveBible:(id:string,revision:number)=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
+  identityRegisterOwnerReference:(id:string,input:{
+    expectedRevision:number;anchorId:string;relativePath:string;ownerSource:string
+  })=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
+  identityApproveReference:(id:string,input:{
+    expectedRevision:number;candidateId:string;ownerInspected:true
+  })=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
+  identityPublishReferences:(id:string,revision:number,selectedIds:string[])=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
   galleryImages?:(id:string)=>Promise<{token:string|null;styleProfileSha256?:string;shots:Array<{id:string;index:number;imageCount:number}>;targets:Array<{
     key:string;shotId:string;layerId:string;path:string;boundPath:string;boundSha256?:string;creativeFingerprint?:string;fulfilled:boolean;managed:boolean
   }>;}>;
