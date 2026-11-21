@@ -80,7 +80,7 @@ export function attestBoundVisual(root:string,input:{
 }){
   if(input.ownerConfirmed!==true||!readCharacterRegistry(root).strict)
     throw new Error('CHARACTER_OWNER_REVIEW_REQUIRED');
-  const gallery=getNativeImageGallery(root);
+  const gallery=getNativeImageGallery('',root);
   const target=gallery.targets.find(t=>t.key===input.targetKey);
   if(!target?.fulfilled||target.boundSha256!==input.boundSha256)
     throw new Error('CHARACTER_BOUND_REVIEW_TARGET_INVALID');
@@ -98,7 +98,7 @@ export function attestBoundVisual(root:string,input:{
 export function assertStrictProjectPublicationReady(root:string){
   const registry=readCharacterRegistry(root);
   if(!registry.strict)return;
-  const gallery=getNativeImageGallery(root),attestations=readVisualReviews(root).attestations;
+  const gallery=getNativeImageGallery('',root),attestations=readVisualReviews(root).attestations;
   for(const target of gallery.targets){
     const plan=resolveVisualReferences(root,target.key);
     if(plan.readiness!=='READY')throw new Error('CHARACTER_PUBLICATION_BLOCKED: '+
