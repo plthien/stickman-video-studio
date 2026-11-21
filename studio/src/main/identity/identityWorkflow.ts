@@ -102,7 +102,8 @@ export function identityWorkflowSnapshot(root:string,appPath:string){
       readiness='ANALYSIS_APPROVED';
       if(record.bible){
         const current=compileStyleBible(analysis,script,pinned(appPath,root));
-        if(record.bible.style_bible_sha256!==current.style_bible_sha256)
+        if(record.bible.style_bible_sha256!==current.style_bible_sha256||
+          contentHash(record.bible)!==contentHash(current))
           readiness='STYLE_BIBLE_STALE';
         else if(record.bibleTextApproved?.sha256!==current.style_bible_sha256)
           readiness='STYLE_BIBLE_TEXT_REVIEW_REQUIRED';
