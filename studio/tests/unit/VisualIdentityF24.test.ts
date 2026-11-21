@@ -400,6 +400,10 @@ describe('F24 source-grounded registry, reference payload and strict gates',()=>
     const impact=previewCharacterImpact(root,'char_001');
     approveCharacter(root,{characterId:'char_001',referenceId:'replacement',
       reviewedImpactSha256:impact.impactSha256,expectedRevision:readCharacterRegistry(root).revision});
+    const newPlan=resolveVisualReferences(root,targets[0].key);
+    expect(()=>attestBoundVisual(root,{targetKey:targets[0].key,boundSha256:a.ref.sha256,
+      referenceSetSha256:newPlan.referenceSetSha256,ownerConfirmed:true}))
+      .toThrow('CHARACTER_BOUND_REBIND_REQUIRED');
     expect(()=>assertStrictProjectPublicationReady(root)).toThrow('CHARACTER_PUBLICATION_BLOCKED');
     expect(verifyIdentityMedia(root,a.media.path,a.ref.sha256).sha256).toBe(a.ref.sha256);
   });
