@@ -33,6 +33,10 @@ export interface ShotImageGalleryProps{
   onAuthorizeUnknown?:(targetKey:string)=>void;
   unknownReview?:{targetKey:string;outcome:string|null;error:string;
     acknowledged:boolean;canAuthorize:boolean;checking:boolean};
+  onIdentityReviewed?:(jobId:string,targetKey:string,candidateSha256:string,
+    referenceSetSha256:string)=>void;
+  identityReviews?:Array<{jobId?:string;targetKey:string;sha256:string;
+    referenceSetSha256:string;kind:string}>;
 }
 const status=(card:GalleryCard)=>{
   if(card.currentlyBound??(card.target.fulfilled&&card.job?.status==='APPROVED'))return'Approved';
@@ -130,11 +134,37 @@ function CardPromptEditor({card,onSave}:{
 }
 
 
+function IdentityReferencePreview({projectId,sourcePath,anchorId}:{
+  projectId:string;sourcePath:string;anchorId:string
+}){
+  const [url,setUrl]=useState('');
+  const [loaded,setLoaded]=useState(false);
+  useEffect(()=>{
+    let alive=true;setUrl('');setLoaded(false);
+    if(!window.studio)return;
+    void window.studio.mediaUrl(projectId,sourcePath).then(value=>{
+      if(alive)setUrl(value);
+    }).catch(()=>{if(alive)setUrl('');});
+    return()=>{alive=false;};
+  },[projectId,sourcePath]);
+  return <div className="visual-identity-preview-reference">
+    <strong>{anchorId}</strong>
+    {url?<img src={url} alt={'Canonical character reference '+anchorId}
+      onLoad={e=>{
+        const image=e.currentTarget;
+        setLoaded(image.complete&&image.naturalWidth>0&&image.naturalHeight>0);
+      }} onError={()=>setLoaded(false)}/>:<span>Reference unavailable</span>}
+    <small>{loaded?'Reference loaded':'Reference not yet verified in preview'}</small>
+  </div>;
+}
+
 /** One read-only preview. A mounted dialog owns keyboard focus until it closes.
  * Its source URL is the exact staged candidate already loaded in the card. */
-function ImagePreviewLightbox({card,url,onClose,triggerRef}:{
+function ImagePreviewLightbox({card,url,onClose,triggerRef,projectId,onIdentityReviewed,reviewed}:{
   card:GalleryCard;url:string;onClose:()=>void;
-  triggerRef:RefObject<HTMLButtonElement|null>;
+  triggerRef:RefObject<HTMLButtonElement|null>;projectId:string;
+  onIdentityReviewed?:(jobId:string,targetKey:string,candidateSha256:string,
+    referenceSetSha256:string)=>void;reviewed:boolean;
 }){
   const [scale,setScale]=useState<'fit'|'original'>('fit');
   const dialogRef=useRef<HTMLDivElement>(null);
@@ -169,6 +199,10 @@ function ImagePreviewLightbox({card,url,onClose,triggerRef}:{
   const staged=card.job?.staged;
   if(!staged)return null;
   const original=scale==='original';
+  const plan=card.spec?.visualReferencePlan;
+  const ownerMustReview=Boolean(plan?.enabled&&card.job?.status==='VALIDATED'&&
+    plan.readiness==='READY'&&card.spec?.referenceSetSha256);
+  const canonical=plan?.references.filter(ref=>ref.kind==='character')??[];
   return <div className="shot-image-lightbox" role="dialog" aria-modal="true"
     aria-label="Expanded generated image" ref={dialogRef}
     onClick={event=>{if(event.target===event.currentTarget)onClose();}}>
@@ -187,16 +221,32 @@ function ImagePreviewLightbox({card,url,onClose,triggerRef}:{
             onClick={onClose}>Close Preview</button>
         </div>
       </div>
-      <div className={'shot-image-lightbox-viewport'+(original?' is-original':' is-fit')}
-        data-testid="shot-image-preview-viewport">
-        <img src={url} width={staged.width} height={staged.height}
-          alt={'Expanded '+card.target.shotId+'/'+card.target.layerId}
-          style={original?{
-            width:staged.width+'px',height:staged.height+'px',
-            maxWidth:'none',maxHeight:'none',objectFit:'contain'
-          }:{
-            width:'auto',height:'auto',maxWidth:'100%',maxHeight:'100%',objectFit:'contain'
-          }}/>
+      <div className="visual-identity-preview-body">
+        <div className={'shot-image-lightbox-viewport'+(original?' is-original':' is-fit')}
+          data-testid="shot-image-preview-viewport">
+          <img src={url} width={staged.width} height={staged.height}
+            alt={'Expanded '+card.target.shotId+'/'+card.target.layerId}
+            style={original?{
+              width:staged.width+'px',height:staged.height+'px',
+              maxWidth:'none',maxHeight:'none',objectFit:'contain'
+            }:{
+              width:'auto',height:'auto',maxWidth:'100%',maxHeight:'100%',objectFit:'contain'
+            }}/>
+        </div>
+        {ownerMustReview&&<aside className="visual-identity-preview-aside"
+          aria-label="Canonical identity comparison">
+          <strong>Canonical Registry · owner identity review</strong>
+          <small>Compare real master image(s) with the candidate. This is not a machine likeness check.</small>
+          {canonical.map(ref=><IdentityReferencePreview key={ref.anchorId+'|'+ref.sha256}
+            projectId={projectId} sourcePath={ref.sourcePath} anchorId={ref.anchorId}/>)}
+          {!canonical.length&&<div className="info">Explicit no recurring character.</div>}
+          <div className="info">Reference digest: {card.spec?.referenceSetSha256?.slice(0,16)}</div>
+          <Button disabled={reviewed||!onIdentityReviewed}
+            onClick={()=>onIdentityReviewed?.(card.job!.id,card.target.key,
+              staged.sha256,card.spec!.referenceSetSha256!)}>
+            {reviewed?'Identity visually checked':'I visually checked this candidate against master'}
+          </Button>
+        </aside>}
       </div>
     </div>
   </div>;
@@ -207,7 +257,8 @@ function ImagePreviewLightbox({card,url,onClose,triggerRef}:{
 export function ShotImageGallery({
   projectId,shotId,cards,urls,previewReady,previewErrors,previewIdentity,busy,selectedIds,
   onLoaded,onSelect,onGenerate,onApprove,onCheck,onRetryPreview,onInspectUnknown,
-  onSavePrompt,onCancelQueued,onCheckUnknown,onConsentUnknown,onAuthorizeUnknown,unknownReview
+  onSavePrompt,onCancelQueued,onCheckUnknown,onConsentUnknown,onAuthorizeUnknown,unknownReview,
+  onIdentityReviewed,identityReviews=[]
 }:ShotImageGalleryProps){
   const [expanded,setExpanded]=useState<string|null>(null);
   const previewTrigger=useRef<HTMLButtonElement|null>(null);
@@ -358,6 +409,22 @@ export function ShotImageGallery({
               <pre className="prompt">{card.spec.prompt}</pre>
               <pre className="prompt">{JSON.stringify(card.spec.references,null,2)}</pre>
             </>}
+            {card.spec?.visualReferencePlan?.enabled&&<div className="info"
+              data-testid="character-card-binding">
+              <strong>Characters · Canonical Registry:</strong>{' '}
+              {card.spec.visualReferencePlan.characterIds.join(', ')||'No recurring character'}
+              <div>Reference readiness: {card.spec.visualReferencePlan.readiness}</div>
+              <div>Required/optional references: {card.spec.visualReferencePlan.references.filter(r=>r.required).length}/
+                {card.spec.visualReferencePlan.references.filter(r=>!r.required).length} ·
+                total provider refs {card.spec.references.length}/8</div>
+              {card.spec.visualReferencePlan.references.map(ref=><div key={ref.kind+'|'+ref.anchorId}>
+                {ref.kind} · {ref.anchorId} · SHA {ref.sha256.slice(0,16)} ·
+                {ref.required?'required':'optional'}
+              </div>)}
+              {card.spec.visualReferencePlan.sourceSnapshotSha256&&<div>
+                Continuity source digest {card.spec.visualReferencePlan.sourceSnapshotSha256.slice(0,16)}
+              </div>}
+            </div>}
             <CardPromptEditor card={card} onSave={onSavePrompt}/>
             {job&&<><div>Model {job.model} · Provider {job.providerTaskId??'not confirmed'} · Job {job.id}</div>
               {job.reason&&<div className="info error">{job.reason}</div>}
@@ -437,6 +504,12 @@ export function ShotImageGallery({
       previewReady[expandedCard.job.id]===previewIdentity(expandedCard.job)&&
       <ImagePreviewLightbox key={expandedCard.job.id}
         card={expandedCard} url={urls[expandedCard.job.id]}
+        projectId={projectId}
+        onIdentityReviewed={onIdentityReviewed}
+        reviewed={identityReviews.some(review=>review.kind==='CANDIDATE'&&
+          review.jobId===expandedCard.job!.id&&
+          review.sha256===expandedCard.job!.staged?.sha256&&
+          review.referenceSetSha256===expandedCard.spec?.referenceSetSha256)}
         onClose={closePreview} triggerRef={previewTrigger}/>}
   </div>;
 }
