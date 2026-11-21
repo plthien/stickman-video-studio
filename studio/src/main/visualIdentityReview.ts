@@ -88,7 +88,13 @@ export function attestBoundVisual(root:string,input:{
   if(plan.readiness!=='READY'||plan.referenceSetSha256!==input.referenceSetSha256)
     throw new Error('REFERENCE_STALE');
   verifyIdentityMedia(root,target.boundPath,target.boundSha256);
-  return write(root,readVisualReviews(root),{
+  const existing=readVisualReviews(root);
+  // No same-PNG re-attestation can silently clear a stale canonical change.
+  // A new bound asset/verified Native Correct+rebind is required for that case.
+  if(existing.attestations.some(a=>a.targetKey===target.key&&
+    a.sha256===input.boundSha256&&a.referenceSetSha256!==plan.referenceSetSha256))
+    throw new Error('CHARACTER_BOUND_REBIND_REQUIRED');
+  return write(root,existing,{
     targetKey:target.key,sha256:input.boundSha256,
     referenceSetSha256:plan.referenceSetSha256,
     kind:'BOUND',approvedAt:now()
@@ -105,6 +111,9 @@ export function assertStrictProjectPublicationReady(root:string){
       target.key+' '+plan.readiness);
     if(!target.fulfilled||!target.boundSha256)
       throw new Error('CHARACTER_PUBLICATION_BLOCKED: unbound '+target.key);
+    if(attestations.some(a=>a.targetKey===target.key&&
+      a.sha256===target.boundSha256&&a.referenceSetSha256!==plan.referenceSetSha256))
+      throw new Error('CHARACTER_PUBLICATION_BLOCKED: rebind required '+target.key);
     const approved=attestations.some(a=>(a.kind==='BOUND'||a.kind==='CANDIDATE')&&
       a.targetKey===target.key&&a.sha256===target.boundSha256&&
       a.referenceSetSha256===plan.referenceSetSha256);
