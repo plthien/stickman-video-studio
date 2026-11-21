@@ -35,7 +35,6 @@ export interface BindingStore{
 }
 const registryPath=(root:string)=>resolveProjectFile(root,'.studio/visual-identity/character-registry-v1.json');
 const bindingsPath=(root:string)=>resolveProjectFile(root,'.studio/visual-identity/target-bindings-v1.json');
-const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
 const validId=(value:string)=>/^[a-zA-Z][a-zA-Z0-9_-]{0,79}$/.test(value);
 const hash=(value:unknown)=>sha(JSON.stringify(value));
 const hex=(value:string)=>/^[a-f0-9]{64}$/.test(value);
@@ -219,7 +218,7 @@ export function archiveCharacter(root:string,input:{characterId:string;expectedR
     throw new Error('CHARACTER_ARCHIVE_IMPACT_REVIEW_REQUIRED');
   assertNoBusyVisualJobs(root,impact.targets);
   return commitRegistry(root,current,{...current,characters:current.characters.map(c=>
-    c.characterId===input.characterId?{...c,status:'ARCHIVED'}:c)},'archive:'+input.characterId);
+    c.characterId===input.characterId?{...c,status:'ARCHIVED' as const}:c)},'archive:'+input.characterId);
 }
 export function saveTargetBinding(root:string,input:{
   targetKey:string;characters:string[];noRecurringCharacter:boolean;
