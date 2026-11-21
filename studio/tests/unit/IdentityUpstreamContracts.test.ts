@@ -16,7 +16,7 @@ const script={projectId,sha256:hash(text),authoring,revision:1,sections};
 const second=text.lastIndexOf('Kip');
 const entry=()=>({char_id:'char_001',label:'Kip',description:'',
   entity_kind:'human_character' as const,narrative_role:'Character in approved narration',
-  explicit_visual_traits:[],identity_markers:['source-established marker'],
+  explicit_visual_traits:[],identity_markers:['Kip'],
   continuity_notes:[],physical_constraints:[],
   occurrences:[{section_id:'sec_001',quote:'Kip',start:0,end:3},
     {section_id:'sec_002',quote:'Kip',start:second,end:second+3}],
@@ -45,6 +45,14 @@ describe('F24 upstream source-grounded contract gates',()=>{
     expect(()=>validateScriptAnalysis(bad,script)).toThrow('SCRIPT_ANALYSIS_QUOTE_OR_SPAN_INVALID');
     const foreign=analysis();foreign.continuity_catalog.characters[0].occurrences[0].section_id='sec_999';
     expect(()=>validateScriptAnalysis(foreign,script)).toThrow('SCRIPT_ANALYSIS_UNKNOWN_SECTION');
+  });
+  it('U03a rejects unsupported appearance traits even when an actor quote is valid',()=>{
+    const invented=analysis();
+    invented.continuity_catalog.characters[0].explicit_visual_traits=[
+      'neon green eyes that are not in the approved narration'
+    ];
+    expect(()=>validateScriptAnalysis(invented,script))
+      .toThrow('SCRIPT_ANALYSIS_UNSUPPORTED_VISUAL_TRAIT');
   });
   it('U04 has a separate frozen task envelope not spoofed as Native',()=>{
     const task=freezeAnalysisTask(script,'author',1);
