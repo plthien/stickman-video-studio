@@ -4,7 +4,7 @@ import {readIdentityWorkflow,currentApprovedSource} from './identityWorkflow.js'
 import {compileStyleBible} from './styleBible.js';
 import {loadImageStyleProfile} from '../imagePreparation.js';
 import {contentHash,type NativeImageNeedV2,type StyleBible} from './contracts.js';
-import {validateNativeIdentityNeeds,type NativeImageTarget} from './nativeNeeds.js';
+import {validateNativeIdentityNeeds} from './nativeNeeds.js';
 import {verifyReferenceFile,type ReferenceApprovalSet,type ReferenceCandidate} from './referencePublication.js';
 import {nativeImageTargetsFromManifest,readNativeDraft} from '../externalTasks.js';
 
