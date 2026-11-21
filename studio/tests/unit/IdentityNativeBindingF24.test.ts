@@ -16,7 +16,8 @@ import {currentApprovedSource} from '../../src/main/identity/identityWorkflow';
 import {loadImageStyleProfile} from '../../src/main/imagePreparation';
 import {assertPublishedIdentityCurrent} from '../../src/main/identity/finalGate';
 import {readApprovedNativeIdentity} from '../../src/main/identity/nativeBinding';
-import {readIdentityWorkflow} from '../../src/main/identity/identityWorkflow';
+import {readIdentityWorkflow,publishStyleBibleReferences} from '../../src/main/identity/identityWorkflow';
+import {previewReferenceSwitchImpact} from '../../src/main/identity/impact';
 import type {ReferenceCandidate} from '../../src/main/identity/referencePublication';
 
 const dirs:string[]=[];
@@ -198,5 +199,21 @@ describe('F24 Native canonical bytes, billing gate and final source receipt',()=
     expect(()=>assertPublishedIdentityCurrent(root,appPath)).not.toThrow();
     const pathToReceipt=path.join(root,'.studio/identity/native-publication-v1.json');
     expect(fs.existsSync(pathToReceipt)).toBe(true);
+    // A distinct owner approval event for a canonical source (even if the
+    // pixel file is byte-identical) changes the published reference authority.
+    // Old Native bytes stay intact but cannot be silently reused for render.
+    const journal=readIdentityWorkflow(root),previous=journal.referenceCandidates[0];
+    const rotated=approveCandidate({
+      ...previous,candidate_id:'second-owner-reviewed-candidate',
+      status:'VALIDATED',approval_event_id:null,approved_at:null
+    },journal.bible!,root,true,decode);
+    journal.referenceCandidates.push(rotated);
+    atomicJson(path.join(root,'.studio/identity/workflow-v1.json'),journal);
+    const impact=previewReferenceSwitchImpact(root,[rotated.candidate_id]);
+    expect(impact.publishedNativeAffected).toBe(true);
+    publishStyleBibleReferences(root,appPath,journal.revision,[rotated.candidate_id],
+      decode,impact.impactSha256);
+    expect(()=>assertPublishedIdentityCurrent(root,appPath))
+      .toThrow('IDENTITY_PUBLISHED_REFERENCE_LINEAGE_STALE');
   });
 });
