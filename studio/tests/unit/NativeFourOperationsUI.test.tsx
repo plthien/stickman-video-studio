@@ -297,11 +297,15 @@ describe('Storyboard — source-grounded paid image generation for current Nativ
   it('SB-IMG-01 compiles first missing layer automatically; paid submission requires explicit owner click',async()=>{
     const {glabsGenerate}=installStoryboard();
     render(<AppStateProvider><StoryboardHarness/></AppStateProvider>);
-    const generate=await screen.findByRole('button',{name:'Generate Image'});
+    const generate=await screen.findByRole('button',{name:'Generate Image · layer-1'});
     await waitFor(()=>expect(generate).toBeEnabled());
     expect(screen.getByText(/Current Project Style:/).closest('div')).toHaveTextContent('B1');
-    expect(screen.getByText(/Image:/).closest('div')).toHaveTextContent('layer-1');
-    expect(screen.getByText('Approved B1 style. Exact owner-approved image for layer-1', {selector:'pre'})).toBeInTheDocument();
+    const first=screen.getAllByTestId('shot-image-card')[0];
+    expect(first).toHaveAttribute('data-layer-id','layer-1');
+    expect(first).toHaveTextContent('Owner-approved image for layer-1');
+    fireEvent.click(first.querySelector('.shot-image-card-details > summary')!);
+    expect(screen.getByText('Approved B1 style. Exact owner-approved image for layer-1',
+      {selector:'pre'})).toBeInTheDocument();
     expect(glabsGenerate).not.toHaveBeenCalled();
     fireEvent.click(generate);
     await waitFor(()=>expect(glabsGenerate).toHaveBeenCalledWith('A',expect.objectContaining({
@@ -314,17 +318,21 @@ describe('Storyboard — source-grounded paid image generation for current Nativ
     const {glabsGenerate}=installStoryboard();
     render(<AppStateProvider><StoryboardHarness/></AppStateProvider>);
     await waitFor(()=>expect(screen.getByTestId('image-queue-counts')).toHaveTextContent('READY 3'));
-    fireEvent.click(screen.getByText(/Advanced · target-specific edits/));
-    const prompt=screen.getByLabelText('Edit image prompt for current target only');
-    fireEvent.change(prompt,{target:{value:'Owner changes only first layer image pose'}});
-    expect(screen.getByText(/Save the edited prompt\/references before generating this image\./)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button',{name:/Owner-approved image for layer-2/}));
-    expect(screen.getByLabelText('Edit image prompt for current target only')).toHaveValue(
+    const firstShotCards=screen.getAllByTestId('shot-image-card');
+    expect(firstShotCards).toHaveLength(2);
+    fireEvent.click(firstShotCards[0].querySelector('.shot-image-card-details > summary')!);
+    const firstPrompt=screen.getByLabelText('Edit image prompt layer-1');
+    fireEvent.change(firstPrompt,{target:{value:'Owner changes only first layer image pose'}});
+    expect(firstPrompt).toHaveValue('Owner changes only first layer image pose');
+    fireEvent.click(firstShotCards[1].querySelector('.shot-image-card-details > summary')!);
+    expect(screen.getByLabelText('Edit image prompt layer-2')).toHaveValue(
       'Approved B1 style. Exact owner-approved image for layer-2');
-    expect(screen.getByLabelText('Edit image prompt for current target only')).not.toHaveValue(
+    expect(firstPrompt).toHaveValue('Owner changes only first layer image pose');
+    fireEvent.click(screen.getByRole('button',{name:/^shot-2/}));
+    await waitFor(()=>expect(screen.getAllByTestId('shot-image-card')).toHaveLength(1));
+    expect(screen.getAllByTestId('shot-image-card')[0]).toHaveAttribute('data-layer-id','layer-3');
+    expect(screen.getByTestId('shot-image-gallery')).not.toHaveTextContent(
       'Owner changes only first layer image pose');
-    fireEvent.click(screen.getByRole('button',{name:/shot-2/}));
-    expect(screen.getByText(/Image:/).closest('div')).toHaveTextContent('layer-3');
     expect(glabsGenerate).not.toHaveBeenCalled();
   });
   it('SB-IMG-04 Native DRAFT correction refreshes exact missing target without leaking previous selection',async()=>{
@@ -357,8 +365,10 @@ describe('Storyboard — source-grounded paid image generation for current Nativ
   it('SB-IMG-03 missing Native candidate never offers a paid Generate action',async()=>{
     const {glabsGenerate}=installStoryboard(null);
     render(<AppStateProvider><StoryboardHarness/></AppStateProvider>);
-    await waitFor(()=>expect(screen.getByTestId('glabs-image-unavailable')).toHaveTextContent(
-      'No Native DRAFT media candidate staged.'));
+    await waitFor(()=>expect(screen.getByTestId('image-queue-counts'))
+      .toHaveTextContent('0 Native images'));
+    expect(screen.getByText(/No native shots in the current Native DRAFT/))
+      .toBeInTheDocument();
     expect(screen.queryByRole('button',{name:/Generate Image|Regenerate Image/})).not.toBeInTheDocument();
     expect(glabsGenerate).not.toHaveBeenCalled();
   });
