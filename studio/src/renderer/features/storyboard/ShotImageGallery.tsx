@@ -1,4 +1,4 @@
-import {useEffect,useState} from 'react';
+import {useCallback,useEffect,useRef,useState,type RefObject} from 'react';
 import {Button} from '../../components/ui';
 
 type Studio=NonNullable<Window['studio']>;
@@ -69,8 +69,7 @@ function HistoryCandidate({job,projectId}:{job:ImageJob;projectId:string}){
       {job.staged?' · '+job.staged.width+' × '+job.staged.height:''}
     </summary>
     {job.staged&&<><div>SHA {job.staged.sha256}</div>
-      {url?<div className="shot-image-history-preview"
-        style={{aspectRatio:job.staged.width+' / '+job.staged.height}}>
+      {url?<div className="shot-image-history-preview">
         <img loading="lazy" src={url} alt={'Historical image candidate '+job.id}
           style={{width:'100%',height:'100%',objectFit:'contain'}}/>
       </div>:<div>Open to load historical candidate preview.</div>}
@@ -130,6 +129,79 @@ function CardPromptEditor({card,onSave}:{
   </div>;
 }
 
+
+/** One read-only preview. A mounted dialog owns keyboard focus until it closes.
+ * Its source URL is the exact staged candidate already loaded in the card. */
+function ImagePreviewLightbox({card,url,onClose,triggerRef}:{
+  card:GalleryCard;url:string;onClose:()=>void;
+  triggerRef:RefObject<HTMLButtonElement|null>;
+}){
+  const [scale,setScale]=useState<'fit'|'original'>('fit');
+  const dialogRef=useRef<HTMLDivElement>(null);
+  const closeRef=useRef<HTMLButtonElement>(null);
+  useEffect(()=>{
+    const previousFocus=document.activeElement instanceof HTMLElement?document.activeElement:null;
+    closeRef.current?.focus();
+    const handleKey=(event:KeyboardEvent)=>{
+      if(event.key==='Escape'){
+        event.preventDefault();event.stopPropagation();onClose();
+      }else if(event.key==='Tab'){
+        const controls=Array.from(dialogRef.current?.querySelectorAll<HTMLButtonElement>(
+          'button:not(:disabled)')??[]);
+        if(!controls.length){event.preventDefault();return;}
+        const first=controls[0],last=controls[controls.length-1];
+        if(event.shiftKey&&(document.activeElement===first||
+          !dialogRef.current?.contains(document.activeElement))){
+          event.preventDefault();last.focus();
+        }else if(!event.shiftKey&&(document.activeElement===last||
+          !dialogRef.current?.contains(document.activeElement))){
+          event.preventDefault();first.focus();
+        }
+      }
+    };
+    document.addEventListener('keydown',handleKey);
+    return()=>{
+      document.removeEventListener('keydown',handleKey);
+      if(triggerRef.current?.isConnected)triggerRef.current.focus();
+      else if(previousFocus?.isConnected)previousFocus.focus();
+    };
+  },[onClose,triggerRef]);
+  const staged=card.job?.staged;
+  if(!staged)return null;
+  const original=scale==='original';
+  return <div className="shot-image-lightbox" role="dialog" aria-modal="true"
+    aria-label="Expanded generated image" ref={dialogRef}
+    onClick={event=>{if(event.target===event.currentTarget)onClose();}}>
+    <div className="shot-image-lightbox-inner">
+      <div className="shot-image-lightbox-toolbar">
+        <div className="shot-image-lightbox-title">
+          <strong>{card.target.shotId} / {card.target.layerId}</strong>
+          <small>{staged.width} × {staged.height} px · SHA {staged.sha256}</small>
+        </div>
+        <div className="shot-image-lightbox-controls" role="group" aria-label="Preview scale">
+          <button className="button" type="button" aria-pressed={!original}
+            onClick={()=>setScale('fit')}>Fit Screen</button>
+          <button className="button" type="button" aria-pressed={original}
+            onClick={()=>setScale('original')}>100% Original</button>
+          <button className="button" type="button" ref={closeRef}
+            onClick={onClose}>Close Preview</button>
+        </div>
+      </div>
+      <div className={'shot-image-lightbox-viewport'+(original?' is-original':' is-fit')}
+        data-testid="shot-image-preview-viewport">
+        <img src={url} width={staged.width} height={staged.height}
+          alt={'Expanded '+card.target.shotId+'/'+card.target.layerId}
+          style={original?{
+            width:staged.width+'px',height:staged.height+'px',
+            maxWidth:'none',maxHeight:'none',objectFit:'contain'
+          }:{
+            width:'auto',height:'auto',maxWidth:'100%',maxHeight:'100%',objectFit:'contain'
+          }}/>
+      </div>
+    </div>
+  </div>;
+}
+
 /** Image-first Native Shot gallery. No Layer selection or editable rights
  * input is required to see or approve an actual provider image. */
 export function ShotImageGallery({
@@ -138,6 +210,8 @@ export function ShotImageGallery({
   onSavePrompt,onCancelQueued,onCheckUnknown,onConsentUnknown,onAuthorizeUnknown,unknownReview
 }:ShotImageGalleryProps){
   const [expanded,setExpanded]=useState<string|null>(null);
+  const previewTrigger=useRef<HTMLButtonElement|null>(null);
+  const closePreview=useCallback(()=>setExpanded(null),[]);
   const [openDetails,setOpenDetails]=useState<Set<string>>(new Set());
   const eligible=(card:GalleryCard)=>{
     const job=card.job;
@@ -180,20 +254,28 @@ export function ShotImageGallery({
             <span className={'shot-image-status status-'+status(card).toLowerCase().replaceAll(' ','-')}>{status(card)}</span>
           </header>
           <div className={'shot-image-card-stage'+(!staged?' is-placeholder':'')}
-            style={{aspectRatio:staged&&staged.width>0&&staged.height>0?
-              staged.width+' / '+staged.height:'9 / 16'}}
             data-testid="shot-image-stage">
-            {job&&staged&&urls[job.id]?<img
-              key={previewIdentity(job)} src={urls[job.id]}
-              alt={'Shot gallery '+card.target.shotId+'/'+card.target.layerId}
-              width={staged.width} height={staged.height}
-              loading="eager" decoding="async"
-              onLoad={event=>{
-                const image=event.currentTarget;
-                onLoaded(job,image.complete&&image.naturalWidth>0&&image.naturalHeight>0);
-              }}
-              onError={()=>onLoaded(job,false)}
-              style={{width:'100%',height:'100%',objectFit:'contain'}}/>:
+            {job&&staged&&urls[job.id]?<button className="shot-image-thumbnail-button"
+              type="button"
+              aria-label={'Expand image '+card.target.shotId+'/'+card.target.layerId}
+              title="Open image preview"
+              disabled={Boolean(previewErrors[job.id])||
+                previewReady[job.id]!==previewIdentity(job)}
+              onClick={event=>{
+                previewTrigger.current=event.currentTarget;
+                setExpanded(job.id);
+              }}>
+              <img key={previewIdentity(job)} src={urls[job.id]}
+                alt={'Shot gallery '+card.target.shotId+'/'+card.target.layerId}
+                width={staged.width} height={staged.height}
+                loading="eager" decoding="async"
+                onLoad={event=>{
+                  const image=event.currentTarget;
+                  onLoaded(job,image.complete&&image.naturalWidth>0&&image.naturalHeight>0);
+                }}
+                onError={()=>onLoaded(job,false)}
+                style={{width:'100%',height:'100%',objectFit:'contain'}}/>
+              </button>:
               <span>{statusUnavailable?'Provider status unavailable — Retry Sync (GET only)':
                 needsSync?'Sync failed — Retry Sync (GET only)':
                 job?.providerCompletedAt?'Provider done — retrieving image':
@@ -213,7 +295,6 @@ export function ShotImageGallery({
           {previewErrors[job?.id??'']&&<div className="info error">
             {previewErrors[job!.id]}</div>}
           <div className="shot-image-card-actions">
-            {job&&staged&&urls[job.id]&&<Button onClick={()=>setExpanded(job.id)}>Expand Preview</Button>}
             {mayGenerate&&<Button disabled={busy} onClick={()=>onGenerate(card.target.key)}>
               {card.superseded?'Regenerate for Current Draft (Paid)':
                 attempts.length?'Regenerate Image (Paid)':'Generate Image'} · {card.target.layerId}
@@ -351,16 +432,11 @@ export function ShotImageGallery({
       })}
     </div>
     {!cards.length&&<div className="info">No image Layers found in this frozen Native Shot.</div>}
-    {expandedCard?.job?.staged&&urls[expandedCard.job.id]&&<div className="shot-image-lightbox"
-      role="dialog" aria-label="Expanded generated image">
-      <div className="shot-image-lightbox-inner">
-        <Button onClick={()=>setExpanded(null)}>Close Preview</Button>
-        <div>{expandedCard.target.shotId} / {expandedCard.target.layerId} ·
-          {' '+expandedCard.job.staged.width} × {expandedCard.job.staged.height}</div>
-        <img src={urls[expandedCard.job.id]}
-          alt={'Expanded '+expandedCard.target.shotId+'/'+expandedCard.target.layerId}
-          style={{maxWidth:'100%',maxHeight:'80vh',width:'auto',height:'auto',objectFit:'contain'}}/>
-      </div>
-    </div>}
+    {expandedCard?.job?.staged&&urls[expandedCard.job.id]&&
+      !previewErrors[expandedCard.job.id]&&
+      previewReady[expandedCard.job.id]===previewIdentity(expandedCard.job)&&
+      <ImagePreviewLightbox key={expandedCard.job.id}
+        card={expandedCard} url={urls[expandedCard.job.id]}
+        onClose={closePreview} triggerRef={previewTrigger}/>}
   </div>;
 }
