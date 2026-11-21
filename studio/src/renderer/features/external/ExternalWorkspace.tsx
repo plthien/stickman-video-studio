@@ -1,5 +1,5 @@
 /* eslint-disable react-hooks/exhaustive-deps -- session scopes are ref-backed; project/stage scalars define invalidation */
-import { createContext, useContext, useEffect, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { useAppState } from '../../app/AppState';
 import { Badge, Button, Card, CardHeader, Field, Input, Select, Textarea } from '../../components/ui';
 const tabNames = ['Script', 'Native'] as const; type PromptTab = (typeof tabNames)[number]; type SyntaxResult = 'idle' | 'valid' | 'invalid';
@@ -108,7 +108,9 @@ export function ExternalWorkspace(){
   const lastReview=visibleHistory&&(visibleHistory.operation==='review'||visibleHistory.operation==='recheck')?visibleHistory:null;
   // Requests belong to a captured tab and project epoch; never publish late
   // results into the newly selected tab. Draft state is retained in its own key.
-  useEffect(()=>{
+  useLayoutEffect(()=>{
+    // Cancel obsolete file/read requests before browser file events can fire for
+    // a newly selected project, stage, operation or Native target.
     for(const name of ['freeze','validate','pending','confirm','export','jsonFile','history'] as const)
       requests.current[name]+=1;
   },[projectId,projectEpoch,stage,operation,effectiveNativeTarget]);
@@ -216,13 +218,20 @@ export function ExternalWorkspace(){
     if(!native||!session){setError('Open a native project before importing JSON.');return;}
     if(!/\.json$/i.test(file.name)){setError('Choose a .json file.');return;}
     const reader=new FileReader();
-    reader.onload=()=>{
+    const acceptRead=()=>{
       if(sequence!==requests.current.jsonFile||activeKey.current!==sessionKey||!isCurrentProjectSession(session))return;
-      if(typeof reader.result!=='string'){setError('Unable to read the selected JSON file.');return;}
-      try{JSON.parse(reader.result)}catch{setError('Selected file is not valid JSON.');return;}
-      change(reader.result);
+      const contents=reader.result;
+      if(typeof contents!=='string'){setError('Unable to read the selected JSON file.');return;}
+      try{JSON.parse(contents)}catch{setError('Selected file is not valid JSON.');return;}
+      // change() consumes this request's revision. A following loadend cannot
+      // apply the same bytes twice or resurrect a stale selected file.
+      change(contents);
       showNotice('JSON loaded from '+file.name+'. Review the content, then select Validate import.');
     };
+    reader.onload=acceptRead;
+    // Some FileReader bridges report completion using loadend; deduplicate
+    // against onload through the request revision above.
+    reader.onloadend=acceptRead;
     reader.onerror=()=>{if(sequence===requests.current.jsonFile&&activeKey.current===sessionKey&&isCurrentProjectSession(session))setError('Unable to read the selected JSON file.');};
     reader.readAsText(file);
   };
