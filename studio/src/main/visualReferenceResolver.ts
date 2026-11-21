@@ -37,7 +37,7 @@ const current=(root:string,key:string)=>{
 };
 /** Source owner extras and B4 style pins are frozen in project-local overrides.
  * An old-token or changed-creative override cannot authorize current continuity. */
-function currentSourceOwnerReferences(root:string,key:string):string[]{
+export function currentSourceOwnerReferences(root:string,key:string):string[]{
   const filename=resolveProjectFile(root,'.studio/storyboard/image-overrides-v1.json');
   if(!fs.existsSync(filename))return[];
   const value=strictJson(fs.readFileSync(filename,'utf8')) as {
@@ -82,7 +82,8 @@ function approvedSourceCurrent(root:string,key:string,sourceSha:string):boolean{
       job.referenceSetSha256===row.referenceSetSha256;
   });
 }
-export function resolveVisualReferences(root:string,targetKey:string,ownerRefs:string[]=[]):ReferencePlan{
+export function resolveVisualReferences(root:string,targetKey:string,
+  ownerRefs:string[]=currentSourceOwnerReferences(root,targetKey)):ReferencePlan{
   const registry=readCharacterRegistry(root);
   const base:ReferencePlan={enabled:registry.strict,targetKey,characterIds:[],
     references:[],referenceSetSha256:'',readiness:'READY',blockers:[],
