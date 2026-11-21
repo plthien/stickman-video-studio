@@ -60,8 +60,11 @@ export async function projectSnapshot(root:string,appPath:string,verifier?:Nativ
       if(upstream.readiness!=='REFERENCES_PUBLISHED'){
         identityReadiness={policy:'v1',status:'UPSTREAM_NOT_READY',reason:upstream.readiness};
       }else if(state.external.native){
-        assertPublishedIdentityCurrent(projectRoot,appPath,'SAMPLE');
-        identityReadiness={policy:'v1',status:'CURRENT',reason:null};
+        const receipt=assertPublishedIdentityCurrent(projectRoot,appPath,'SAMPLE');
+        identityReadiness=receipt?.scope==='SAMPLE'?
+          {policy:'v1',status:'SAMPLE_ONLY',
+            reason:'Approved identity is verified only for the confirmed sample window; full render remains blocked'}:
+          {policy:'v1',status:'CURRENT',reason:null};
       }else identityReadiness={policy:'v1',status:'NATIVE_REBUILD_REQUIRED',
         reason:'Native has not been confirmed under the current approved identity set'};
     }catch(error){
