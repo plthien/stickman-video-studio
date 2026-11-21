@@ -251,7 +251,17 @@ export function saveTargetBinding(root:string,input:{
   const current=readTargetBindings(root),registry=readCharacterRegistry(root);
   if(input.expectedRevision!==current.revision)throw new Error('CHARACTER_BINDINGS_REVISION_CONFLICT');
   const gallery=getNativeImageGallery('',root),target=gallery.targets.find(t=>t.key===input.targetKey);
-  assertNoBusyVisualJobs(root,[input.targetKey]);
+  // Changing A may invalidate charged B/C requests that explicitly depend on A.
+  const affected=new Set([input.targetKey]);
+  let growing=true;
+  while(growing){
+    growing=false;
+    for(const descendant of current.bindings)if(descendant.continuity&&
+      affected.has(descendant.continuity.sourceTargetKey)&&!affected.has(descendant.targetKey)){
+      affected.add(descendant.targetKey);growing=true;
+    }
+  }
+  assertNoBusyVisualJobs(root,[...affected]);
   if(!target||!target.creativeFingerprint||!gallery.token)
     throw new Error('CHARACTER_TARGET_CURRENT_DRAFT_REQUIRED');
   if(!Array.isArray(input.characters)||input.characters.some(c=>!validId(c))||
