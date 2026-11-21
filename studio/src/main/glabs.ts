@@ -786,6 +786,36 @@ export function approveGlabsImage(appPath:string,root:string,id:string,rights:st
   }finally{approvalLocks.delete(projectLock);}
 }
 
+/**
+ * Shared audited legacy provider transport for separate 1:1 Style Bible jobs.
+ * This never changes Shot settings (9:16) and never accepts remote URLs or
+ * renderer-supplied credentials. Caller MUST keep an UNKNOWN/paid journal.
+ */
+export function glabsReferenceSettings(userData:string){
+  const settings=glabsSettings(userData);
+  return{model:settings.model,endpoint:settings.endpoint};
+}
+export async function glabsReferenceSubmit(userData:string,cipher:CredentialCipher,
+  input:{prompt:string;model:string}){
+  const settings=glabsSettings(userData);
+  if(input.model!==settings.model||!input.prompt.trim()||
+    input.prompt.length>18000)throw new Error('REFERENCE_PROVIDER_CONFIG_OR_PROMPT_INVALID');
+  return requestJson(settings,userData,cipher,'POST','api/image/generate',{
+    prompt:input.prompt,model:input.model,aspect_ratio:'1:1',
+    reference_images:[],upscale:[]
+  });
+}
+export async function glabsReferenceStatus(userData:string,cipher:CredentialCipher,taskId:string){
+  if(!/^[a-f0-9]{8}$/i.test(taskId))throw new Error('REFERENCE_PROVIDER_ID_INVALID');
+  return requestJson(glabsSettings(userData),userData,cipher,'GET','api/status/'+taskId);
+}
+export async function glabsReferenceResult(userData:string,cipher:CredentialCipher,taskId:string){
+  if(!/^[a-f0-9]{8}$/i.test(taskId))throw new Error('REFERENCE_PROVIDER_ID_INVALID');
+  return requestJson(glabsSettings(userData),userData,cipher,'GET','api/result/'+taskId);
+}
+export async function glabsReferenceDownload(userData:string,cipher:CredentialCipher,url:string){
+  return downloadImage(glabsSettings(userData),url,userData,cipher);
+}
 /** Local cancellation is possible only before a provider POST has been submitted. */
 export function cancelQueuedGlabsImage(root:string,id:string){
   const job=readJob(root,id);
