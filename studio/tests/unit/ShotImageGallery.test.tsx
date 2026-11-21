@@ -408,7 +408,13 @@ describe('F25 compact fixed-card thumbnail gallery and accessible original-size 
     const approve=vi.fn(),generate=vi.fn();
     render(<Harness approve={approve} generate={generate}/>);
     let {trigger,dialog}=openPortrait();
-    expect(document.activeElement).toBe(within(dialog).getByRole('button',{name:'Close Preview'}));
+    const close=within(dialog).getByRole('button',{name:'Close Preview'});
+    const fit=within(dialog).getByRole('button',{name:'Fit Screen'});
+    expect(document.activeElement).toBe(close);
+    fireEvent.keyDown(document,{key:'Tab'});
+    expect(document.activeElement).toBe(fit);
+    fireEvent.keyDown(document,{key:'Tab',shiftKey:true});
+    expect(document.activeElement).toBe(close);
     fireEvent.keyDown(document,{key:'Escape'});
     expect(screen.queryByRole('dialog',{name:'Expanded generated image'})).not.toBeInTheDocument();
     expect(document.activeElement).toBe(trigger);
