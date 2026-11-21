@@ -157,7 +157,7 @@ function actualPublishedImages(manifest:Record<string,unknown>){
 /** Call before and AFTER each Native CLI/preview reuse. Immutable last-good
  * project.json is never treated as an F24 certification by itself. */
 export function assertPublishedIdentityCurrent(root:string,appPath:string,
-  required:'FULL'|'SAMPLE'='FULL'){
+  required:'FULL'|'SAMPLE'='FULL',requestedSeconds?:number){
   const state=readState(root);
   if(state.identityPolicy!=='v1')return null;
   const identity=readApprovedNativeIdentity(root,appPath);
@@ -167,6 +167,10 @@ export function assertPublishedIdentityCurrent(root:string,appPath:string,
     throw Error('IDENTITY_PUBLISHED_REFERENCE_LINEAGE_STALE');
   if(receipt.scope==='SAMPLE'&&required==='FULL')
     throw Error('IDENTITY_SAMPLE_NOT_FULLY_CERTIFIED');
+  if(receipt.scope==='SAMPLE'&&requestedSeconds!==undefined&&
+    (!Number.isFinite(requestedSeconds)||requestedSeconds<=0||
+     receipt.sampleSeconds===null||requestedSeconds>receipt.sampleSeconds))
+    throw Error('IDENTITY_SAMPLE_SCOPE_EXCEEDED');
   if(!['SAMPLE','FULL'].includes(receipt.scope)||
     !Number.isSafeInteger(receipt.totalTargets)||receipt.totalTargets<receipt.rows.length)
     throw Error('IDENTITY_PUBLISHED_RECEIPT_SCOPE_INVALID');
