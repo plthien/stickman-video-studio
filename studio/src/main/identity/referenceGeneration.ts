@@ -10,6 +10,7 @@ import {contentHash,type StyleBible} from './contracts.js';
 import {compileStyleBible,referencePromptForCharacter} from './styleBible.js';
 import {currentApprovedSource,readIdentityWorkflow,identityPolicy} from './identityWorkflow.js';
 import {verifyIndependentReview} from './scriptAnalysis.js';
+import {validateOwnerVisualDefinition} from './visualDefinitions.js';
 import {loadImageStyleProfile} from '../imagePreparation.js';
 import type {IdentityDecoder} from './referencePublication.js';
 
@@ -20,6 +21,7 @@ export interface ReferenceJob{
   id:string;projectId:string;anchorId:string;sourceDefinitionHash:string;
   styleBibleSha:string;styleProfileSha:string;analysisSha:string;
   approvedScriptSha:string;prompt:string;promptSha:string;
+  ownerVisualDefinitionSha?:string;
   model:string;aspectRatio:'1:1';status:ReferenceJobStatus;
   providerTaskId?:string;providerCompletedAt?:string;
   staged?:{path:string;sha256:string;width:number;height:number;mime:'image/png'};
@@ -55,7 +57,8 @@ export function listReferenceJobs(root:string):ReferenceJob[]{
 }
 function ready(root:string,appPath:string,anchorId:string):{
   bible:StyleBible;sourceDefinitionHash:string;prompt:string;promptSha:string;
-  styleSha:string;analysisSha:string;scriptSha:string
+  styleSha:string;analysisSha:string;scriptSha:string;
+  ownerVisualDefinitionSha?:string
 }{
   const state=readState(root);
   if(identityPolicy(state)!=='v1')throw Error('REFERENCE_IDENTITY_POLICY_REQUIRED');
@@ -76,12 +79,16 @@ function ready(root:string,appPath:string,anchorId:string):{
     journal.bible.style_bible_sha256!==bible.style_bible_sha256)
     throw Error('REFERENCE_STYLE_BIBLE_NOT_APPROVED');
   const row=bible.characters.find(char=>char.char_id===anchorId);
-  if(!row||row.visual_readiness!=='READY_FOR_REFERENCE')
+  if(!row)throw Error('REFERENCE_CHARACTER_NOT_FOUND');
+  const owner=journal.ownerVisualDefinitions?.find(value=>value.charId===anchorId);
+  if(owner)validateOwnerVisualDefinition(owner,source,bible);
+  if(row.visual_readiness!=='READY_FOR_REFERENCE'&&!owner)
     throw Error('REFERENCE_CHARACTER_NOT_READY');
-  const prompt=referencePromptForCharacter(bible,anchorId,pinned);
+  const prompt=referencePromptForCharacter(bible,anchorId,pinned,owner);
   return{bible,sourceDefinitionHash:row.source_definition_hash,
     prompt:prompt.prompt,promptSha:prompt.prompt_sha256,styleSha:style.sha256,
-    analysisSha:bible.analysis_sha256,scriptSha:bible.source_script_sha256};
+    analysisSha:bible.analysis_sha256,scriptSha:bible.source_script_sha256,
+    ...(owner?{ownerVisualDefinitionSha:owner.definitionSha}:{})};
 }
 function isCurrent(root:string,appPath:string,job:ReferenceJob){
   try{
@@ -92,7 +99,9 @@ function isCurrent(root:string,appPath:string,job:ReferenceJob){
       job.styleProfileSha===snapshot.styleSha&&
       job.analysisSha===snapshot.analysisSha&&
       job.approvedScriptSha===snapshot.scriptSha&&
-      job.promptSha===snapshot.promptSha&&sha(job.prompt)===job.promptSha;
+      job.promptSha===snapshot.promptSha&&
+      job.ownerVisualDefinitionSha===snapshot.ownerVisualDefinitionSha&&
+      sha(job.prompt)===job.promptSha;
   }catch{return false;}
 }
 function markStale(root:string,job:ReferenceJob){
@@ -142,7 +151,10 @@ export async function submitReferenceJob(appPath:string,root:string,userData:str
       styleBibleSha:definition.bible.style_bible_sha256,
       styleProfileSha:definition.styleSha,analysisSha:definition.analysisSha,
       approvedScriptSha:definition.scriptSha,prompt:definition.prompt,
-      promptSha:definition.promptSha,model:config.model,aspectRatio:'1:1',
+      promptSha:definition.promptSha,
+      ...(definition.ownerVisualDefinitionSha?{
+        ownerVisualDefinitionSha:definition.ownerVisualDefinitionSha}:{}),
+      model:config.model,aspectRatio:'1:1',
       status:'QUEUED',createdAt:stamp(),updatedAt:stamp()
     }))throw Error('REFERENCE_SOURCE_STALE_BEFORE_POST');
     const live=listReferenceJobs(root).filter(row=>row.anchorId===input.anchorId);
@@ -156,8 +168,10 @@ export async function submitReferenceJob(appPath:string,root:string,userData:str
       anchorId:input.anchorId,sourceDefinitionHash:definition.sourceDefinitionHash,
       styleBibleSha:definition.bible.style_bible_sha256,styleProfileSha:definition.styleSha,
       analysisSha:definition.analysisSha,approvedScriptSha:definition.scriptSha,
-      prompt:definition.prompt,promptSha:definition.promptSha,model:config.model,
-      aspectRatio:'1:1',status:'QUEUED',createdAt:created,updatedAt:created};
+      prompt:definition.prompt,promptSha:definition.promptSha,
+      ...(definition.ownerVisualDefinitionSha?{
+        ownerVisualDefinitionSha:definition.ownerVisualDefinitionSha}:{}),
+      model:config.model,aspectRatio:'1:1',status:'QUEUED',createdAt:created,updatedAt:created};
     write(root,job);
     if(!isCurrent(root,appPath,job))return markStale(root,job);
     // Durable uncertain marker precedes the ONE paid POST, exactly as Shot G-Labs.
