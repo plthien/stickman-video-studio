@@ -1,57 +1,89 @@
-/** F24 previous-image dependency is NOT a canonical character identity. */
-import {getNativeImageGallery} from '../externalTasks.js';
+/** F24 continuation image dependencies are distinct from character identity.
+ * One verified planner snapshot per batch avoids O(N^2) Native/ledger reads.
+ * Single-target paid preflight builds a fresh snapshot before any POST. */
+import {getNativeImageGallery,readNativeDraft} from '../externalTasks.js';
 import {listGlabsJobs} from '../glabs.js';
 import {readState} from '../services.js';
 import {verifyReferenceFile} from './referencePublication.js';
-import {resolveNativeTargetBinding} from './nativeBinding.js';
+import {validateNativeBindingPayload} from './nativeBinding.js';
 import {contentHash} from './contracts.js';
+
 export interface ContinuityImage{
   sourceTargetKey:string;relation:string;path:string;sha256:string;
   mime:'image/png'|'image/jpeg'|'image/webp';
   sourceJobId:string;sourceBindingSha:string;sourceSnapshotSha:string;
   dependencySha:string;
 }
+export function createContinuityResolver(appPath:string,root:string){
+  const state=readState(root),draft=readNativeDraft(root,state);
+  if(!draft)throw Error('IDENTITY_NATIVE_DRAFT_REQUIRED');
+  const artifact=draft.artifact as unknown as {
+    manifest:Record<string,unknown>;asset_needs:unknown[]
+  };
+  const snapshot=validateNativeBindingPayload(root,appPath,
+    artifact.manifest,artifact.asset_needs);
+  const gallery=getNativeImageGallery(appPath,root);
+  if(gallery.token!==draft.token||gallery.targets.length!==snapshot.plans.length)
+    throw Error('CONTINUITY_DRAFT_GALLERY_MISMATCH');
+  const byKey=new Map(snapshot.plans.map((plan,index)=>[plan.targetKey,{
+    ...plan,index,approvalSetSha:snapshot.identity.approvalSetSha,
+    styleBibleSha:snapshot.identity.styleBibleSha
+  }] as const));
+  const byShotLayer=new Map(snapshot.plans.map(plan=>[
+    plan.shotId+'/'+plan.layerId,plan.targetKey] as const));
+  const sourceGallery=new Map(gallery.targets.map(row=>[row.key,row] as const));
+  const jobs=listGlabsJobs(root),memo=new Map<string,ContinuityImage|null>();
+  const resolve=(key:string,visiting=new Set<string>()):ContinuityImage|null=>{
+    if(visiting.has(key))throw Error('CONTINUITY_CYCLE');
+    if(memo.has(key))return memo.get(key)!;
+    const target=byKey.get(key);
+    if(!target)throw Error('CONTINUITY_TARGET_NOT_FOUND');
+    const source=target.continuitySource;
+    if(!source){memo.set(key,null);return null;}
+    const sourceKey=byShotLayer.get(source.shot_id+'/'+source.layer_id);
+    const parent=sourceKey?byKey.get(sourceKey):undefined;
+    if(!parent||parent.index>=target.index)
+      throw Error('CONTINUITY_SOURCE_NOT_EARLIER');
+    const next=new Set(visiting);next.add(key);
+    const inherited=resolve(sourceKey!,next);
+    const galleryRow=sourceGallery.get(sourceKey!);
+    if(!galleryRow?.fulfilled||!galleryRow.boundSha256)
+      throw Error('CONTINUITY_SOURCE_NOT_READY');
+    const job=jobs.find(job=>job.projectId===state.project.id&&
+      job.targetKey===sourceKey&&job.token===gallery.token&&
+      job.status==='APPROVED'&&job.approved?.path===galleryRow.boundPath&&
+      job.approved?.sha256===galleryRow.boundSha256&&
+      job.targetCreativeSha256===galleryRow.creativeFingerprint&&
+      job.identityTargetBindingSha===parent.targetBindingSha&&
+      job.identityApprovalSetSha===parent.approvalSetSha&&
+      job.identityStyleBibleSha===parent.styleBibleSha);
+    if(!job)throw Error('CONTINUITY_APPROVED_SOURCE_JOB_REQUIRED');
+    const media=state.media?.find(m=>m.kind==='image'&&
+      m.path===galleryRow.boundPath&&m.sha256===galleryRow.boundSha256&&
+      m.shotId===galleryRow.shotId&&m.layerId===galleryRow.layerId&&
+      m.rights?.trim()&&m.rights===job.approved?.rights);
+    if(!media)throw Error('CONTINUITY_SOURCE_RIGHTS_MISSING');
+    const checked=verifyReferenceFile(root,galleryRow.boundPath,
+      galleryRow.boundSha256);
+    const base={sourceTargetKey:sourceKey!,relation:source.relation,
+      path:galleryRow.boundPath,sha256:checked.sha,mime:checked.mime,
+      sourceJobId:job.id,sourceBindingSha:parent.targetBindingSha,
+      sourceSnapshotSha:parent.upstreamSnapshotSha,
+      parentDependencySha:inherited?.dependencySha??null};
+    const result:ContinuityImage={...base,dependencySha:contentHash(base)};
+    memo.set(key,result);return result;
+  };
+  return{
+    getBinding:(key:string)=>{
+      const value=byKey.get(key);
+      if(!value)throw Error('IDENTITY_NATIVE_TARGET_NOT_CURRENT');
+      return value;
+    },
+    resolve,
+    targetCount:snapshot.plans.length
+  };
+}
 export function resolveApprovedPreviousImage(appPath:string,root:string,
   targetKey:string,visited=new Set<string>()):ContinuityImage|null{
-  if(visited.has(targetKey))throw Error('CONTINUITY_CYCLE');
-  const seen=new Set(visited);seen.add(targetKey);
-  const target=resolveNativeTargetBinding(root,appPath,targetKey);
-  if(!target.continuitySource)return null;
-  const gallery=getNativeImageGallery(appPath,root);
-  const targetIndex=gallery.targets.findIndex(row=>row.key===targetKey);
-  const sourceIndex=gallery.targets.findIndex(row=>
-    row.shotId===target.continuitySource?.shot_id&&
-    row.layerId===target.continuitySource?.layer_id);
-  if(sourceIndex<0||sourceIndex>=targetIndex)
-    throw Error('CONTINUITY_SOURCE_NOT_EARLIER');
-  const source=gallery.targets[sourceIndex];
-  if(!source.fulfilled||!source.boundSha256)
-    throw Error('CONTINUITY_SOURCE_NOT_READY');
-  const current=resolveNativeTargetBinding(root,appPath,source.key);
-  // A continuity chain is valid only if ALL preceding approved sources remain
-  // valid. Recursion is bounded by earlier-shot ordering.
-  if(current.continuitySource)
-    resolveApprovedPreviousImage(appPath,root,source.key,seen);
-  const accepted=listGlabsJobs(root).find(job=>job.projectId===readState(root).project.id&&
-    job.targetKey===source.key&&job.token===gallery.token&&
-    job.status==='APPROVED'&&job.approved?.path===source.boundPath&&
-    job.approved.sha256===source.boundSha256&&
-    job.targetCreativeSha256===source.creativeFingerprint&&
-    job.identityTargetBindingSha===current.targetBindingSha&&
-    job.identityStyleBibleSha===current.styleBibleSha&&
-    job.approved?.rights===readState(root).media?.find(m=>
-      m.path===source.boundPath&&m.sha256===source.boundSha256&&
-      m.shotId===source.shotId&&m.layerId===source.layerId)?.rights&&
-    job.identityApprovalSetSha===current.approvalSetSha);
-  if(!accepted)throw Error('CONTINUITY_APPROVED_SOURCE_JOB_REQUIRED');
-  const ledger=readState(root).media?.find(m=>m.kind==='image'&&
-    m.path===source.boundPath&&m.sha256===source.boundSha256&&m.rights?.trim()&&
-    m.shotId===source.shotId&&m.layerId===source.layerId);
-  if(!ledger)throw Error('CONTINUITY_SOURCE_RIGHTS_MISSING');
-  const checked=verifyReferenceFile(root,source.boundPath,source.boundSha256);
-  const base={sourceTargetKey:source.key,relation:target.continuitySource.relation,
-    path:source.boundPath,sha256:checked.sha,mime:checked.mime,
-    sourceJobId:accepted.id,sourceBindingSha:current.targetBindingSha,
-    sourceSnapshotSha:current.upstreamSnapshotSha};
-  return{...base,dependencySha:contentHash(base)};
+  return createContinuityResolver(appPath,root).resolve(targetKey,visited);
 }
