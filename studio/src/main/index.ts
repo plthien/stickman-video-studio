@@ -36,13 +36,13 @@ const glabsPolling=createGlabsAutoPolling({
         win.webContents.send('glabs:jobChanged',{projectId,job});
     }
   },
-  onError:(projectId,jobId,error)=>{
-    // A failed read-only GET is never replayed as a paid POST. Send the
-    // verified persisted ingestion diagnostic, not exception/secret contents.
-    console.warn('[glabs-auto-poll]',projectId,jobId,error instanceof Error?error.message:String(error));
+  onError:(projectId,jobId,_error)=>{
+    // Status/result/file GET failures broadcast the verified durable job.
+    // Never log exception strings, signed URLs or provider credentials.
     try{
       const job=readGlabsJob(rootFor(projectId),jobId);
       if(!job.lastSyncError)return;
+      console.warn('[glabs-auto-poll] sync code',job.id,job.lastSyncError.code);
       for(const win of BrowserWindow.getAllWindows()){
         if(!win.isDestroyed()&&!win.webContents.isDestroyed())
           win.webContents.send('glabs:jobChanged',{projectId,job});
