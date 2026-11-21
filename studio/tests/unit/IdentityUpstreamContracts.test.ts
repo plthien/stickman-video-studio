@@ -83,8 +83,9 @@ describe('F24 upstream source-grounded contract gates',()=>{
     expect(prompt.aspect_ratio).toBe('1:1');
     expect(prompt.prompt).toMatch(/Upper-left: front close-up/);
     expect(prompt.prompt).toMatch(/Lower-right: back full body/);
-    const group=analysis();
-    group.continuity_catalog.characters[0].entity_kind='human_group';
+    const group={...analysis(),continuity_catalog:{characters:[
+      {...entry(),entity_kind:'human_group' as const}
+    ]}};
     const sheet=compileStyleBible(group,script,style);
     const groupPrompt=referencePromptForCharacter(sheet,'char_001',style);
     expect(groupPrompt.prompt).toContain('ONE GROUP OVERVIEW');
