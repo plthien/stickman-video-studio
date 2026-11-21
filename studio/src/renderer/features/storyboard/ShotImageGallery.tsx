@@ -165,7 +165,7 @@ export function ShotImageGallery({
           card.spec?.state==='READY'&&!active&&!unknown&&
           (!job||job.status!=='APPROVED');
         const needsSync=Boolean(job?.providerTaskId&&job.lastSyncError&&
-          !['VALIDATED','APPROVED','UNKNOWN'].includes(job.status));
+          ['SUBMITTED','RUNNING','DOWNLOADED'].includes(job.status));
         const statusUnavailable=Boolean(needsSync&&!job?.providerCompletedAt&&
           job?.lastSyncError?.stage==='provider');
         const ingestionBlocked=Boolean(needsSync&&job?.providerCompletedAt&&active);
