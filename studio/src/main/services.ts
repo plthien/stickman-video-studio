@@ -204,8 +204,10 @@ export function safeImportedFile(root: string, source: string, kind: 'image' | '
   const projectRoot = assertLocalRoot(root); const real = fs.realpathSync(source);
   if(fs.lstatSync(source).isSymbolicLink()||real.toLowerCase()!==path.resolve(source).toLowerCase())throw new Error('Imported source cannot use a symlink or junction.');
   noExecutable(real);
-  const allowed = kind === 'image' ? /\.(?:png|jpe?g)$/i : /\.(?:wav|mp3|m4a|aac|ogg|flac)$/i; if (!allowed.test(real) || !fs.statSync(real).isFile() || fs.statSync(real).size > 512 * 1024 * 1024) throw new Error(`Unsupported ${kind} file.`);
-  const head=fs.readFileSync(real).subarray(0,12);if(kind==='image'&&!((head[0]===0x89&&head.toString('ascii',1,4)==='PNG')||(head[0]===0xff&&head[1]===0xd8&&head[2]===0xff)))throw new Error('Image extension does not match PNG/JPEG bytes.');if(kind==='sfx'&&!['RIFF','ID3','fLaC','OggS'].includes(head.toString('ascii',0,4))&&!(head[0]===0xff&&(head[1]&0xe0)===0xe0))throw new Error('Audio extension does not match supported audio bytes.');
+  const allowed = kind === 'image' ? /\.(?:png|jpe?g|webp)$/i : /\.(?:wav|mp3|m4a|aac|ogg|flac)$/i; if (!allowed.test(real) || !fs.statSync(real).isFile() || fs.statSync(real).size > 512 * 1024 * 1024) throw new Error(`Unsupported ${kind} file.`);
+  const head=fs.readFileSync(real).subarray(0,12);if(kind==='image'&&!((head[0]===0x89&&head.toString('ascii',1,4)==='PNG')||(head[0]===0xff&&head[1]===0xd8&&head[2]===0xff)||
+    (head.toString('ascii',0,4)==='RIFF'&&head.toString('ascii',8,12)==='WEBP')))
+    throw new Error('Image extension does not match PNG/JPEG/WebP bytes.');if(kind==='sfx'&&!['RIFF','ID3','fLaC','OggS'].includes(head.toString('ascii',0,4))&&!(head[0]===0xff&&(head[1]&0xe0)===0xe0))throw new Error('Audio extension does not match supported audio bytes.');
   const dir = path.join(projectRoot, 'assets', kind === 'image' ? 'images' : 'sfx');
   resolveProjectFile(projectRoot,path.relative(projectRoot,dir));
   fs.mkdirSync(dir,{recursive:true});
