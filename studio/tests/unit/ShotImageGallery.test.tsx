@@ -180,6 +180,93 @@ describe('F09 Native Shot full-card gallery without selecting Layers',()=>{
     expect(screen.queryByLabelText('Owner-confirmed rights/source')).not.toBeInTheDocument();
     expect(screen.queryByText(/Layer Inspector/)).not.toBeInTheDocument();
   });
+  it('F20-UI-01 VALIDATED unbound candidate offers approve and explicit paid regeneration from its Shot card',()=>{
+    const generate=vi.fn(),approve=vi.fn();
+    const spec={targetKey:cards[0].target.key,shotId:'shot-1',layerId:'portrait',
+      state:'READY',prompt:'Verified source-grounded image instructions',references:[],
+      draftIdentity:{token:'token-A',creativeFingerprint:'a'.repeat(64)},
+      styleProfileRef:{id:'B1',sha256:'b'.repeat(64)}
+    } as NonNullable<GalleryCard['spec']>;
+    const old={...cards[0],spec};
+    const original=old.job!;
+    const view=render(<ShotImageGallery projectId="A" shotId="shot-1"
+      cards={[old]} urls={{[original.id]:'studio-media://A/original.png'}}
+      previewIdentity={job=>job.id+':'+job.staged?.sha256} previewReady={{}}
+      previewErrors={{}} busy={false} selectedIds={new Set()} onLoaded={vi.fn()}
+      onSelect={vi.fn()} onGenerate={generate} onApprove={approve} onCheck={vi.fn()}
+      onRetryPreview={vi.fn()} onInspectUnknown={vi.fn()}/>);
+    const card=screen.getByTestId('shot-image-card');
+    expect(within(card).getByRole('button',{name:'Approve Image'})).toBeDisabled();
+    const regenerate=within(card).getByRole('button',{name:'Regenerate Image (Paid) · portrait'});
+    expect(regenerate).toBeEnabled();
+    fireEvent.load(within(card).getByRole('img'));
+    expect(generate).not.toHaveBeenCalled();
+    fireEvent.click(regenerate);
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(generate).toHaveBeenCalledWith('image:0:portrait');
+    expect(approve).not.toHaveBeenCalled();
+    const newer={...original,id:'new-validated',staged:{...original.staged!,sha256:'f'.repeat(64)}};
+    view.rerender(<ShotImageGallery projectId="A" shotId="shot-1"
+      cards={[{...old,job:newer,history:[newer,original]}]}
+      urls={{[newer.id]:'studio-media://A/new.png'}}
+      previewIdentity={job=>job.id+':'+job.staged?.sha256}
+      previewReady={{[original.id]:original.id+':'+original.staged?.sha256}}
+      previewErrors={{}} busy={false} selectedIds={new Set()} onLoaded={vi.fn()}
+      onSelect={vi.fn()} onGenerate={generate} onApprove={approve} onCheck={vi.fn()}
+      onRetryPreview={vi.fn()} onInspectUnknown={vi.fn()}/>);
+    expect(screen.getByRole('button',{name:'Approve Image'})).toBeDisabled();
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+  it('F20-UI-02 currently bound APPROVED output cannot be replaced via ordinary Generate',()=>{
+    const original=cards[0].job!;
+    const approved:GalleryCard={...cards[0],
+      target:{...cards[0].target,fulfilled:true},
+      job:{...original,status:'APPROVED'},history:[{...original,status:'APPROVED'}],
+      currentlyBound:true};
+    render(<ShotImageGallery projectId="A" shotId="shot-1" cards={[approved]}
+      urls={{}} previewIdentity={()=>''} previewReady={{}} previewErrors={{}}
+      busy={false} selectedIds={new Set()} onLoaded={vi.fn()} onSelect={vi.fn()}
+      onGenerate={vi.fn()} onApprove={vi.fn()} onCheck={vi.fn()}
+      onRetryPreview={vi.fn()} onInspectUnknown={vi.fn()}/>);
+    expect(screen.getByText('Approved')).toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:/Regenerate|Generate Image/})).not.toBeInTheDocument();
+  });
+  it('F21/F22-UI provider status GET failures expose GET-only recovery with no paid CTA',()=>{
+    const current={...cards[0],job:{...cards[0].job!,status:'RUNNING' as const,
+      providerTaskId:'ab12cd34',syncPhase:'provider' as const,
+      lastSyncError:{stage:'provider',code:'GLABS_TRANSPORT_UNKNOWN',at:'2026-11-21T00:00:00Z'}}};
+    const check=vi.fn(),generate=vi.fn();
+    render(<ShotImageGallery projectId="A" shotId="shot-1" cards={[current]}
+      urls={{}} previewIdentity={()=>''} previewReady={{}} previewErrors={{}}
+      busy={false} selectedIds={new Set()} onLoaded={vi.fn()} onSelect={vi.fn()}
+      onGenerate={generate} onApprove={vi.fn()} onCheck={check}
+      onRetryPreview={vi.fn()} onInspectUnknown={vi.fn()}/>);
+    const card=screen.getByTestId('shot-image-card');
+    expect(card).toHaveTextContent('Provider status unavailable');
+    expect(within(card).getByTestId('glabs-sync-evidence')).toHaveTextContent('ab12cd34');
+    expect(within(card).getByTestId('glabs-sync-evidence')).toHaveTextContent('GLABS_TRANSPORT_UNKNOWN');
+    expect(within(card).queryByRole('button',{name:/Regenerate Image/})).not.toBeInTheDocument();
+    fireEvent.click(within(card).getByRole('button',{name:'Retry Sync (GET only)'}));
+    expect(check).toHaveBeenCalledWith(current.job!.id);
+    expect(generate).not.toHaveBeenCalled();
+  });
+  it('F21-UI completed ingestion failure retains read-only Retry Sync, blocks paid fallback',()=>{
+    const current={...cards[0],job:{...cards[0].job!,status:'DOWNLOADED' as const,
+      providerTaskId:'ab12cd34',providerCompletedAt:'2026-11-21T00:00:00Z',
+      lastSyncError:{stage:'download',code:'GLABS_DECLARED_MIME_UNSUPPORTED',at:'2026-11-21T00:00:01Z'}}};
+    const check=vi.fn(),generate=vi.fn();
+    render(<ShotImageGallery projectId="A" shotId="shot-1" cards={[current]}
+      urls={{}} previewIdentity={()=>''} previewReady={{}} previewErrors={{}}
+      busy={false} selectedIds={new Set()} onLoaded={vi.fn()} onSelect={vi.fn()}
+      onGenerate={generate} onApprove={vi.fn()} onCheck={check}
+      onRetryPreview={vi.fn()} onInspectUnknown={vi.fn()}/>);
+    const card=screen.getByTestId('shot-image-card');
+    expect(within(card).getByTestId('glabs-ingestion-regenerate-blocked'))
+      .toHaveTextContent('Paid regeneration blocked');
+    expect(within(card).getByRole('button',{name:'Retry Sync (GET only)'})).toBeEnabled();
+    expect(within(card).queryByRole('button',{name:/Regenerate Image/})).not.toBeInTheDocument();
+    expect(generate).not.toHaveBeenCalled();
+  });
   it('F09-03 expands a current candidate without switching Shot and keeps details collapsed',()=>{
     render(<Harness/>);
     const card=screen.getAllByTestId('shot-image-card')[3];
