@@ -15,6 +15,8 @@ import {approveCandidate,publishApprovalSet} from '../../src/main/identity/refer
 import {currentApprovedSource} from '../../src/main/identity/identityWorkflow';
 import {loadImageStyleProfile} from '../../src/main/imagePreparation';
 import {assertPublishedIdentityCurrent} from '../../src/main/identity/finalGate';
+import {readApprovedNativeIdentity} from '../../src/main/identity/nativeBinding';
+import {readIdentityWorkflow} from '../../src/main/identity/identityWorkflow';
 import type {ReferenceCandidate} from '../../src/main/identity/referencePublication';
 
 const dirs:string[]=[];
@@ -146,6 +148,18 @@ describe('F24 Native canonical bytes, billing gate and final source receipt',()=
       Array<{data:string}>)[0].data.split(',')[1]);
     expect(encoded[0]).toBe(encoded[1]);
     expect(sha(Buffer.from(encoded[0],'base64'))).toBe(ref.sha256);
+  });
+  it('U06/N08 tampered independent Analysis review digest cannot authorize Native image references',()=>{
+    const {root}=setup();
+    const verified=readApprovedNativeIdentity(root,appPath);
+    expect(verified.anchors[0].charId).toBe('char_001');
+    const altered=readIdentityWorkflow(root);
+    altered.analysisApproved!.reviewSha256='0'.repeat(64);
+    atomicJson(path.join(root,'.studio/identity/workflow-v1.json'),altered);
+    expect(()=>readApprovedNativeIdentity(root,appPath))
+      .toThrow('IDENTITY_NATIVE_ANALYSIS_STALE');
+    expect(()=>prepareNativeImages(appPath,root))
+      .toThrow('IDENTITY_NATIVE_ANALYSIS_STALE');
   });
   it('N08 direct manual paid POST without prepared exact Native identity cannot bypass F24',async()=>{
     const {root}=setup(),accountRoot=account(),{posts}=fakeProvider();
