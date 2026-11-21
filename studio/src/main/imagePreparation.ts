@@ -260,7 +260,15 @@ function withUpstreamIdentity(appPath:string,root:string,item:ImageJobSpec):Imag
     if(new Set(canonical.map(anchor=>anchor.sha256)).size!==canonical.length)
       throw Error('CHARACTER_REFERENCE_IDENTITY_COLLISION');
     const mandatory=[...canonical.map(anchor=>anchor.path),...(previous?[previous.path]:[])];
-    const ordered=[...lockedStyle,...mandatory,...supplements.filter(path=>
+    // A canonical image and previous frame may have different project paths
+    // but identical verified pixels. Send those bytes only once; retain BOTH
+    // provenance branches in the frozen binding digest below. Never merge two
+    // distinct character IDs even when their file SHA accidentally collides.
+    const duplicatePrevious=Boolean(previous&&
+      canonical.some(anchor=>anchor.sha256===previous.sha256));
+    const uniqueRequired=[...canonical.map(anchor=>anchor.path),
+      ...(previous&&!duplicatePrevious?[previous.path]:[])];
+    const ordered=[...lockedStyle,...uniqueRequired,...supplements.filter(path=>
       !mandatory.includes(path))];
     const paths=[...new Set(ordered)];
     if(paths.length>8)throw Error('REFERENCE_BUDGET_EXCEEDED: '+paths.length+'/8');
