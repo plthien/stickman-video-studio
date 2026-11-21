@@ -41,9 +41,6 @@ const hash=(value:unknown)=>sha(JSON.stringify(value));
 const hex=(value:string)=>/^[a-f0-9]{64}$/.test(value);
 const now=()=>new Date().toISOString();
 const same=(a:unknown,b:unknown)=>JSON.stringify(a)===JSON.stringify(b);
-function ensureOwnerProject(root:string,projectId:string){
-  if(readState(root).project.id!==projectId)throw new Error('CHARACTER_PROJECT_MISMATCH');
-}
 function restoreIfMissing<T>(root:string,file:string,empty:T):T{
   if(!fs.existsSync(file))return empty;
   const value=strictJson(fs.readFileSync(file,'utf8')) as T;
@@ -214,7 +211,7 @@ export function saveTargetBinding(root:string,input:{
 }){
   const current=readTargetBindings(root),registry=readCharacterRegistry(root);
   if(input.expectedRevision!==current.revision)throw new Error('CHARACTER_BINDINGS_REVISION_CONFLICT');
-  const gallery=getNativeImageGallery(root),target=gallery.targets.find(t=>t.key===input.targetKey);
+  const gallery=getNativeImageGallery('',root),target=gallery.targets.find(t=>t.key===input.targetKey);
   if(!target||!target.creativeFingerprint||!gallery.token)
     throw new Error('CHARACTER_TARGET_CURRENT_DRAFT_REQUIRED');
   if(!Array.isArray(input.characters)||input.characters.some(c=>!validId(c))||
