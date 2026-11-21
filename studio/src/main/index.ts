@@ -16,6 +16,14 @@ import { cancelJob, nativeJob, reconcileJob } from './nativeJobs.js';
 import { importAlignedWords, importApprovedWav, longformStatus, runLongform, narrationAction } from './voiceMedia.js';
 import { projectSnapshot } from './projectSnapshot.js';
 import {createProjectStaged} from './projectCreation.js';
+import {identityWorkflowSnapshot,freezeIdentityTask,importIdentityResult,
+  approveScriptAnalysis,prepareProjectStyleBible,approveProjectStyleBible,
+  registerOwnerReference,approveOwnerReference,publishStyleBibleReferences,
+  previewIdentityUpgrade,upgradeIdentityPolicy,registerValidatedGeneratedReference,
+  readIdentityWorkflow,approveOwnerVisualDefinition} from './identity/identityWorkflow.js';
+import {listReferenceJobs,submitReferenceJob,syncReferenceJob} from './identity/referenceGeneration.js';
+import {previewReferenceSwitchImpact} from './identity/impact.js';
+import type {IdentityReviewOperation} from './identity/contracts.js';
 import { assertLocalRoot, assertMediaRelative, fileFetchUrl, mediaUrl, projectId, readState, strictJson, writeState, type NativeCommand, type Stage, type StudioState } from './services.js';
 
 if (process.env.MODE_B_STUDIO_DISABLE_GPU === '1') { app.disableHardwareAcceleration(); app.commandLine.appendSwitch('disable-gpu'); app.commandLine.appendSwitch('disable-gpu-compositing'); }
@@ -82,6 +90,56 @@ function registerIpc() {
   });
   ipcMain.handle('project:state', (_event, id: string) => { const root=rootFor(id); reconcileScriptActivation(root); return projectSnapshot(root,app.getAppPath()); });
   ipcMain.handle('project:saveBrief', (_event, id: string, brief: StudioState['brief'] & { title: string }) => { const root = rootFor(id), state = readState(root); state.project.title = brief.title.trim(); state.brief = { topic: brief.topic, language: brief.language, ratio: '9:16', targetDuration: brief.targetDuration, audience: brief.audience, purpose: brief.purpose }; state.project.updatedAt = new Date().toISOString(); writeState(root, state); saveRecent(state.project); return projectSnapshot(root,app.getAppPath()); });
+  // F24 upstream uses a separate typed identity workflow; never Stage='native'.
+  ipcMain.handle('identity:snapshot',(_event,id:string)=>
+    identityWorkflowSnapshot(rootFor(id),app.getAppPath()));
+  ipcMain.handle('identity:previewUpgrade',(_event,id:string)=>
+    previewIdentityUpgrade(rootFor(id)));
+  ipcMain.handle('identity:upgrade',(_event,id:string,input:{
+    impactSha256:string;ownerConfirmed:true
+  })=>upgradeIdentityPolicy(rootFor(id),input));
+  ipcMain.handle('identity:freeze',(_event,id:string,operation:IdentityReviewOperation,
+    revision:number)=>freezeIdentityTask(rootFor(id),operation,revision));
+  ipcMain.handle('identity:importResult',(_event,id:string,result:string,revision:number)=>
+    importIdentityResult(rootFor(id),result,revision));
+  ipcMain.handle('identity:approveAnalysis',(_event,id:string,revision:number)=>
+    approveScriptAnalysis(rootFor(id),revision));
+  ipcMain.handle('identity:prepareBible',(_event,id:string,revision:number)=>
+    prepareProjectStyleBible(rootFor(id),app.getAppPath(),revision));
+  ipcMain.handle('identity:approveBible',(_event,id:string,revision:number)=>
+    approveProjectStyleBible(rootFor(id),app.getAppPath(),revision,true));
+  ipcMain.handle('identity:approveVisualDefinition',(_event,id:string,input:{
+    expectedRevision:number;anchorId:string;provenance:'SCRIPT_AUTHOR'|'OWNER_BRIEF';
+    evidence:string;traits:string[];ownerInspected:true
+  })=>approveOwnerVisualDefinition(rootFor(id),app.getAppPath(),input));
+  ipcMain.handle('identity:registerOwnerReference',(_event,id:string,input:{
+    expectedRevision:number;anchorId:string;relativePath:string;ownerSource:string
+  })=>registerOwnerReference(rootFor(id),app.getAppPath(),input,decodeGlabsImage));
+  ipcMain.handle('identity:approveReference',(_event,id:string,input:{
+    expectedRevision:number;candidateId:string;ownerInspected:true
+  })=>approveOwnerReference(rootFor(id),app.getAppPath(),input,decodeGlabsImage));
+  ipcMain.handle('identity:previewReferenceImpact',(_event,id:string,selectedIds:string[])=>
+    previewReferenceSwitchImpact(rootFor(id),selectedIds));
+  ipcMain.handle('identity:publishReferences',(_event,id:string,revision:number,
+    selectedIds:string[],reviewedImpactSha256?:string)=>publishStyleBibleReferences(rootFor(id),app.getAppPath(),
+      revision,selectedIds,decodeGlabsImage,reviewedImpactSha256));
+  ipcMain.handle('identity:referenceJobs',(_event,id:string)=>
+    listReferenceJobs(rootFor(id)));
+  ipcMain.handle('identity:generateReference',(_event,id:string,input:{
+    anchorId:string;authorized:true;regenerate?:boolean;acknowledgeUnknown?:boolean
+  })=>submitReferenceJob(app.getAppPath(),rootFor(id),app.getPath('userData'),
+    safeStorage,input));
+  ipcMain.handle('identity:syncReference',async(_event,id:string,jobId:string)=>{
+    const root=rootFor(id);
+    const job=await syncReferenceJob(app.getAppPath(),root,app.getPath('userData'),
+      safeStorage,jobId,decodeGlabsImage);
+    if(job.status==='VALIDATED')
+      registerValidatedGeneratedReference(root,app.getAppPath(),{
+        expectedRevision:readIdentityWorkflow(root).revision,job
+      },decodeGlabsImage);
+    return job;
+  });
+
   ipcMain.handle('storyboard:gallery',(_event,id:string)=>{
     const root=rootFor(id),inventory=getNativeImageGallery(app.getAppPath(),root);
     const style=readState(root).project.style;

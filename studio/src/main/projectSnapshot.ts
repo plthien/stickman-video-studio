@@ -5,6 +5,8 @@ import {suggestedCorrectScope} from './externalLifecycle.js';
 import {readNativeDraft} from './externalTasks.js';
 import {verifyPersistedNativeEvidence,type NativeVerificationAdapter} from './nativeEvidence.js';
 import {assertLocalRoot,readState,resolveProjectFile,sha,strictJson} from './services.js';
+import {identityWorkflowSnapshot} from './identity/identityWorkflow.js';
+import {assertPublishedIdentityCurrent} from './identity/finalGate.js';
 
 const finite=(value:unknown,label:string)=>{if(typeof value!=='number'||!Number.isFinite(value))throw new Error(`ERROR: invalid native ${label}.`);return value};
 const text=(value:unknown,label:string)=>{if(typeof value!=='string'||!value.trim())throw new Error(`ERROR: invalid native ${label}.`);return value};
@@ -49,7 +51,31 @@ export async function projectSnapshot(root:string,appPath:string,verifier?:Nativ
     (item.value as {artifact_sha256?:string})?.artifact_sha256===nativeDraft.sha256)
     .sort((a,b)=>b.createdAt.localeCompare(a.createdAt)):[],latestDraftReview=draftReports[0];
   const currentFindings=(latestDraftReview?.value as {findings?:Array<{status:string}>}|undefined)?.findings??[];
-  return{...state,manifest,projection:{shots,duration,tracks,captionReady,captionStatus,demo:false as const},job,
+  let identityReadiness:{policy:'legacy'|'v1';status:string;reason:string|null}={
+    policy:state.identityPolicy??'legacy',status:'LEGACY',reason:null
+  };
+  if(state.identityPolicy==='v1'){
+    try{
+      const upstream=identityWorkflowSnapshot(projectRoot,appPath);
+      if(upstream.readiness!=='REFERENCES_PUBLISHED'){
+        identityReadiness={policy:'v1',status:'UPSTREAM_NOT_READY',reason:upstream.readiness};
+      }else if(state.external.native){
+        const receipt=assertPublishedIdentityCurrent(projectRoot,appPath,'SAMPLE');
+        identityReadiness=receipt?.scope==='SAMPLE'?
+          {policy:'v1',status:'SAMPLE_ONLY',
+            reason:'Approved identity is verified only for the confirmed sample window; full render remains blocked'}:
+          {policy:'v1',status:'CURRENT',reason:null};
+      }else identityReadiness={policy:'v1',status:'NATIVE_REBUILD_REQUIRED',
+        reason:'Native has not been confirmed under the current approved identity set'};
+    }catch(error){
+      const reason=error instanceof Error?error.message:'IDENTITY_UNKNOWN_ERROR';
+      // A valid but stale lineage is recoverable. Tampering/corruption is NOT.
+      if(/TAMPER|CORRUPT|SYMLINK|PATH_ESCAPE|INVALID_SIGNATURE|JSON_DUPLICATE/.test(reason))
+        throw error;
+      identityReadiness={policy:'v1',status:'IDENTITY_STALE',reason};
+    }
+  }
+  return{...state,identityReadiness,manifest,projection:{shots,duration,tracks,captionReady,captionStatus,demo:false as const},job,
     nativeDraftRecovery,
     nativeDraft:nativeDraft?{context:'DRAFT' as const,token:nativeDraft.token,authorTaskId:nativeDraft.authorTaskId,
       revision:nativeDraft.revision,artifactSha256:nativeDraft.sha256,

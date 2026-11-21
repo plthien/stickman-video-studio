@@ -1181,7 +1181,7 @@ export function stageLifecycleResult(appPath:string,root:string,stage:Stage,oper
         throw new Error('SCRIPT_CORRECT_NO_OP: unresolved findings require an actual authorized Script change.');
     }else{
       const previous=current.value as {manifest:Record<string,unknown>;shot_ledger:unknown;sound_script:unknown;asset_needs:unknown};
-      validateManifest(state,root,corrected);
+      validateManifest(state,root,corrected,appPath);
       rejectNativeUnsafePaths(corrected);
       validateLocks(stage,previous,corrected,task.editableIds??[],task.editablePaths??[]);
     }
@@ -1288,7 +1288,7 @@ async function publishNativeCorrection(appPath:string,root:string,pending:Record
       throw new Error('STALE: native creative state changed during auxiliary publication.');
     const prior=current.external.native;
     if(!prior)throw new Error('REVIEW_REQUIRED: missing native authoring baseline.');
-    validateManifest(current,root,payload.artifact as unknown as Record<string,unknown>);
+    validateManifest(current,root,payload.artifact as unknown as Record<string,unknown>,appPath);
     validateLocks('native',initialArtifact.value,payload.artifact,task.editableIds??[],task.editablePaths??[]);
     const revision=prior.revision+1;
     const existing=prior.artifact as Record<string,unknown>;
