@@ -9,6 +9,7 @@ import {atomicJson,readState,resolveProjectFile,strictJson,sha} from '../service
 import {contentHash,type StyleBible} from './contracts.js';
 import {compileStyleBible,referencePromptForCharacter} from './styleBible.js';
 import {currentApprovedSource,readIdentityWorkflow,identityPolicy} from './identityWorkflow.js';
+import {verifyIndependentReview} from './scriptAnalysis.js';
 import {loadImageStyleProfile} from '../imagePreparation.js';
 import type {IdentityDecoder} from './referencePublication.js';
 
@@ -60,6 +61,9 @@ function ready(root:string,appPath:string,anchorId:string):{
   const journal=readIdentityWorkflow(root),source=currentApprovedSource(root);
   const analysis=journal.draftAnalysis,approved=journal.analysisApproved;
   if(!analysis||!approved||approved.sha256!==contentHash(analysis)||
+    !journal.independentReview||
+    !verifyIndependentReview(journal.independentReview,analysis)||
+    approved.reviewSha256!==contentHash(journal.independentReview)||
     analysis.source_script_sha256!==source.sha256||
     analysis.source_authoring_sha256!==contentHash(source.authoring))
     throw Error('REFERENCE_SCRIPT_ANALYSIS_NOT_CURRENT');
