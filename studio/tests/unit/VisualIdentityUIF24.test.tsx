@@ -178,7 +178,7 @@ describe('F24 owner-only registry controls and F25 continuity-review integration
     expect(api.glabsGenerate).not.toHaveBeenCalled();
     expect(api.glabsApprove).not.toHaveBeenCalled();
   });
-  it('VCR-21/UI-05 strict continuity blocked target does not expose a paid generation CTA',()=>{
+  it('VCR-21/UI-05 strict continuity blocked target does not expose a paid generation CTA',async()=>{
     install();
     const blocked:GalleryCard={...candidate,
       spec:{...spec,state:'BLOCKED',reason:'CONTINUITY_SOURCE_NOT_READY',
@@ -194,7 +194,7 @@ describe('F24 owner-only registry controls and F25 continuity-review integration
     expect(screen.queryByRole('button',{name:/Generate Image/})).not.toBeInTheDocument();
     const card=screen.getByTestId('shot-image-card');
     fireEvent.click(within(card).getByText(/Prompt · references · candidate history/));
-    expect(within(card).getByTestId('character-card-binding'))
+    expect(await within(card).findByTestId('character-card-binding'))
       .toHaveTextContent('CONTINUITY_SOURCE_NOT_READY');
   });
 });
