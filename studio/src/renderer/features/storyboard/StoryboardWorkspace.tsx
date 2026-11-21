@@ -711,7 +711,7 @@ export function StoryboardWorkspace(){
         <div className="info">{prepared?.shotCount??shotIds.length} Shots · {prepared?.uniquePaths??new Set(imageTargets.map(item=>item.path)).size} distinct paths</div>
       </details>
     </Card>
-    {id&&native?.nativeDraft&&<CharacterRegistryPanel key={id} projectId={id}
+    {id&&native?.nativeDraft&&window.studio?.visualIdentitySnapshot&&<CharacterRegistryPanel key={id} projectId={id}
       onChanged={()=>refresh()} onSnapshot={setIdentitySnapshot}/>}
     <Card>
       <CardHeader title={shotId?shotId+' · Shot Image Gallery':'Shot Image Gallery'}/>
