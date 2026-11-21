@@ -12,6 +12,7 @@ import {readCharacterRegistry,readTargetBindings,registerCharacter,addCharacterR
   approveCharacter,setStrictCharacterMode,archiveCharacter,saveTargetBinding,previewCharacterImpact} from './visualIdentityRegistry.js';
 import {characterCoverage,resolveVisualReferences} from './visualReferenceResolver.js';
 import {attestVisualCandidate,attestBoundVisual,readVisualReviews} from './visualIdentityReview.js';
+import {reconcileContinuityOverlay} from './visualIdentityOverlay.js';
 import { getCaptionReview, draftCaptionReview, approveCaptionReview,autoCaptionReview } from './captionReview.js';
 import {glabsSettings,saveGlabsSettings,glabsCredentialStatus,saveGlabsKey,clearGlabsKey,glabsProbe,reconcileGlabsJobs,readGlabsJob,submitGlabsImage,pollGlabsImage,approveGlabsImage,cancelQueuedGlabsImage,type GLabsSettings,type ImageRequest} from './glabs.js';
 import {createGlabsAutoPolling} from './glabsAutoPolling.js';
@@ -98,7 +99,8 @@ function registerIpc() {
   ipcMain.handle('visualIdentity:snapshot',(_event,id:string)=>{
     const root=rootFor(id),coverage=characterCoverage(root),registry=readCharacterRegistry(root),
       bindings=readTargetBindings(root),reviews=readVisualReviews(root);
-    return{registry,bindings,coverage,reviews};
+    const overlay=registry.strict?reconcileContinuityOverlay(root):null;
+    return{registry,bindings,coverage,reviews,overlay};
   });
   ipcMain.handle('visualIdentity:createCharacter',(_event,id:string,input:Parameters<typeof registerCharacter>[1])=>
     registerCharacter(rootFor(id),input));
