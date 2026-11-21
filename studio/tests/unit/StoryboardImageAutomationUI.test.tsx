@@ -121,7 +121,7 @@ describe('Storyboard P1: real renderer queue and paid-action isolation',()=>{
     render(<AppStateProvider><Harness/></AppStateProvider>);
     expect(await screen.findByRole('button',{name:'Review UNKNOWN'})).toBeEnabled();
     expect(screen.queryByRole('button',{name:'Generate Image · layer-a'})).not.toBeInTheDocument();
-    expect(screen.queryByRole('button',{name:'Regenerate Image · layer-a'})).not.toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:'Regenerate Image (Paid) · layer-a'})).not.toBeInTheDocument();
     expect(generate).not.toHaveBeenCalled();
   });
   it('UI-07 Regenerate Image itself authorizes exactly one new attempt without a redundant browser confirmation',async()=>{
@@ -137,7 +137,7 @@ describe('Storyboard P1: real renderer queue and paid-action isolation',()=>{
     const confirm=vi.fn(()=>false);
     vi.stubGlobal('confirm',confirm);
     render(<AppStateProvider><Harness/></AppStateProvider>);
-    const button=await screen.findByRole('button',{name:'Regenerate Image · layer-a'});
+    const button=await screen.findByRole('button',{name:'Regenerate Image (Paid) · layer-a'});
     await waitFor(()=>expect(button).toBeEnabled());
     fireEvent.click(button);
     await waitFor(()=>expect(generate).toHaveBeenCalledTimes(1));
@@ -145,6 +145,33 @@ describe('Storyboard P1: real renderer queue and paid-action isolation',()=>{
       targetKey:'image:0:layer-a',authorized:true,regenerate:true,acknowledgeUnknown:false
     }));
     expect(confirm).not.toHaveBeenCalled();
+  });
+  it('F20-INT-01 VALIDATED unapproved current image regenerates on one explicit owner click',async()=>{
+    const {generate}=install();
+    const original=window.studio!;
+    const old={id:'validated-kite',projectId:'A',token:'token-A',targetKey:'image:0:layer-a',
+      shotId:'sh-a',layerId:'layer-a',targetPath:'assets/images/a.png',
+      targetCreativeSha256:'a'.repeat(64),styleProfileId:'B2',styleProfileSha256:'a'.repeat(64),
+      status:'VALIDATED',model:'nano_banana_2',aspectRatio:'9:16',
+      staged:{path:'assets/images/kite.png',sha256:'e'.repeat(64),width:768,height:1365}};
+    Object.defineProperty(window,'studio',{configurable:true,value:{...original,
+      glabsJobs:async()=>[old],mediaUrl:async()=> 'studio-media://A/kite.png'
+    }});
+    render(<AppStateProvider><Harness/></AppStateProvider>);
+    const card=(await screen.findAllByTestId('shot-image-card'))[0];
+    expect(await screen.findByRole('button',{name:'Regenerate Image (Paid) · layer-a'}))
+      .toBeEnabled();
+    expect(screen.getByRole('button',{name:'Approve Image'})).toBeDisabled();
+    expect(generate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button',{name:'Refresh Images'}));
+    await waitFor(()=>expect(card).toHaveTextContent('Ready to approve'));
+    expect(generate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button',{name:'Regenerate Image (Paid) · layer-a'}));
+    await waitFor(()=>expect(generate).toHaveBeenCalledTimes(1));
+    expect(generate).toHaveBeenCalledWith('A',expect.objectContaining({
+      targetKey:'image:0:layer-a',authorized:true,regenerate:true,acknowledgeUnknown:false,
+      preparedFingerprint:'a'.repeat(64),model:'nano_banana_2',aspectRatio:'9:16',references:[]
+    }));
   });
   it('UI-08 failed ratio validation keeps the generated preview visible while hiding diagnostics by default',async()=>{
     const {generate}=install();
@@ -167,7 +194,7 @@ describe('Storyboard P1: real renderer queue and paid-action isolation',()=>{
       .toHaveAttribute('src','studio-media://test/glabs-image.png'));
     expect(preview.querySelector('img')).toHaveStyle({objectFit:'contain'});
     expect(preview.querySelector('details')).not.toHaveAttribute('open');
-    const retry=screen.getByRole('button',{name:'Regenerate Image · layer-a'});
+    const retry=screen.getByRole('button',{name:'Regenerate Image (Paid) · layer-a'});
     expect(retry).toBeEnabled();
     expect(generate).not.toHaveBeenCalled();
   });
@@ -189,7 +216,7 @@ describe('Storyboard P1: real renderer queue and paid-action isolation',()=>{
     await waitFor(()=>expect(card).toHaveTextContent('Not Generated'));
     expect(card.querySelector('img')).not.toBeInTheDocument();
     expect(screen.queryByRole('button',{name:'Approve Image'})).not.toBeInTheDocument();
-    expect(screen.getByRole('button',{name:'Regenerate Image · layer-a'})).toBeEnabled();
+    expect(screen.getByRole('button',{name:'Regenerate Image (Paid) · layer-a'})).toBeEnabled();
   });
   it('UI-05 original manual Import & Bind remains available only on demand',async()=>{
     install();render(<AppStateProvider><Harness/></AppStateProvider>);
