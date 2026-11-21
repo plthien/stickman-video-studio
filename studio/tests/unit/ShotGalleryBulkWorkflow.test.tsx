@@ -312,7 +312,7 @@ describe('F09–F11 Native Shot gallery + explicit bulk approval',()=>{
     expect(within(cards[0]).queryByText('Approved')).not.toBeInTheDocument();
     expect(generate).not.toHaveBeenCalled();
     const button=within(cards[0]).getByRole('button',{
-      name:'Regenerate for Current Draft · portrait'
+      name:'Regenerate for Current Draft (Paid) · portrait'
     });
     expect(button).toBeEnabled();
     fireEvent.click(button);
@@ -342,7 +342,7 @@ describe('F09–F11 Native Shot gallery + explicit bulk approval',()=>{
     expect(within(first).getByText('Needs Regeneration')).toBeInTheDocument();
     expect(within(first).queryByRole('button',{name:'Review UNKNOWN'})).not.toBeInTheDocument();
     expect(within(first).getByRole('button',{
-      name:'Regenerate for Current Draft · portrait'
+      name:'Regenerate for Current Draft (Paid) · portrait'
     })).toBeEnabled();
     expect(generate).not.toHaveBeenCalled();
     fireEvent.click(within(first).getByText(
@@ -351,7 +351,7 @@ describe('F09–F11 Native Shot gallery + explicit bulk approval',()=>{
       {exact:false})).toBeInTheDocument();
     expect(within(first).getByText('Candidate History')).toBeInTheDocument();
     fireEvent.click(within(first).getByRole('button',{
-      name:'Regenerate for Current Draft · portrait'
+      name:'Regenerate for Current Draft (Paid) · portrait'
     }));
     await waitFor(()=>expect(generate).toHaveBeenCalledTimes(1));
     expect(generate).toHaveBeenCalledWith('A',expect.objectContaining({
