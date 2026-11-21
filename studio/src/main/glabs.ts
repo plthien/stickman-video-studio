@@ -508,7 +508,8 @@ async function downloadImage(settings:GLabsSettings,urlText:string,userData:stri
     throw new Error('GLABS_DECLARED_MIME_UNSUPPORTED');
   // A missing/generic header or a mismatch among supported IMAGE declarations
   // is recoverable only because the caller MUST decode and validate the PNG.
-  const classification=!declared?'missing':declared==='application/octet-stream'?'generic':
+  const classification:NonNullable<GLabsJob['mimeDiagnostic']>['classification']|null=
+    !declared?'missing':declared==='application/octet-stream'?'generic':
     declared!==mime?'mismatch':declaredRaw!==declared?'alias':null;
   const mimeDiagnostic=classification?{
     declared:declared||'(missing)',detected:mime,classification
