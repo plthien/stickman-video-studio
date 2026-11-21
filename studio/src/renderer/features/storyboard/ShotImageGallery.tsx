@@ -91,12 +91,12 @@ function CardPromptEditor({card,onSave}:{
 }){
   const spec=card.spec;
   const [prompt,setPrompt]=useState(spec?.prompt??'');
-  const [references,setReferences]=useState(spec?.references.join(', ')??'');
+  const [references,setReferences]=useState((spec?.identityOwnerReferences??spec?.references??[]).join(', '));
   useEffect(()=>{
     setPrompt(spec?.prompt??'');
-    setReferences(spec?.references.join(', ')??'');
+    setReferences((spec?.identityOwnerReferences??spec?.references??[]).join(', '));
   },[spec?.draftIdentity.creativeFingerprint,spec?.promptSha256,
-    spec?.references.join('|')]);
+    spec?.identityOwnerReferences?.join('|'),spec?.references.join('|')]);
   if(!spec)return <div className="info">No source-backed prompt is currently prepared for this target.</div>;
   const parsed=references.split(',').map(value=>value.trim()).filter(Boolean);
   return <div className="stack">
