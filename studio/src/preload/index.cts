@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld('studio', Object.freeze({
   identityApproveAnalysis:(id:string,revision:number)=>invoke('identity:approveAnalysis',id,revision),
   identityPrepareBible:(id:string,revision:number)=>invoke('identity:prepareBible',id,revision),
   identityApproveBible:(id:string,revision:number)=>invoke('identity:approveBible',id,revision),
+  identityApproveVisualDefinition:(id:string,input:unknown)=>
+    invoke('identity:approveVisualDefinition',id,input),
   identityRegisterOwnerReference:(id:string,input:unknown)=>invoke('identity:registerOwnerReference',id,input),
   identityApproveReference:(id:string,input:unknown)=>invoke('identity:approveReference',id,input),
   identityPreviewReferenceImpact:(id:string,selectedIds:string[])=>
