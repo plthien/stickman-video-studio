@@ -1,4 +1,6 @@
 import {useState} from 'react';
+import fs from 'node:fs';
+import path from 'node:path';
 import {cleanup,fireEvent,render,screen,waitFor,within} from '@testing-library/react';
 import {afterEach,describe,expect,it,vi} from 'vitest';
 import {ShotImageGallery,type GalleryCard} from '../../src/renderer/features/storyboard/ShotImageGallery';
@@ -46,13 +48,13 @@ function preparedSpec(layerId:string):NonNullable<GalleryCard['spec']>{
     occurrencesAtPath:1,ownerEdited:false
   };
 }
-function Harness({approve=vi.fn(),generate=vi.fn()}:{
-  approve?:(id:string)=>void;generate?:(key:string)=>void
+function Harness({approve=vi.fn(),generate=vi.fn(),shown=cards}:{
+  approve?:(id:string)=>void;generate?:(key:string)=>void;shown?:GalleryCard[]
 }){
   const [ready,setReady]=useState<Record<string,string>>({});
   const [checked,setChecked]=useState<Set<string>>(new Set());
   const identity=(job:NonNullable<GalleryCard['job']>)=>job.id+':'+job.staged?.sha256;
-  return <ShotImageGallery projectId="A" shotId="shot-1" cards={cards} urls={urls}
+  return <ShotImageGallery projectId="A" shotId="shot-1" cards={shown} urls={urls}
     previewIdentity={identity} previewReady={ready} previewErrors={{}}
     busy={false} selectedIds={checked}
     onLoaded={(job,ok)=>{
@@ -83,19 +85,22 @@ describe('F09 Native Shot full-card gallery without selecting Layers',()=>{
     expect(screen.getAllByText('Not Generated').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByTestId('shot-image-gallery')).toHaveTextContent('5 Native image Layers');
   });
-  it('F09-02 uses 9:16, 1:1, 16:9 and off-ratio dimensions without cropping',()=>{
+  it('F09-02 uses equal-height thumbnail stages for 9:16, 1:1, 16:9 and off-ratio images',()=>{
     render(<Harness/>);
+    const stages:HTMLElement[]=[];
     for(const item of images.slice(0,4)){
       const card=screen.getAllByTestId('shot-image-card')
         .find(node=>node.getAttribute('data-layer-id')===item.layerId)!;
-      expect(within(card).getByTestId('shot-image-stage')).toHaveStyle({
-        aspectRatio:item.width+' / '+item.height
-      });
+      const stage=within(card).getByTestId('shot-image-stage');
+      stages.push(stage);
+      // No dynamic ratio, width or height is set by the provider output.
+      expect(stage).not.toHaveAttribute('style');
       const image=within(card).getByRole('img') as HTMLImageElement;
       expect(image).toHaveAttribute('width',String(item.width));
       expect(image).toHaveAttribute('height',String(item.height));
       expect(image).toHaveStyle({objectFit:'contain'});
     }
+    expect(new Set(stages.map(stage=>stage.className))).toEqual(new Set(['shot-image-card-stage']));
   });
   it('F11-01 approval requires actual decoded preview before one owner click',()=>{
     const approve=vi.fn();render(<Harness approve={approve}/>);
@@ -155,14 +160,16 @@ describe('F09 Native Shot full-card gallery without selecting Layers',()=>{
     };
     render(<ShotImageGallery projectId="A" shotId="shot-1" cards={[extreme]}
       urls={{'extreme-ratio':'studio-media://A/extreme'}}
-      previewIdentity={()=>''} previewReady={{}} previewErrors={{}}
-      busy={false} selectedIds={new Set()} onLoaded={vi.fn()} onSelect={vi.fn()}
+      previewIdentity={job=>job.id+':'+job.staged?.sha256}
+      previewReady={{'extreme-ratio':'extreme-ratio:'+extreme.job!.staged!.sha256}}
+      previewErrors={{}} busy={false} selectedIds={new Set()}
+      onLoaded={vi.fn()} onSelect={vi.fn()}
       onGenerate={vi.fn()} onApprove={vi.fn()} onCheck={vi.fn()}
       onRetryPreview={vi.fn()} onInspectUnknown={vi.fn()}/>);
     const stage=screen.getByTestId('shot-image-stage');
-    expect(stage).toHaveStyle({aspectRatio:'2000 / 125'});
+    expect(stage).not.toHaveAttribute('style');
     expect(within(stage).getByRole('img')).toHaveStyle({objectFit:'contain'});
-    fireEvent.click(screen.getByRole('button',{name:'Expand Preview'}));
+    fireEvent.click(within(stage).getByRole('button',{name:'Expand image shot-1/portrait'}));
     expect(within(screen.getByRole('dialog',{name:'Expanded generated image'}))
       .getByRole('img')).toHaveStyle({objectFit:'contain'});
   });
@@ -285,7 +292,10 @@ describe('F09 Native Shot full-card gallery without selecting Layers',()=>{
     const card=screen.getAllByTestId('shot-image-card')[3];
     expect(within(card).getByText(/Prompt · references · candidate history/).closest('details'))
       .not.toHaveAttribute('open');
-    fireEvent.click(within(card).getByRole('button',{name:'Expand Preview'}));
+    loaded(within(card).getByRole('img'));
+    const trigger=within(card).getByRole('button',{name:'Expand image shot-1/offratio'});
+    expect(trigger).toBeEnabled();
+    fireEvent.click(trigger);
     const modal=screen.getByRole('dialog',{name:'Expanded generated image'});
     expect(modal).toHaveTextContent('shot-1 / offratio');
     expect(within(modal).getByRole('img')).toHaveStyle({objectFit:'contain'});
