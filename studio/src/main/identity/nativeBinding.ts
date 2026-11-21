@@ -1,6 +1,7 @@
 /** F24 upstream-to-Native authority. Never changes project.json or renderer Core. */
 import {readState,sha} from '../services.js';
 import {readIdentityWorkflow,currentApprovedSource} from './identityWorkflow.js';
+import {verifyIndependentReview} from './scriptAnalysis.js';
 import {compileStyleBible} from './styleBible.js';
 import {loadImageStyleProfile} from '../imagePreparation.js';
 import {contentHash,type NativeImageNeedV2,type StyleBible} from './contracts.js';
@@ -26,6 +27,9 @@ export function readApprovedNativeIdentity(root:string,appPath:string):ApprovedN
   const script=currentApprovedSource(root),store=readIdentityWorkflow(root);
   if(!store.draftAnalysis||!store.analysisApproved||
     store.analysisApproved.sha256!==contentHash(store.draftAnalysis)||
+    !store.independentReview||
+    !verifyIndependentReview(store.independentReview,store.draftAnalysis)||
+    store.analysisApproved.reviewSha256!==contentHash(store.independentReview)||
     store.draftAnalysis.source_script_sha256!==script.sha256||
     store.draftAnalysis.source_authoring_sha256!==contentHash(script.authoring))
     throw Error('IDENTITY_NATIVE_ANALYSIS_STALE');
