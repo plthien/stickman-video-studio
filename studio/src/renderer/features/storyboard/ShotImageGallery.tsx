@@ -37,6 +37,8 @@ export interface ShotImageGalleryProps{
 const status=(card:GalleryCard)=>{
   if(card.currentlyBound??(card.target.fulfilled&&card.job?.status==='APPROVED'))return'Approved';
   if(card.target.fulfilled)return'Bound (manual)';
+  if(card.job?.lastSyncError?.stage==='provider'&&!card.job.providerCompletedAt)
+    return'Provider status unavailable';
   if(card.job?.lastSyncError)return'Sync failed';
   if(card.job?.providerCompletedAt&&card.job.status!=='VALIDATED')return'Provider done — retrieving image';
   if(card.superseded&&!card.job)return'Needs Regeneration';
@@ -161,8 +163,12 @@ export function ShotImageGallery({
           attempt.token===currentToken&&attempt.status==='UNKNOWN'));
         const mayGenerate=card.target.managed&&!card.target.fulfilled&&
           card.spec?.state==='READY'&&!active&&!unknown&&
-          (!job||!['APPROVED','VALIDATED'].includes(job.status));
-        const needsSync=Boolean(job?.providerCompletedAt&&job.lastSyncError);
+          (!job||job.status!=='APPROVED');
+        const needsSync=Boolean(job?.providerTaskId&&job.lastSyncError&&
+          !['VALIDATED','APPROVED','UNKNOWN'].includes(job.status));
+        const statusUnavailable=Boolean(needsSync&&!job?.providerCompletedAt&&
+          job?.lastSyncError?.stage==='provider');
+        const ingestionBlocked=Boolean(needsSync&&job?.providerCompletedAt&&active);
         const unknownForCard=attempts.filter(attempt=>
           attempt.token===currentToken&&attempt.status==='UNKNOWN');
         const review=unknownReview?.targetKey===card.target.key?unknownReview:null;
@@ -188,7 +194,8 @@ export function ShotImageGallery({
               }}
               onError={()=>onLoaded(job,false)}
               style={{width:'100%',height:'100%',objectFit:'contain'}}/>:
-              <span>{needsSync?'Sync failed — Retry Sync':
+              <span>{statusUnavailable?'Provider status unavailable — Retry Sync (GET only)':
+                needsSync?'Sync failed — Retry Sync (GET only)':
                 job?.providerCompletedAt?'Provider done — retrieving image':
                 active?'Generating image…':
                 job?.status==='UNKNOWN'?'Provider outcome unverified':
@@ -208,8 +215,8 @@ export function ShotImageGallery({
           <div className="shot-image-card-actions">
             {job&&staged&&urls[job.id]&&<Button onClick={()=>setExpanded(job.id)}>Expand Preview</Button>}
             {mayGenerate&&<Button disabled={busy} onClick={()=>onGenerate(card.target.key)}>
-              {card.superseded?'Regenerate for Current Draft':
-                attempts.length?'Regenerate Image':'Generate Image'} · {card.target.layerId}
+              {card.superseded?'Regenerate for Current Draft (Paid)':
+                attempts.length?'Regenerate Image (Paid)':'Generate Image'} · {card.target.layerId}
             </Button>}
             {job&&job.status==='VALIDATED'&&<label className="shot-image-select">
               <input type="checkbox" aria-label={'Select '+card.target.layerId}
@@ -223,8 +230,19 @@ export function ShotImageGallery({
               Approve Image
             </Button>}
             {job&&['SUBMITTED','RUNNING','DOWNLOADED'].includes(job.status)&&
-              <span className="info">{needsSync?'Sync failed — read-only Retry Sync available':
+              <span className="info">{statusUnavailable?
+                'Provider status unavailable — use Retry Sync (GET only)':
+                needsSync?'Sync failed — read-only Retry Sync available':
                 job.providerCompletedAt?'Provider done — retrieving image':'Auto-checking provider…'}</span>}
+            {needsSync&&<span className="info" data-testid="glabs-sync-evidence">
+              Job {job!.id} · provider task {job!.providerTaskId} ·
+              {job!.syncPhase??'provider'} · {job!.lastSyncError!.code} · {job!.lastSyncError!.at}
+            </span>}
+            {ingestionBlocked&&<div className="info" data-testid="glabs-ingestion-regenerate-blocked">
+              Paid regeneration blocked: the provider task already completed and may have been charged.
+              Retry Sync (GET only) can recover its original image without another paid POST.
+              Abandoning ingestion requires a separate backend-confirmed duplicate-charge workflow.
+            </div>}
             {job&&needsSync&&<Button disabled={busy} onClick={()=>onCheck(job.id)}>
               Retry Sync (GET only)
             </Button>}
@@ -264,6 +282,11 @@ export function ShotImageGallery({
               {job.reason&&<div className="info error">{job.reason}</div>}
               {job.providerCompletedAt&&<div>Provider completed {job.providerCompletedAt} ·
                 ingestion phase: {job.syncPhase??'result'}</div>}
+              {job.sourceMime&&<div>Decoded provider format: {job.sourceMime}</div>}
+              {job.mimeDiagnostic&&<div className="info" data-testid="glabs-mime-diagnostic">
+                Source MIME: declared {job.mimeDiagnostic.declared} · verified {job.mimeDiagnostic.detected}
+                {' · '}{job.mimeDiagnostic.classification} (decoder-verified)
+              </div>}
               {job.lastSyncError&&<div className="info error" role="status">
                 Sync error {job.lastSyncError.code} at {job.lastSyncError.stage}
                 {' · '}{job.lastSyncError.at}. Retry Sync only rechecks the existing provider task.
