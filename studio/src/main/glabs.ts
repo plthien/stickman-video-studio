@@ -495,7 +495,7 @@ async function downloadImage(settings:GLabsSettings,urlText:string,userData:stri
   // HTTP success does not prove an image. Classify by bytes first, and reject
   // HTML/JSON/XML error bodies before any decoder or staging operation.
   let mime:'image/png'|'image/jpeg'|'image/webp';
-  try{mime=imageMime(data) as typeof mime;}
+  try{mime=imageMime(data) as 'image/png'|'image/jpeg'|'image/webp';}
   catch{throw new Error('GLABS_IMAGE_BODY_NOT_SUPPORTED');}
   const declaredRaw=res.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase()??'';
   const aliases:Record<string,string>={
@@ -536,6 +536,8 @@ export async function pollGlabsImage(appPath:string,root:string,userData:string,
     response=await requestJson(config,userData,cipher,'GET','api/status/'+task);
     if(!pureObject(response)||response.task_id!==task)
       throw new Error('GLABS_STATUS_TASK_ID_MISMATCH');
+    if(!['pending','running','failed','completed'].includes(String(response.status)))
+      throw new Error('GLABS_STATUS_UNRECOGNIZED');
   }catch(error){
     // Read the latest durable evidence: a concurrent GET may have already
     // validated this image. Never downgrade that journal from a stale failure.
@@ -563,6 +565,7 @@ export async function pollGlabsImage(appPath:string,root:string,userData:string,
     return job;
   }
   if(status==='failed'&&!job.providerCompletedAt){
+    if(job.lastSyncError?.stage==='provider')delete job.lastSyncError;
     job.status='FAILED';job.reason='Provider reported failure (no automatic retry).';
     writeJob(root,job);return job;
   }
