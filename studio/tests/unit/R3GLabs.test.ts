@@ -833,6 +833,27 @@ describe('F19/F22 MIME-safe provider ingestion and GET-only recovery',()=>{
     expect(recovered.lastSyncError).toBeUndefined();
     expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
   });
+  it('F19-05 oversized file and HTTP redirects are rejected before image staging',async()=>{
+    for(const mode of ['oversize','redirect'] as const){
+      const dir=credential(),{root,targets}=nativeTarget(),{calls,stub}=transport();
+      vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL,options?:RequestInit)=>{
+        if(new URL(String(input)).pathname==='/api/files/out.png'){
+          expect(options?.redirect).toBe('error');
+          return mode==='oversize'?
+            new Response(new Uint8Array(portraitPng),{status:200,headers:{
+              'Content-Type':'image/png','Content-Length':String(16*1024*1024+1)}}):
+            Response.redirect('http://127.0.0.1:8765/api/files/other.png',302);
+        }
+        return stub(input,options);
+      }));
+      const created=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+      await expect(pollGlabsImage(appPath,root,dir,cipher,created.id,decode)).rejects.toThrow(
+        mode==='oversize'?'GLABS_DOWNLOAD_OVERSIZE':'GLABS_DOWNLOAD_HTTP_302');
+      expect(listGlabsJobs(root).find(item=>item.id===created.id)?.staged).toBeUndefined();
+      expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
+      vi.unstubAllGlobals();
+    }
+  });
   it('F22-01 status GET failure persists per-job diagnostic; later GET-only completion recovers',async()=>{
     const dir=credential(),{root,targets}=nativeTarget(),{calls,stub}=transport();
     let failStatus=true;
