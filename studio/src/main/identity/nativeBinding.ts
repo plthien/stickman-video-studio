@@ -110,7 +110,7 @@ export function validateNativeBindingPayload(root:string,appPath:string,
 export function resolveNativeTargetBinding(root:string,appPath:string,targetKey:string){
   const draft=readNativeDraft(root);
   if(!draft)throw Error('IDENTITY_NATIVE_DRAFT_REQUIRED');
-  const artifact=draft.artifact as {
+  const artifact=draft.artifact as unknown as {
     manifest:Record<string,unknown>;asset_needs:unknown[]
   };
   const all=validateNativeBindingPayload(root,appPath,artifact.manifest,artifact.asset_needs);
