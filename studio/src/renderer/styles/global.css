@@ -142,3 +142,20 @@
   .shot-image-lightbox-controls .button{padding:6px;font-size:11px}
 }
 
+/* F24 source-grounded identity workspace. F25 200×160 shot cards are unchanged. */
+.identity-bible-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,285px),1fr));gap:12px;align-items:start}
+.identity-bible-character{min-width:0;display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid #315062;border-radius:8px;overflow-wrap:anywhere}
+.identity-bible-character>h4{margin:0}
+.identity-bible-character>p{margin:0;font-size:12px}
+.identity-owner-import{display:flex;flex-direction:column;gap:8px}
+.identity-owner-import label{display:flex;flex-direction:column;gap:4px;min-width:0}
+.identity-owner-import input{box-sizing:border-box;width:100%;min-width:0}
+.identity-candidate{display:flex;flex-direction:column;gap:7px;padding:9px;border:1px solid #365166;border-radius:6px;min-width:0}
+.identity-candidate-image{display:block;width:auto;height:auto;max-width:100%;max-height:250px;object-fit:contain;align-self:flex-start;background:#051525;border:1px solid #365166}
+.identity-candidate>p{font-size:11px;overflow-wrap:anywhere;margin:0}
+.identity-reference-generation{display:flex;flex-direction:column;gap:8px}
+.identity-job{display:flex;flex-direction:column;gap:6px;min-width:0;font-size:11px;border:1px solid #315062;padding:7px;border-radius:6px}
+.identity-job small{overflow-wrap:anywhere}
+.identity-impact{display:flex;flex-direction:column;gap:6px;overflow-wrap:anywhere}
+.identity-catalog{padding:10px;border:1px solid #315062;border-radius:6px;min-width:0}
+.identity-catalog>div{padding:4px 0}
