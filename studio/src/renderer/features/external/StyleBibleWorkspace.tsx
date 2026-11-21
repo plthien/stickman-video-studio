@@ -167,8 +167,11 @@ export function StyleBibleWorkspace(){
                 onChange={event=>setSources(value=>({...value,
                   [character.char_id]:event.target.value}))}/>
             </label>
+            {character.visual_readiness==='NEEDS_OWNER_DEFINITION'&&
+              <small>The approved narration does not establish a drawable identity.
+                Supply your own real character reference image and provenance;
+                automatic generation remains blocked until that visual authority exists.</small>}
             <button className="button" type="button" disabled={busy||
-              character.visual_readiness!=='READY_FOR_REFERENCE'||
               !paths[character.char_id]?.trim()||!sources[character.char_id]?.trim()}
               onClick={()=>action((id,revision)=>
                 window.studio!.identityRegisterOwnerReference(id,{
