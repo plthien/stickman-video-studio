@@ -751,6 +751,11 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
   }
   const identityReceipt=state.identityPolicy==='v1'?
     currentDraftIdentityReceipt(root,appPath):null;
+  const identityReceiptFile=identityReceipt?
+    resolveProjectFile(root,'.studio/identity/native-publication-v1.json'):null;
+  const beforeIdentityReceiptBytes=identityReceiptFile&&fs.existsSync(identityReceiptFile)?
+    fs.readFileSync(identityReceiptFile):null;
+  let writtenIdentityReceiptSha:string|null=null;
   const seconds=validateSeconds(options.previewSeconds);
   const resolved=resolvePendingCandidate(root,state,pending);
   const missingInside=resolved.missing.filter(ref=>ref.scopeStart<seconds);
@@ -804,8 +809,11 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
     fresh.external.native={revision,artifact:{...again,missing:again.missing},importedAt:new Date().toISOString()};
     fresh.nativeReadiness=readiness;fresh.preview=undefined;fresh.approval=undefined;fresh.render=undefined;fresh.tasks!.native!.status='IMPORTED';fresh.tasks!.native!.confirmedResponseSha256=pending.responseSha256;fresh.tasks!.native!.confirmedResponsePath=pending.responsePath;
     committedState=fresh;writeState(root,fresh);stateCommitted=true;
-    if(identityReceipt)publishNativeIdentityReceipt(root,appPath,
-      identityReceipt,sha(fs.readFileSync(current)));
+    if(identityReceipt){
+      const published=publishNativeIdentityReceipt(root,appPath,
+        identityReceipt,sha(fs.readFileSync(current)));
+      writtenIdentityReceiptSha=published.receiptSha;
+    }
     atomicJson(path.join(root,'.studio','revisions','native-'+revision+'.json'),again.manifest);
     atomicJson(path.join(root,'.studio','revisions','native-authoring-'+revision+'.json'),{shot_ledger:again.shotLedger,sound_script:again.soundScript,asset_needs:again.assetNeeds,fulfillments:diskPending.fulfillments,missing:again.missing});
     fs.unlinkSync(pendingPath(root));return fresh;
@@ -833,6 +841,22 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
         }
         writeState(root,rollback);
       }else conflict=true;
+    }
+    // The Studio-only receipt is part of this Native Confirm transaction.
+    // Restore prior exact bytes only if our committed receipt is still the
+    // current one and the manifest/state rollback has not conflicted with
+    // any newer independent change. Never overwrite a newer receipt.
+    if(writtenIdentityReceiptSha&&identityReceiptFile){
+      const currentReceipt=fs.existsSync(identityReceiptFile)?
+        strictJson(fs.readFileSync(identityReceiptFile,'utf8')) as Record<string,unknown>:null;
+      if(currentReceipt?.receiptSha!==writtenIdentityReceiptSha)conflict=true;
+      else if(!conflict){
+        if(beforeIdentityReceiptBytes){
+          const restored=identityReceiptFile+'.'+randomUUID()+'.restore';
+          fs.writeFileSync(restored,beforeIdentityReceiptBytes,{flag:'wx'});
+          fs.renameSync(restored,identityReceiptFile);
+        }else fs.unlinkSync(identityReceiptFile);
+      }
     }
     if(conflict)throw new Error('RECOVERY_REQUIRED: newer independent changes prevented unsafe native rollback; original error: '+String(error));
     throw error;
