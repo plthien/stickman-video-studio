@@ -144,6 +144,8 @@ export function addCharacterReference(root:string,input:{
     record.references.some(r=>r.referenceId===input.referenceId))
     throw new Error('CHARACTER_REFERENCE_ID_INVALID');
   const {image,ledger}=admittedMedia(root,input.relativePath);
+  if(ledger.rights.includes('G-Labs-generated')&&!input.sourceJobId)
+    throw new Error('CHARACTER_GENERATED_PROVENANCE_REQUIRED');
   const decoded=decode(image.bytes);
   if(!decoded||!Buffer.isBuffer(decoded.png)||decoded.width<1||decoded.height<1||
     decoded.width>8192||decoded.height>8192)throw new Error('CHARACTER_REFERENCE_DECODE_FAILED');
@@ -170,6 +172,19 @@ export function addCharacterReference(root:string,input:{
   return commitRegistry(root,current,{...current,characters:current.characters.map(c=>
     c.characterId===record.characterId?next:c)},'add-ref:'+record.characterId);
 }
+/** A potentially charged provider request is never invalidated by registry edits. */
+function assertNoBusyVisualJobs(root:string,targets:string[]){
+  const dir=resolveProjectFile(root,'.studio/glabs/jobs');
+  if(!fs.existsSync(dir)||!targets.length)return;
+  const currentProject=readState(root).project.id;
+  for(const name of fs.readdirSync(dir).filter(n=>/^[a-f0-9-]{36}\\.json$/i.test(n))){
+    const job=strictJson(fs.readFileSync(resolveProjectFile(root,
+      '.studio/glabs/jobs/'+name),'utf8')) as Record<string,unknown>;
+    if(job.projectId===currentProject&&targets.includes(String(job.targetKey))&&
+      ['QUEUED','SUBMITTED','RUNNING','DOWNLOADED','UNKNOWN'].includes(String(job.status)))
+      throw new Error('CHARACTER_IDENTITY_BUSY_PENDING_PROVIDER');
+  }
+}
 export function approveCharacter(root:string,input:{
   characterId:string;referenceId:string;expectedRevision:number;reviewedImpactSha256?:string;
 }){
@@ -185,6 +200,7 @@ export function approveCharacter(root:string,input:{
     const impact=previewCharacterImpact(root,input.characterId);
     if(input.reviewedImpactSha256!==impact.impactSha256)
       throw new Error('CHARACTER_REPLACEMENT_IMPACT_REVIEW_REQUIRED');
+    assertNoBusyVisualJobs(root,impact.targets);
   }
   const next:CharacterRecord={...record,identityVersion:record.identityVersion+1,
     canonicalReferenceId:anchor.referenceId,status:'APPROVED'};
@@ -201,6 +217,7 @@ export function archiveCharacter(root:string,input:{characterId:string;expectedR
   if(current.revision!==input.expectedRevision)throw new Error('CHARACTER_REGISTRY_REVISION_CONFLICT');
   if(input.reviewedImpactSha256!==impact.impactSha256)
     throw new Error('CHARACTER_ARCHIVE_IMPACT_REVIEW_REQUIRED');
+  assertNoBusyVisualJobs(root,impact.targets);
   return commitRegistry(root,current,{...current,characters:current.characters.map(c=>
     c.characterId===input.characterId?{...c,status:'ARCHIVED'}:c)},'archive:'+input.characterId);
 }
@@ -212,6 +229,7 @@ export function saveTargetBinding(root:string,input:{
   const current=readTargetBindings(root),registry=readCharacterRegistry(root);
   if(input.expectedRevision!==current.revision)throw new Error('CHARACTER_BINDINGS_REVISION_CONFLICT');
   const gallery=getNativeImageGallery('',root),target=gallery.targets.find(t=>t.key===input.targetKey);
+  assertNoBusyVisualJobs(root,[input.targetKey]);
   if(!target||!target.creativeFingerprint||!gallery.token)
     throw new Error('CHARACTER_TARGET_CURRENT_DRAFT_REQUIRED');
   if(!Array.isArray(input.characters)||input.characters.some(c=>!validId(c))||
@@ -231,9 +249,11 @@ export function saveTargetBinding(root:string,input:{
     if(sourceIndex<0||sourceIndex>=targetIndex)
       throw new Error('CONTINUITY_SOURCE_NOT_EARLIER');
     let cursor=rel.sourceTargetKey;
+    const visited=new Set<string>();
     const other=new Map(current.bindings.map(b=>[b.targetKey,b]));
     while(cursor){
-      if(cursor===input.targetKey)throw new Error('CONTINUITY_CYCLE');
+      if(cursor===input.targetKey||visited.has(cursor))throw new Error('CONTINUITY_CYCLE');
+      visited.add(cursor);
       cursor=other.get(cursor)?.continuity?.sourceTargetKey??'';
     }
   }
