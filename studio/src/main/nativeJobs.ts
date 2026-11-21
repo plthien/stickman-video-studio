@@ -23,6 +23,11 @@ const savedPreviewSeconds=(root:string)=>{const file=resolveProjectFile(root,'ou
 const assertVerifiedBytes=(root:string,verified:{path:string;sha256:string;reportPath:string;reportSha256:string})=>{const video=resolveProjectFile(root,verified.path),report=resolveProjectFile(root,verified.reportPath);strictJson(fs.readFileSync(report,'utf8'));if(sha(fs.readFileSync(video))!==verified.sha256||sha(fs.readFileSync(report))!==verified.reportSha256)throw new Error('BLOCKED: native output/report changed during verification.')};
 
 export async function nativeJob(appPath:string,root:string,command:NativeCommand,input:{seconds?:number;note?:string;replace?:boolean;file?:string;reviewedSha256?:string;attested?:boolean}={},options:NativeJobOptions={}){
+  // Protect existing Core and already-published media until the full F24
+  // upstream-to-Native evidence gate has been verified. Legacy is unchanged.
+  if(['validate','preview','approve','render'].includes(command)&&
+    readState(root).identityPolicy==='v1')
+    throw new Error('IDENTITY_NATIVE_LINEAGE_GATE_NOT_READY');
   const key=lockKey(root),locked=mutating.has(command),id=randomUUID(),controller=new AbortController();
   if(locked&&active.has(key))throw new Error('BUSY: a native mutating job is already active for this project.');
   if(locked)active.set(key,{id,controller});
