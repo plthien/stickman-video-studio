@@ -471,6 +471,10 @@ export function approveOwnerReference(root:string,appPath:string,input:{
   const verified=approveCandidate(candidate,bible,root,input.ownerInspected,decode);
   let approved=verified;
   if(verified.source==='GLABS_GENERATED'){
+    const owner=prior.ownerVisualDefinitions?.find(d=>d.charId===verified.anchor_id);
+    if(owner)validateOwnerVisualDefinition(owner,script,bible);
+    if(verified.visual_definition_sha256!==owner?.definitionSha)
+      throw Error('REFERENCE_GENERATED_VISUAL_DEFINITION_STALE');
     const match=/^assets\/images\/identity-ref-([a-f0-9-]{36})\.png$/i.exec(verified.media_path);
     if(!match)throw Error('REFERENCE_GENERATED_JOB_PROVENANCE_INVALID');
     const source=readReferenceJob(root,match[1]);
