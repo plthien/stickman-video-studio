@@ -878,6 +878,22 @@ describe('F19/F22 MIME-safe provider ingestion and GET-only recovery',()=>{
     expect(recovered.providerTaskId).toBe(created.providerTaskId);
     expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
   });
+  it('F22-04 decoding error descriptions persist only GLABS code and same-task GET-only recovery',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls}=transport();
+    const submitted=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    await expect(pollGlabsImage(appPath,root,dir,cipher,submitted.id,()=>{
+      throw new Error('GLABS_IMAGE_DECODE_FAILED: private path or decoder details must not persist');
+    })).rejects.toThrow('GLABS_IMAGE_DECODE_FAILED');
+    const failed=listGlabsJobs(root).find(row=>row.id===submitted.id)!;
+    expect(failed.lastSyncError).toMatchObject({stage:'decode',code:'GLABS_IMAGE_DECODE_FAILED'});
+    expect(JSON.stringify(failed)).not.toContain('private path or decoder details');
+    expect(failed.providerCompletedAt).toBeTruthy();
+    const recovered=await pollGlabsImage(appPath,root,dir,cipher,submitted.id,decode);
+    expect(recovered.status).toBe('VALIDATED');
+    expect(recovered.providerTaskId).toBe('ab12cd34');
+    expect(recovered.lastSyncError).toBeUndefined();
+    expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
+  });
   it('F22-02 provider returns RUNNING after failed GET: obsolete status diagnostic clears without any POST',async()=>{
     const dir=credential(),{root,targets}=nativeTarget(),{calls,stub}=transport();
     let failStatus=true;
