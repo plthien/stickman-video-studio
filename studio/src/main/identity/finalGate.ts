@@ -69,12 +69,22 @@ export function currentDraftIdentityReceipt(root:string,appPath:string){
 export function publishNativeIdentityReceipt(root:string,appPath:string,
   current:NonNullable<ReturnType<typeof currentDraftIdentityReceipt>>,
   expectedNativeSha:string){
-  const validated=currentDraftIdentityReceipt(root,appPath);
-  if(!validated||contentHash(validated)!==contentHash(current))
+  // Called only AFTER the original Native transaction publishes state.
+  // readNativeDraft is unavailable then (FROZEN → IMPORTED). The caller checks
+  // a fresh full draft receipt immediately after CLI and BEFORE that mutation.
+  const validated=current;
+  const identity=readApprovedNativeIdentity(root,appPath);
+  if(identity.snapshotSha!==validated.sourceSnapshotSha||
+    identity.approvalSetSha!==validated.approvalSetSha)
     throw Error('IDENTITY_NATIVE_SNAPSHOT_CHANGED_DURING_PUBLISH');
   const nativeFile=resolveProjectFile(root,'project.json');
   const bytes=fs.readFileSync(nativeFile);
   if(sha(bytes)!==expectedNativeSha)throw Error('IDENTITY_NATIVE_MANIFEST_CHANGED');
+  const manifest=strictJson(bytes.toString('utf8')) as Record<string,unknown>;
+  const actual=actualPublishedImages(manifest);
+  if(actual.size!==current.rows.length||
+    current.rows.some(row=>actual.get(row.targetKey)!==row.imagePath))
+    throw Error('IDENTITY_NATIVE_PUBLISHED_MAPPING_MISMATCH');
   const previous=readNativeIdentityReceipt(root);
   const record={schema:'stickman-native-identity-publication-v1' as const,
     ...validated,nativeProjectSha:expectedNativeSha,
