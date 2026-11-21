@@ -8,15 +8,15 @@ import {validateNativeIdentityNeeds} from '../../src/main/identity/nativeNeeds';
 import {identityPolicy} from '../../src/main/identity/identityWorkflow';
 import type {StudioState} from '../../src/main/services';
 const projectId='a'.repeat(24);
-const text='Kip enters the camp.\n\nBrog follows Kip.';
+const text='Kip has a scar and enters the camp.\n\nBrog follows Kip.';
 const authoring={characters:['Kip','Brog']};
-const sections=[{id:'sec_001',text:'Kip enters the camp.'},
+const sections=[{id:'sec_001',text:'Kip has a scar and enters the camp.'},
   {id:'sec_002',text:'Brog follows Kip.'}];
 const script={projectId,sha256:hash(text),authoring,revision:1,sections};
 const second=text.lastIndexOf('Kip');
 const entry=()=>({char_id:'char_001',label:'Kip',description:'',
   entity_kind:'human_character' as const,narrative_role:'Character in approved narration',
-  explicit_visual_traits:[],identity_markers:['Kip'],
+  explicit_visual_traits:['scar'],identity_markers:['scar'],
   continuity_notes:[],physical_constraints:[],
   occurrences:[{section_id:'sec_001',quote:'Kip',start:0,end:3},
     {section_id:'sec_002',quote:'Kip',start:second,end:second+3}],
@@ -80,6 +80,7 @@ describe('F24 upstream source-grounded contract gates',()=>{
     expect(bible.characters[0].occurrences).toEqual(entry().occurrences);
     expect(validateStyleBibleCurrent(bible,unchanged,script,style)).toBe(true);
     const unknown=analysis();unknown.continuity_catalog.characters[0].identity_markers=[];
+    unknown.continuity_catalog.characters[0].explicit_visual_traits=[];
     const incomplete=compileStyleBible(unknown,script,style);
     expect(incomplete.characters[0].visual_readiness).toBe('NEEDS_OWNER_DEFINITION');
     expect(()=>referencePromptForCharacter(incomplete,'char_001',style))
