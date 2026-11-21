@@ -71,7 +71,8 @@ function ready(root:string,appPath:string,anchorId:string):{
   const pinned={id:style.id,guidance:style.guidance,sha256:style.sha256};
   const bible=compileStyleBible(analysis,source,pinned);
   if(journal.bibleTextApproved?.sha256!==bible.style_bible_sha256||
-    journal.bible?.style_bible_sha256!==bible.style_bible_sha256)
+    !journal.bible||contentHash(journal.bible)!==contentHash(bible)||
+    journal.bible.style_bible_sha256!==bible.style_bible_sha256)
     throw Error('REFERENCE_STYLE_BIBLE_NOT_APPROVED');
   const row=bible.characters.find(char=>char.char_id===anchorId);
   if(!row||row.visual_readiness!=='READY_FOR_REFERENCE')
