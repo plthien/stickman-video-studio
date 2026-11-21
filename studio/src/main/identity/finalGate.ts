@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import {atomicJson,readState,resolveProjectFile,sha,strictJson} from '../services.js';
 import {getNativeImageGallery,readNativeDraft} from '../externalTasks.js';
-import {listGlabsJobs} from '../glabs.js';
+import {listGlabsJobs,readGlabsJob} from '../glabs.js';
 import {readApprovedNativeIdentity,validateNativeBindingPayload} from './nativeBinding.js';
 import {resolveApprovedPreviousImage} from './continuityGraph.js';
 import {verifyReferenceFile} from './referencePublication.js';
@@ -142,9 +142,21 @@ export function assertPublishedIdentityCurrent(root:string,appPath:string){
     if(current.get(row.targetKey)!==row.imagePath)
       throw Error('IDENTITY_PUBLISHED_NATIVE_IMAGE_REMAPPED');
     verifyReferenceFile(root,row.imagePath,row.imageSha);
+    // Published output must retain its real original G-Labs approval journal,
+    // not just a filename and a rehashed local receipt.
+    const source=readGlabsJob(root,row.sourceJobId);
+    if(source.status!=='APPROVED'||source.projectId!==state.project.id||
+      source.targetKey!==row.targetKey||
+      source.shotId!==row.shotId||source.layerId!==row.layerId||
+      source.approved?.path!==row.imagePath||
+      source.approved?.sha256!==row.imageSha||
+      source.identityTargetBindingSha!==row.targetBindingSha||
+      source.identityApprovalSetSha!==receipt.approvalSetSha)
+      throw Error('IDENTITY_PUBLISHED_APPROVAL_JOURNAL_STALE');
     const stored=state.media?.find(m=>m.kind==='image'&&
       m.path===row.imagePath&&m.sha256===row.imageSha&&
-      m.shotId===row.shotId&&m.layerId===row.layerId);
+      m.shotId===row.shotId&&m.layerId===row.layerId&&
+      m.rights===source.approved?.rights&&m.rights.trim());
     if(!stored)throw Error('IDENTITY_PUBLISHED_MEDIA_RIGHTS_REVOKED');
   }
   return receipt;
