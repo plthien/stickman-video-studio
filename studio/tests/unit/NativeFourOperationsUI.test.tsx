@@ -304,7 +304,7 @@ describe('Storyboard — source-grounded paid image generation for current Nativ
     expect(first).toHaveAttribute('data-layer-id','layer-1');
     expect(first).toHaveTextContent('Owner-approved image for layer-1');
     fireEvent.click(first.querySelector('.shot-image-card-details > summary')!);
-    expect(screen.getByText('Approved B1 style. Exact owner-approved image for layer-1',
+    expect(await screen.findByText('Approved B1 style. Exact owner-approved image for layer-1',
       {selector:'pre'})).toBeInTheDocument();
     expect(glabsGenerate).not.toHaveBeenCalled();
     fireEvent.click(generate);
@@ -321,11 +321,11 @@ describe('Storyboard — source-grounded paid image generation for current Nativ
     const firstShotCards=screen.getAllByTestId('shot-image-card');
     expect(firstShotCards).toHaveLength(2);
     fireEvent.click(firstShotCards[0].querySelector('.shot-image-card-details > summary')!);
-    const firstPrompt=screen.getByLabelText('Edit image prompt layer-1');
+    const firstPrompt=await screen.findByLabelText('Edit image prompt layer-1');
     fireEvent.change(firstPrompt,{target:{value:'Owner changes only first layer image pose'}});
     expect(firstPrompt).toHaveValue('Owner changes only first layer image pose');
     fireEvent.click(firstShotCards[1].querySelector('.shot-image-card-details > summary')!);
-    expect(screen.getByLabelText('Edit image prompt layer-2')).toHaveValue(
+    expect(await screen.findByLabelText('Edit image prompt layer-2')).toHaveValue(
       'Approved B1 style. Exact owner-approved image for layer-2');
     expect(firstPrompt).toHaveValue('Owner changes only first layer image pose');
     fireEvent.click(screen.getByRole('button',{name:/^shot-2/}));
