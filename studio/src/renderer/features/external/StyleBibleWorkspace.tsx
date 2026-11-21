@@ -35,6 +35,9 @@ export function StyleBibleWorkspace(){
   const [error,setError]=useState(''),[busy,setBusy]=useState(false);
   const [paths,setPaths]=useState<Record<string,string>>({});
   const [sources,setSources]=useState<Record<string,string>>({});
+  const [visualTraits,setVisualTraits]=useState<Record<string,string>>({});
+  const [visualEvidence,setVisualEvidence]=useState<Record<string,string>>({});
+  const [visualOrigins,setVisualOrigins]=useState<Record<string,'SCRIPT_AUTHOR'|'OWNER_BRIEF'>>({});
   const [loaded,setLoaded]=useState<Set<string>>(new Set());
   const [chosen,setChosen]=useState<Record<string,string>>({});
   const [impact,setImpact]=useState<Awaited<ReturnType<
@@ -101,6 +104,9 @@ export function StyleBibleWorkspace(){
       <h3>Source-grounded Visual Reference catalog</h3>
       {!bible.characters.length&&<p>Empty approved cast. No invented anchors are required.</p>}
       <div className="identity-bible-grid">{bible.characters.map(character=>{
+        const visualDefinition=journal.ownerVisualDefinitions?.find(value=>
+          value.charId===character.char_id&&
+          value.styleBibleSha===bible.style_bible_sha256);
         const candidates=journal.referenceCandidates.filter(candidate=>
           candidate.anchor_id===character.char_id&&
           candidate.source_definition_hash===character.source_definition_hash);
@@ -116,11 +122,51 @@ export function StyleBibleWorkspace(){
           <p>Source occurrences: {character.occurrences.length} ·
             stable markers: {character.identity_markers.join(', ')||'not source-established'}</p>
           <p>Reference readiness: <strong>{character.visual_readiness}</strong></p>
+          {approved&&<div className="identity-owner-visual-definition"
+            data-testid={'identity-owner-visual-'+character.char_id}>
+            <strong>Owner-reviewed visual definition (optional)</strong>
+            <small>Use literal Script Author evidence or your own explicitly
+              authored appearance. Never infer traits from a name.</small>
+            {visualDefinition&&<small>Approved {visualDefinition.provenance} ·
+              SHA {visualDefinition.definitionSha.slice(0,16)} ·
+              {visualDefinition.traits.join(', ')}</small>}
+            <label>Evidence origin
+              <select className="input" value={visualOrigins[character.char_id]??'SCRIPT_AUTHOR'}
+                onChange={event=>setVisualOrigins(old=>({...old,
+                  [character.char_id]:event.target.value as 'SCRIPT_AUTHOR'|'OWNER_BRIEF'}))}>
+                <option value="SCRIPT_AUTHOR">Exact approved Script Author text</option>
+                <option value="OWNER_BRIEF">Explicit owner appearance brief</option>
+              </select>
+            </label>
+            <label>Appearance traits, comma separated
+              <input className="input" aria-label={'Owner visual traits '+character.char_id}
+                value={visualTraits[character.char_id]??''}
+                onChange={event=>setVisualTraits(old=>({...old,
+                  [character.char_id]:event.target.value}))}/>
+            </label>
+            <label>Source excerpt or owner provenance
+              <textarea className="textarea" aria-label={'Owner visual evidence '+character.char_id}
+                value={visualEvidence[character.char_id]??''}
+                onChange={event=>setVisualEvidence(old=>({...old,
+                  [character.char_id]:event.target.value}))}/>
+            </label>
+            <button className="button" type="button"
+              disabled={busy||!visualTraits[character.char_id]?.trim()||
+                !visualEvidence[character.char_id]?.trim()}
+              onClick={()=>action((id,revision)=>window.studio!.identityApproveVisualDefinition(id,{
+                expectedRevision:revision,anchorId:character.char_id,
+                provenance:visualOrigins[character.char_id]??'SCRIPT_AUTHOR',
+                traits:(visualTraits[character.char_id]??'').split(',')
+                  .map(value=>value.trim()).filter(Boolean),
+                evidence:visualEvidence[character.char_id]??'',ownerInspected:true
+              }))}>Approve visual definition for reference generation</button>
+          </div>}
           {approved&&<div className="identity-reference-generation" data-testid="identity-reference-generation">
             <div className="info">Reference generation is 1:1 and potentially paid.
               Shot image settings remain unchanged; only an explicit owner click sends POST.</div>
             <button className="button" type="button"
-              disabled={busy||unresolved||character.visual_readiness!=='READY_FOR_REFERENCE'}
+              disabled={busy||unresolved||
+                (character.visual_readiness!=='READY_FOR_REFERENCE'&&!visualDefinition)}
               onClick={()=>action(id=>window.studio!.identityGenerateReference(id,{
                 anchorId:character.char_id,authorized:true,
                 ...(referenceJobs.length?{regenerate:true}:{})
