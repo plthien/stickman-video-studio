@@ -6,6 +6,7 @@ import {atomicJson,readState,resolveProjectFile,strictJson,sha,writeState,type S
 import {loadImageStyleProfile} from '../imagePreparation.js';
 import {contentHash,type ScriptAnalysis,type StyleBible,type IdentityReviewOperation} from './contracts.js';
 import {analysisLineage,freezeAnalysisTask,validateAnalysisEnvelope,
+  analysisAuthorContract,analysisReviewContract,
   validateScriptAnalysis,verifyIndependentReview,type ApprovedScriptSnapshot,
   type AnalysisTask,type AnalysisReview} from './scriptAnalysis.js';
 import {compileStyleBible,type PinnedStyle} from './styleBible.js';
@@ -183,25 +184,20 @@ export function freezeIdentityTask(root:string,operation:IdentityReviewOperation
     task.prompt=[
       '# INDEPENDENT SCRIPT ANALYSIS REVIEW / '+operation.toUpperCase(),
       'Review the EXACT frozen analysis and Script evidence; do not author a new identity.',
-      'Return a stickman-analysis-review-v1 payload inside the frozen result envelope.',
-      'Findings require finding_id, severity P0/P1/P2, location, issue, evidence.',
-      'Only approve if no unresolved P0/P1 and the source-grounded identities are correct.',
+      'Do not approve invented appearance or unsupported quote spans.',
+      'Exact approved script sections '+JSON.stringify(script.sections),
       'Exact previous analysis '+JSON.stringify(prior.draftAnalysis),
-      'Frozen envelope '+JSON.stringify({schema:'mode-b-identity-external-result-v1',
-        stage:'script_analysis',project_id:task.project_id,task_id:task.task_id,
-        revision:task.revision,input_sha256:task.input_sha256,
-        payload:{schema:'stickman-analysis-review-v1',project_id:task.project_id,
-          analysis_sha256:prior.draftSha256,independent_review:true,
-          findings:[],approved:false}})
+      analysisReviewContract(task,prior.draftSha256!),
     ].join('\n\n');
   }else if(operation==='correct'){
     task.prompt=[
       '# SCOPED SCRIPT ANALYSIS CORRECTION',
-      'Only correct the actual P0/P1 findings. Do not revise narration or invent traits.',
-      'A second independent Recheck is mandatory. Return exact frozen JSON envelope.',
+      'Correct ONLY P0/P1 findings without modifying narration or inventing traits.',
+      'A second independent Recheck is mandatory.',
+      'Exact approved script sections '+JSON.stringify(script.sections),
       'Current analysis '+JSON.stringify(prior.draftAnalysis),
       'Independent findings '+JSON.stringify(prior.independentReview?.findings??[]),
-      'Frozen task '+JSON.stringify(task)
+      analysisAuthorContract(task),
     ].join('\n\n');
   }
   const next=clone(prior);
