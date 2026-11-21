@@ -87,17 +87,31 @@ function CardPromptEditor({card,onSave}:{
 }){
   const spec=card.spec;
   const [prompt,setPrompt]=useState(spec?.prompt??'');
-  const [references,setReferences]=useState(spec?.references.join(', ')??'');
+  const [references,setReferences]=useState((spec?.identityOwnerReferences??spec?.references??[]).join(', '));
   useEffect(()=>{
     setPrompt(spec?.prompt??'');
-    setReferences(spec?.references.join(', ')??'');
+    setReferences((spec?.identityOwnerReferences??spec?.references??[]).join(', '));
   },[spec?.draftIdentity.creativeFingerprint,spec?.promptSha256,
-    spec?.references.join('|')]);
+    spec?.identityOwnerReferences?.join('|'),spec?.references.join('|')]);
   if(!spec)return <div className="info">No source-backed prompt is currently prepared for this target.</div>;
   const parsed=references.split(',').map(value=>value.trim()).filter(Boolean);
   return <div className="stack">
     <strong>Verified Native target: {spec.shotId}/{spec.layerId}</strong>
     <div>Style authority {spec.styleProfileRef.id} · SHA {spec.styleProfileRef.sha256}</div>
+    {spec.identityBindingSnapshotSha&&<div className="info"
+      data-testid="f24-canonical-bindings">
+      <strong>Canonical Character IDs:</strong>{' '}
+      {spec.identityCharacterIds?.join(', ')||'No recurring character'}
+      <div>Required reference images: {spec.identityRequiredReferences?.length??0} ·
+        total including owner/style: {spec.references.length}/8</div>
+      <div>Identity binding SHA {spec.identityBindingSnapshotSha.slice(0,16)}</div>
+      <div>Style Bible SHA {spec.identityStyleBibleSha?.slice(0,16)}</div>
+      {spec.identityPreviousSourceSha&&<div>
+        Approved previous image SHA {spec.identityPreviousSourceSha.slice(0,16)}
+      </div>}
+      {spec.identityRequiredReferences?.map(path=><div key={path}>
+        Canonical/continuity image: {path}</div>)}
+    </div>}
     <label>Editable image description
       <textarea className="textarea" aria-label={'Edit image prompt '+card.target.layerId}
         value={prompt} onChange={event=>setPrompt(event.target.value)}/>
