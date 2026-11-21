@@ -8,7 +8,7 @@ import {appPath,cleanup,fixture,nativePayload,stageNative} from './SixIssueFixtu
 import {getNativeImageGallery,fulfillMedia,importMediaFile,readNativeDraft,
   publishNativeDraftCorrection} from '../../src/main/externalTasks';
 import {prepareNativeImages,saveNativeImagePrompt} from '../../src/main/imagePreparation';
-import {readState,sha} from '../../src/main/services';
+import {sha} from '../../src/main/services';
 import {addCharacterReference,approveCharacter,archiveCharacter,previewCharacterImpact,
   readCharacterRegistry,readTargetBindings,registerCharacter,saveTargetBinding,
   setStrictCharacterMode,verifyIdentityMedia} from '../../src/main/visualIdentityRegistry';
@@ -197,6 +197,30 @@ describe('F24 source-grounded registry, reference payload and strict gates',()=>
       request(root,targets[0].key),decode)).rejects.toThrow('CHARACTER_MAPPING_REVIEW_REQUIRED');
     expect(posts()).toHaveLength(0);
   });
+  it('VCR-07 B4 mandatory approved style anchor and canonical character image both reach the same paid payload',async()=>{
+    const {root,targets}=stage(1,'B4');
+    const initial=prepareNativeImages(appPath,root).jobs[0];
+    const selected='@modeb/b4/'+initial.styleAnchors[0].id;
+    saveNativeImagePrompt(appPath,root,{
+      targetKey:targets[0].key,fingerprint:initial.draftIdentity.creativeFingerprint,
+      styleSha256:initial.styleProfileRef.sha256,
+      prompt:'Owner approved exact B4 character action, no invented appearance.',
+      references:[selected]
+    });
+    const {ref}=character(root,'char_001',61);
+    strict(root);map(root,targets[0].key,['char_001']);
+    const job=prepareNativeImages(appPath,root).jobs[0];
+    expect(job.state).toBe('READY');
+    expect(job.references).toEqual([selected,ref.relativePath]);
+    expect(job.effectivePrompt).toContain('APPROVED MODE B STYLE B4');
+    expect(job.effectivePrompt).toContain('CANONICAL CHARACTER IDENTITY REFERENCES');
+    const {posts}=transport(),dir=credential();
+    await submitGlabsImage(appPath,root,dir,cipher,request(root,targets[0].key),decode);
+    expect(posts()).toHaveLength(1);
+    const refs=posts()[0].body!.reference_images as Array<{data:string}>;
+    expect(refs).toHaveLength(2);
+    expect(sha(Buffer.from(refs[1].data.split(',')[1],'base64'))).toBe(ref.sha256);
+  });
   it('VCR-08 more than eight distinct required character references cannot be silently dropped',async()=>{
     const {root,targets}=stage(1);
     const ids:string[]=[];
@@ -315,6 +339,18 @@ describe('F24 source-grounded registry, reference payload and strict gates',()=>
       reviewedImpactSha256:impact.impactSha256,expectedRevision:readCharacterRegistry(root).revision});
     expect(()=>assertStrictProjectPublicationReady(root)).toThrow('CHARACTER_PUBLICATION_BLOCKED');
     expect(verifyIdentityMedia(root,a.media.path,a.ref.sha256).sha256).toBe(a.ref.sha256);
+  });
+  it('VCR-14/17 archived master preserves bytes/history and fails closed for its mapped targets',()=>{
+    const {root,targets}=stage(2),{ref}=character(root,'char_001',62);
+    strict(root);map(root,targets[0].key,['char_001']);
+    map(root,targets[1].key,[],true,{sourceTargetKey:targets[0].key,relation:'same_setup'});
+    const impact=previewCharacterImpact(root,'char_001');
+    expect(impact.targets).toEqual(targets.map(t=>t.key).sort());
+    archiveCharacter(root,{characterId:'char_001',expectedRevision:readCharacterRegistry(root).revision,
+      reviewedImpactSha256:impact.impactSha256});
+    expect(readCharacterRegistry(root).characters[0].status).toBe('ARCHIVED');
+    expect(resolveVisualReferences(root,targets[0].key).readiness).toBe('CHARACTER_REFERENCE_REQUIRED');
+    expect(verifyIdentityMedia(root,ref.relativePath,ref.sha256).sha256).toBe(ref.sha256);
   });
   it('VCR-17 active or UNKNOWN provider job blocks canonical replacement with no automatic POST',async()=>{
     const {root,targets}=stage(1);character(root,'char_001',45);
