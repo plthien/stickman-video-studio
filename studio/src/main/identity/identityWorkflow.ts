@@ -64,8 +64,17 @@ export function readIdentityWorkflow(root:string):IdentityWorkflowStore{
   if(data?.schema!=='stickman-identity-workflow-v1'||data.projectId!==projectId||
     !Number.isSafeInteger(data.revision)||data.revision<0||
     !Array.isArray(data.events)||!Array.isArray(data.referenceCandidates)||
-    data.events.length>2000||data.referenceCandidates.length>400)
+    data.events.length>2000||data.referenceCandidates.length>400||
+    (data.referenceApprovalHistory!==undefined&&
+      (!Array.isArray(data.referenceApprovalHistory)||
+       data.referenceApprovalHistory.length>100)))
     throw Error('IDENTITY_WORKFLOW_CORRUPT');
+  for(const priorSet of data.referenceApprovalHistory??[]){
+    if(!priorSet||priorSet.schema!=='stickman-reference-approval-set-v1')
+      throw Error('IDENTITY_REFERENCE_HISTORY_CORRUPT');
+    const {approval_set_sha256:stored,...base}=priorSet;
+    if(contentHash(base)!==stored)throw Error('IDENTITY_REFERENCE_HISTORY_CORRUPT');
+  }
   return data;
 }
 function save(root:string,prior:IdentityWorkflowStore,next:IdentityWorkflowStore,
@@ -316,7 +325,7 @@ export function registerOwnerReference(root:string,appPath:string,input:{
   const next=clone(prior);
   next.referenceCandidates.push(candidate);
   if(next.referenceCandidates.length>400)throw Error('IDENTITY_CANDIDATES_LIMIT');
-  next.referenceApprovalSet=null;
+  // Owner import is merely a candidate; the published set remains immutable.
   return save(root,prior,next,
     'candidate:owner-import:source-sha-'+sha(input.ownerSource.trim()),candidate);
 }
