@@ -29,6 +29,23 @@ const cards:GalleryCard[]=images.map((item,index)=>{
 });
 const urls=Object.fromEntries(cards.filter(card=>card.job).map(card=>
   [card.job!.id,'studio-media://A/'+card.job!.staged!.path]));
+/** Complete source-backed Native image spec; no partial fixture type assertions. */
+function preparedSpec(layerId:string):NonNullable<GalleryCard['spec']>{
+  const target=cards.find(card=>card.target.layerId===layerId)!.target;
+  const prompt='Verified source-grounded image instructions';
+  return{
+    assetKey:target.key,targetKeys:[target.key],expectedPaths:[target.path],
+    shotId:target.shotId,layerId,targetKey:target.key,path:target.path,
+    assetKind:'other',state:'READY',reason:'',prompt,
+    promptSha256:'d'.repeat(64),effectivePrompt:prompt,
+    effectivePromptSha256:'d'.repeat(64),sourceDescription:'verified source',
+    sourceLedger:'',sourceRows:[],references:[],styleAnchors:[],
+    styleProfileRef:{id:'B1',sha256:'b'.repeat(64),path:'references/b1-minimal-handdrawn.md'},
+    draftIdentity:{projectId:'A',authorTaskId:'author-A',token:'token-A',revision:1,
+      creativeFingerprint:'a'.repeat(64)},
+    occurrencesAtPath:1,ownerEdited:false
+  };
+}
 function Harness({approve=vi.fn(),generate=vi.fn()}:{
   approve?:(id:string)=>void;generate?:(key:string)=>void
 }){
@@ -105,14 +122,14 @@ describe('F09 Native Shot full-card gallery without selecting Layers',()=>{
     expect(approve).not.toHaveBeenCalled();
   });
   it('F13-UI-01 superseded APPROVED history does not appear as currently approved',()=>{
-    const old=cards[0].job!;
+    const old=cards[0].job!,base=preparedSpec('portrait');
     const superseded:GalleryCard={
       ...cards[0],target:{...cards[0].target,fulfilled:false},
       job:null,history:[{...old,status:'APPROVED'}],
       superseded:true,currentlyBound:false,spec:{
-        targetKey:cards[0].target.key,state:'READY',prompt:'Verified creative target prompt',
-        references:[],draftIdentity:{creativeFingerprint:'f'.repeat(64)}
-      } as GalleryCard['spec']
+        ...base,prompt:'Verified creative target prompt',
+        draftIdentity:{...base.draftIdentity,creativeFingerprint:'f'.repeat(64)}
+      }
     };
     render(<ShotImageGallery projectId="A" shotId="shot-1" cards={[superseded]} urls={{}}
       previewIdentity={()=>''} previewReady={{}} previewErrors={{}}
@@ -151,15 +168,15 @@ describe('F09 Native Shot full-card gallery without selecting Layers',()=>{
   });
   it('F14-UI-01 card details edit only its source prompt and B4 approved reference',async()=>{
     const save=vi.fn();
-    const prepared={
-      targetKey:cards[0].target.key,shotId:'shot-1',layerId:'portrait',
-      state:'READY',reason:'',prompt:'Verified creative illustration request',
-      promptSha256:'d'.repeat(64),sourceDescription:'verified source',
-      sourceRows:[],references:[],styleProfileRef:{
-        id:'B4',sha256:'b'.repeat(64),path:'references/b4-approved.md'
-      },styleAnchors:[{id:'b4-approved-1',label:'Approved B4 illustration'}],
-      draftIdentity:{token:'token-A',creativeFingerprint:'c'.repeat(64)}
-    } as NonNullable<GalleryCard['spec']>;
+    const base=preparedSpec('portrait');
+    const prepared:NonNullable<GalleryCard['spec']>={
+      ...base,prompt:'Verified creative illustration request',
+      effectivePrompt:'Verified creative illustration request',
+      styleProfileRef:{id:'B4',sha256:'b'.repeat(64),path:'references/b4-approved.md'},
+      styleAnchors:[{id:'b4-approved-1',label:'Approved B4 illustration',
+        sha256:'b'.repeat(64)}],
+      draftIdentity:{...base.draftIdentity,creativeFingerprint:'c'.repeat(64)}
+    };
     render(<ShotImageGallery projectId="A" shotId="shot-1"
       cards={[{...cards[0],spec:prepared}]} urls={urls}
       previewIdentity={()=>''} previewReady={{}} previewErrors={{}}
@@ -182,11 +199,7 @@ describe('F09 Native Shot full-card gallery without selecting Layers',()=>{
   });
   it('F20-UI-01 VALIDATED unbound candidate offers approve and explicit paid regeneration from its Shot card',()=>{
     const generate=vi.fn(),approve=vi.fn();
-    const spec={targetKey:cards[0].target.key,shotId:'shot-1',layerId:'portrait',
-      state:'READY',prompt:'Verified source-grounded image instructions',references:[],
-      draftIdentity:{token:'token-A',creativeFingerprint:'a'.repeat(64)},
-      styleProfileRef:{id:'B1',sha256:'b'.repeat(64)}
-    } as NonNullable<GalleryCard['spec']>;
+    const spec=preparedSpec('portrait');
     const old={...cards[0],spec};
     const original=old.job!;
     const view=render(<ShotImageGallery projectId="A" shotId="shot-1"
