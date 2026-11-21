@@ -6,6 +6,7 @@ import { approvedCaptionCues, nativeVoiceTiming } from './captionReview.js';
 import { rejectNativeUnsafePaths, validateAuthoring } from './sourceCitations.js';
 import { compileAuthority } from './externalAuthority.js';
 import {imageRequirementFingerprintSources} from './imageRequirements.js';
+import {readApprovedNativeIdentity,validateNativeBindingPayload} from './identity/nativeBinding.js';
 
 export function externalOutputFilename(
   stage:Stage,operation:'author'|'review'|'correct'|'recheck'|'media-review',
@@ -57,7 +58,8 @@ const projectContext = (state: StudioState, root: string, stage:Stage) => {
 };
 /** Native prompt projection v1: keep sourceFingerprint() on full frozen evidence.
  * This is an output-size change only; never rewrite the accepted alignment file. */
-function nativePromptProjection(context:ReturnType<typeof projectContext>,root:string){
+function nativePromptProjection(context:ReturnType<typeof projectContext>,root:string,
+  appPath:string){
   const source=context as unknown as Record<string,unknown> & {
     alignment?:{words?:unknown;caption_cues?:unknown;approved_caption_cues?:unknown;
       provenance?:unknown;words_sha256?:unknown;cues_sha256?:unknown;
@@ -80,6 +82,9 @@ function nativePromptProjection(context:ReturnType<typeof projectContext>,root:s
   const {assets:unusedAssets,media_ledger:unusedLedger,...common}=source;
   void unusedAssets;void unusedLedger;
   return {...common,
+    ...(readState(root).identityPolicy==='v1'?{
+      upstream_character_authority:readApprovedNativeIdentity(root,appPath)
+    }:{}),
     prompt_projection_version:'native-author-word-only-v1',
     alignment:{
       provenance:source.alignment?.provenance,
@@ -104,7 +109,9 @@ export function sourceFingerprint(appPath: string, root: string, stage: Stage) {
   // New unassigned media files never change creative authority. Existing assets are
   // separately snapshotted with their exact bytes at freeze and checked at both gates.
   const creative = Object.fromEntries(Object.entries(context).filter(([key]) => key !== 'assets' && key !== 'media_ledger'));
-  return sha(JSON.stringify({ stage, creative, authority }));
+  const identity=stage==='native'&&state.identityPolicy==='v1'?
+    readApprovedNativeIdentity(root,appPath).snapshotSha:null;
+  return sha(JSON.stringify({ stage, creative, authority, ...(identity?{identity}:{}) }));
 }
 const mediaSnapshot = (state: StudioState) => (state.media ?? []).map(row => ({
   path: row.path, sha256: row.sha256, rights: row.rights, kind: row.kind,
@@ -207,11 +214,12 @@ export function freezeTask(appPath: string, root: string, stage: Stage, rebuild 
 - In shot_ledger explain each real shot_id's meaning, visible state, important delta, composition, continuity, motion and constraints using the existing auxiliary ledger format; do not place unsupported extra metadata in manifest.shots.
 - In sound_script place only justified real SFX/ambience intentions tied to actual targets/events; distinguish proposed sounds from existing assets.
 - For EVERY generated image, declare a real manifest.shots[] image layer with an immutable id and safe missing project-relative path. The corresponding asset_needs must name the SAME real Shot ID, layer ID and expected path using the accepted auxiliary format. Describe actual content, orientation and continuity references. Never claim the image exists or fabricate an asset SHA.
+- If upstream_character_authority is present (F24), EVERY Native image target MUST have exactly ONE STRUCTURED asset_needs row with shot_id, layer_id, expected_path, content, character_ids (explicit array, even when empty), and optional typed continuity_source {shot_id,layer_id,relation}. Only use canonical char_id values supplied by upstream_character_authority. Do NOT invent characters, omit a target, add identity fields to manifest/project.json, or use legacy string asset_needs for F24 targets. Review exact owner-approved canonical source and identity lineage SHA.
 - Cross-check complete story coverage, temporal order, shot/layer ids, motion feasibility, character/object continuity and every G-Labs-compatible frozen image target. Only actual imported assets with rights and matching SHA may be described as present.
 - Return ONE COMPLETE Native candidate with manifest, shot_ledger, sound_script and asset_needs. Do not return Review/Correct/Recheck verdicts, a published project, fake CLI validation, media observations or a rendered film.
 
 ## ACTUAL AUTHORING SOURCE (COMPACT PROJECTION v1; SOURCE EVIDENCE UNCHANGED)
-${JSON.stringify(nativePromptProjection(context,root), null, 2)}
+${JSON.stringify(nativePromptProjection(context,root,appPath), null, 2)}
 
 ## REQUIRED RESPONSE ENVELOPE\n${JSON.stringify(response, null, 2)}\n\nThe RESPONSE ENVELOPE is a structural starting point, NOT a valid finished film. Fill every required shot, ledger and actual field with project-specific verified data; no placeholder values, invented media, or fabricated timing. The outer identity fields must be returned byte-for-value. For native authoring, payload.manifest is the original B1–B4 project.json v1 and must contain no Studio/task metadata. Ground every shot in the approved script and actual word/caption timing. List missing media honestly; never fabricate an existing asset path.\n\n## AUTHORITATIVE INSTALLED MODE B SOURCES (SOURCE-EXACT VERIFIED STAGE EXTRACTIONS)\n${sources.map(item => `\n--- BEGIN ${item.relative} [full SHA256 ${item.sha256}; extraction SHA256 ${item.extractionSha256}; revision ${item.extractionRevision}; sections ${item.headings.join(' | ') || 'complete original'}] ---\n${item.text}\n--- END ${item.relative} ---`).join('\n')}\n`:'';
   const corePrompt=stage==='script'?scriptAuthorPrompt(context,response,sources):prompt.replace('Do not call tools, return Markdown, executable code or local absolute paths.','Do not claim or use local CLI, local media, paid providers, or file inspection without actual access. Return no Markdown, executable code, secrets, or local absolute paths. Public research is permitted when demanded and evidence is cited.');
@@ -302,7 +310,8 @@ export function nativeImageTargetsFromManifest(manifest:Record<string,unknown>){
       shotIndex:ref.shotIndex};
   });
 }
-export function validateManifest(state: StudioState, root: string, payload: Record<string, unknown>) {
+export function validateManifest(state: StudioState, root: string,
+  payload: Record<string, unknown>,appPath?:string) {
   exactKeys(payload, ['manifest','shot_ledger','sound_script','asset_needs']);
   for(const field of ['shot_ledger','sound_script','asset_needs'])if(!Array.isArray(payload[field]))throw new Error('Native correction must include a complete '+field+' array.');
   const manifest = payload.manifest as Record<string, unknown>;
@@ -342,6 +351,10 @@ export function validateManifest(state: StudioState, root: string, payload: Reco
     const expected=row.path??row.expected_path??row.asset_path;
     if(expected!==undefined&&(typeof expected!=='string'||expected!==existing[0].path))
       throw new Error('NATIVE_ASSET_NEED_PATH_MISMATCH: expected asset path differs from actual image layer.');
+  }
+  if(state.identityPolicy==='v1'){
+    if(!appPath)throw Error('IDENTITY_NATIVE_APP_PATH_REQUIRED');
+    validateNativeBindingPayload(root,appPath,manifest,payload.asset_needs as unknown[]);
   }
   return {manifest,shotLedger:payload.shot_ledger??[],soundScript:payload.sound_script??[],assetNeeds:payload.asset_needs??[],missing:collectMissing(root,state,manifest)};
 }
@@ -504,7 +517,7 @@ export function publishNativeDraftCorrection(appPath:string,root:string,original
     editableIds:string[];editablePaths:string[];findingIds:string[]}){
   const state=readState(root),draft=readNativeDraft(root,state);
   if(!draft)throw new Error('NATIVE_DRAFT_REQUIRED');
-  const normalized=validateManifest(state,root,corrected);
+  const normalized=validateManifest(state,root,corrected,appPath);
   const newArtifact={manifest:normalized.manifest,shot_ledger:normalized.shotLedger,
     sound_script:normalized.soundScript,asset_needs:normalized.assetNeeds};
   const newSha256=sha(JSON.stringify(newArtifact));
@@ -588,7 +601,7 @@ function assertTaskCurrent(appPath:string,root:string,stage:Stage,state:StudioSt
 export function stageImport(appPath: string, root: string, stage: Stage, text: string) {
   const state=readState(root),task=assertTaskCurrent(appPath,root,stage,state);
   const envelope=validateEnvelope(state,stage,strictJson(text));
-  const payload=stage==='script'?validateScript(envelope.payload):validateManifest(state,root,envelope.payload);
+  const payload=stage==='script'?validateScript(envelope.payload):validateManifest(state,root,envelope.payload,appPath);
   const responseSha256=sha(text);
   if(fs.existsSync(pendingPath(root))){
     const prior=readPending(root);
