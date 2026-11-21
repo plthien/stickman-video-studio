@@ -35,7 +35,7 @@ const owned=(root:string,suffix:string)=>{
   fs.writeFileSync(original,png());
   return importMediaFile(root,original,'image','Owner-created reference image; rights authorized');
 };
-function setup(continuity=false){
+function setup(continuity=false,additionalImages=0){
   const {root}=fixture();
   const state=readState(root);state.identityPolicy='v1';writeState(root,state);
   const script=currentApprovedSource(root);
@@ -97,6 +97,14 @@ function setup(continuity=false){
         shot_id:'shot-1',layer_id:'image-1',relation:'match_subject'
       }}:{})}
   ];
+  const layers=raw.manifest.shots[1].layers as Array<Record<string,unknown>>;
+  for(let index=0;index<additionalImages;index++){
+    const layerId='extra-image-'+String(index+1).padStart(3,'0');
+    const imagePath='assets/images/extra-'+String(index+1).padStart(3,'0')+'.png';
+    layers.push({id:layerId,type:'image',path:imagePath});
+    needs.push({shot_id:'shot-2',layer_id:layerId,expected_path:imagePath,
+      content:'Extra source-grounded character image',character_ids:['char_001']});
+  }
   const source={...raw,asset_needs:needs};
   stageNative(root,source);
   return{root,ref,bible,set,source};
@@ -278,6 +286,21 @@ const mockOriginalNativeCli=async(_exe:string,args:string[])=>{
       .toBe(before[0].identityBindingSnapshotSha);
     expect(after[1].identityBindingSnapshotSha)
       .not.toBe(before[1].identityBindingSnapshotSha);
+  });
+  it('F24-AUD-07 20-target preparation does not re-read verified Style Bible for each image',()=>{
+    const {root}=setup(false,18);
+    const original=fs.readFileSync;
+    let journalReads=0;
+    const spy=vi.spyOn(fs,'readFileSync').mockImplementation((...args)=>{
+      if(String(args[0]).endsWith('workflow-v1.json'))journalReads++;
+      return (original as (...input:typeof args)=>ReturnType<typeof original>)(...args);
+    });
+    try{
+      const jobs=prepareNativeImages(appPath,root).jobs;
+      expect(jobs).toHaveLength(20);
+      expect(jobs.every(job=>job.state==='READY')).toBe(true);
+      expect(journalReads).toBeLessThan(12);
+    }finally{spy.mockRestore();}
   });
   it('F24-AUD-04 Native Confirm accepts sample-scoped first image while FULL render remains blocked',async()=>{
     const {root}=setup(),auth=account();fakeProvider(secondPng);
