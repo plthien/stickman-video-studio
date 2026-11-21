@@ -70,6 +70,25 @@ describe('R2 explicit external reservation identity',()=>{
     expect(harness.stageLifecycle).not.toHaveBeenCalled();
     expect(screen.queryByRole('button',{name:/Confirm reviewed import/})).not.toBeInTheDocument();
   });
+  it('accepts a one-shot loadend-only JSON read without staging or confirming',async()=>{
+    const response=JSON.stringify({schema:'mode-b-external-result-v1',payload:{sections:[]}},null,2);
+    class LoadEndOnlyReader {
+      result:string|null=null;
+      onload:(()=>void)|null=null;
+      onloadend:(()=>void)|null=null;
+      onerror:(()=>void)|null=null;
+      readAsText(){this.result=response;this.onloadend?.();}
+    }
+    vi.stubGlobal('FileReader',LoadEndOnlyReader);
+    showCorrect();
+    fireEvent.change(screen.getByLabelText('Choose JSON file'),{
+      target:{files:[new File([response],'response.json',{type:'application/json'})]}
+    });
+    await waitFor(()=>expect(screen.getByRole('textbox',{name:'Import JSON'})).toHaveValue(response));
+    expect(screen.getByRole('button',{name:'Validate import'})).toBeDisabled();
+    expect(harness.stageImport).not.toHaveBeenCalled();
+    expect(harness.stageLifecycle).not.toHaveBeenCalled();
+  });
   it('rejects malformed .json without replacing existing pasted JSON or staging an import',async()=>{
     showCorrect();
     const editor=screen.getByRole('textbox',{name:'Import JSON'});
