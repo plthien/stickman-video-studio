@@ -46,6 +46,8 @@ export async function nativeJob(appPath:string,root:string,command:NativeCommand
     job.status='RUNNING';job.updatedAt=new Date().toISOString();journal(root,job);
     const{cli}=nativeSkillRoot(appPath),project=path.join(root,'project.json'),args=[cli,command];if(command==='doctor'){/* no project argument */}else if(command==='probe')args.push(resolveProjectFile(root,input.file||'output/preview.mp4'));else{args.push(project);if(input.seconds!==undefined&&['validate','preview'].includes(command))args.push('--seconds',String(input.seconds));if(command==='approve')args.push('--note',input.note!);if(input.replace&&['preview','render'].includes(command))args.push('--replace')}
     const result=await runner(process.execPath,args,{cwd:path.dirname(cli),signal:controller.signal});if(result.code!==0)throw new Error(result.stderr.trim()||result.stdout.trim()||`Native ${command} failed.`);
+    if(['validate','preview','approve','render'].includes(command))
+      assertStrictProjectPublicationReady(root);
     const fresh=readState(root),freshEvidence=requiresEvidence?currentNativeEvidence(root,fresh,{seconds:command==='render'?undefined:previewScope}):null;if(evidence&&freshEvidence?.fingerprint!==evidence.fingerprint)throw new Error('Native source evidence changed while the original CLI was running; result is STALE/BLOCKED.');if(JSON.stringify(taskIdentity(fresh))!==JSON.stringify(identity))throw new Error('Native task identity changed while the original CLI was running.');
     let resultArtifacts:unknown;
     ownedBefore={preview:fresh.preview,approval:fresh.approval,render:fresh.render};
