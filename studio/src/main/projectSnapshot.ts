@@ -60,7 +60,7 @@ export async function projectSnapshot(root:string,appPath:string,verifier?:Nativ
       if(upstream.readiness!=='REFERENCES_PUBLISHED'){
         identityReadiness={policy:'v1',status:'UPSTREAM_NOT_READY',reason:upstream.readiness};
       }else if(state.external.native){
-        assertPublishedIdentityCurrent(projectRoot,appPath);
+        assertPublishedIdentityCurrent(projectRoot,appPath,'SAMPLE');
         identityReadiness={policy:'v1',status:'CURRENT',reason:null};
       }else identityReadiness={policy:'v1',status:'NATIVE_REBUILD_REQUIRED',
         reason:'Native has not been confirmed under the current approved identity set'};
