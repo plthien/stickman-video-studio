@@ -272,8 +272,13 @@ function withUpstreamIdentity(appPath:string,root:string,item:ImageJobSpec):Imag
       !mandatory.includes(path))];
     const paths=[...new Set(ordered)];
     if(paths.length>8)throw Error('REFERENCE_BUDGET_EXCEEDED: '+paths.length+'/8');
+    // Native Correct can advance the DRAFT container revision without
+    // changing the exact target's creative fingerprint or canonical inputs.
+    // Pin only the target-specific evidence, never the container revision.
+    const {revision:_draftContainerRevision,...stableDraftIdentity}=item.draftIdentity;
+    void _draftContainerRevision;
     const frozen={targetKey:item.targetKey,
-      draftIdentity:item.draftIdentity,upstreamSnapshotSha:binding.upstreamSnapshotSha,
+      draftIdentity:stableDraftIdentity,upstreamSnapshotSha:binding.upstreamSnapshotSha,
       targetBindingSha:binding.targetBindingSha,
       characterIds:binding.characterIds,approvalSetSha:binding.approvalSetSha,
       styleBibleSha:binding.styleBibleSha,
