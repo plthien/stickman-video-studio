@@ -47,7 +47,9 @@ const decode=(buffer:Buffer)=>({png:buffer,width:buffer.readUInt32BE(16),
   height:buffer.readUInt32BE(20)});
 function stage(count=2,style:'B1'|'B4'='B1'){
   const {root}=fixture({style});
-  const payload=nativePayload(root,{image:count>1?'both':'early'}) as {
+  // The shared fixture exposes generic manifest shots. Narrow the fixture
+  // shape explicitly for this test-only image-layer mutation.
+  const payload=nativePayload(root,{image:count>1?'both':'early'}) as unknown as {
     manifest:{shots:Array<{id:string;layers:Array<Record<string,unknown>>}>};
     shot_ledger:unknown[];sound_script:unknown[];asset_needs:unknown[];
   };
