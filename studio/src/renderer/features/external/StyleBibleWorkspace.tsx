@@ -2,6 +2,7 @@
 import {useEffect,useRef,useState} from 'react';
 import {useAppState} from '../../app/AppState';
 import type {ReferenceCandidate} from '../../../main/identity/referencePublication';
+import type {ReferenceJob} from '../../../main/identity/referenceGeneration';
 type Snapshot=Awaited<ReturnType<NonNullable<Window['studio']>['identitySnapshot']>>;
 const errorText=(e:unknown)=>e instanceof Error?e.message:String(e);
 function VerifiedReferenceImage({projectId,candidate,onLoaded}:{
@@ -30,6 +31,7 @@ function VerifiedReferenceImage({projectId,candidate,onLoaded}:{
 export function StyleBibleWorkspace(){
   const {native}=useAppState(),projectId=native?.project.id;
   const [snapshot,setSnapshot]=useState<Snapshot|null>(null);
+  const [jobs,setJobs]=useState<ReferenceJob[]>([]);
   const [error,setError]=useState(''),[busy,setBusy]=useState(false);
   const [paths,setPaths]=useState<Record<string,string>>({});
   const [sources,setSources]=useState<Record<string,string>>({});
@@ -37,18 +39,24 @@ export function StyleBibleWorkspace(){
   const [chosen,setChosen]=useState<Record<string,string>>({});
   const epoch=useRef(0);
   useEffect(()=>{
-    const current=++epoch.current;setSnapshot(null);setLoaded(new Set());setError('');
+    const current=++epoch.current;setSnapshot(null);setJobs([]);
+    setLoaded(new Set());setError('');
     if(!projectId||!window.studio?.identitySnapshot)return;
-    void window.studio.identitySnapshot(projectId).then(value=>{
-      if(current===epoch.current)setSnapshot(value);
+    void Promise.all([window.studio.identitySnapshot(projectId),
+      window.studio.identityReferenceJobs(projectId)]).then(([value,nextJobs])=>{
+      if(current===epoch.current){setSnapshot(value);setJobs(nextJobs);}
     }).catch(e=>{if(current===epoch.current)setError(errorText(e));});
     return()=>{epoch.current++;};
   },[projectId]);
   const action=(fn:(id:string,revision:number)=>Promise<unknown>)=>{
     if(!projectId||!snapshot||busy||!window.studio)return;
     const nonce=epoch.current;setBusy(true);setError('');
-    void fn(projectId,snapshot.journal.revision).then(()=>window.studio!.identitySnapshot(projectId))
-      .then(value=>{if(nonce===epoch.current)setSnapshot(value);})
+    void fn(projectId,snapshot.journal.revision).then(()=>Promise.all([
+      window.studio!.identitySnapshot(projectId),
+      window.studio!.identityReferenceJobs(projectId)
+    ])).then(([value,nextJobs])=>{
+      if(nonce===epoch.current){setSnapshot(value);setJobs(nextJobs);}
+    })
       .catch(e=>{if(nonce===epoch.current)setError(errorText(e));})
       .finally(()=>{if(nonce===epoch.current)setBusy(false);});
   };
@@ -90,6 +98,11 @@ export function StyleBibleWorkspace(){
         const candidates=journal.referenceCandidates.filter(candidate=>
           candidate.anchor_id===character.char_id&&
           candidate.source_definition_hash===character.source_definition_hash);
+        const referenceJobs=jobs.filter(job=>job.anchorId===character.char_id);
+        const unresolved=referenceJobs.some(job=>['QUEUED','SUBMITTED','RUNNING','UNKNOWN']
+          .includes(job.status));
+        const active=referenceJobs.some(job=>['QUEUED','SUBMITTED','RUNNING']
+          .includes(job.status));
         return <article className="identity-bible-character" key={character.char_id}>
           <h4>{character.char_id} · {character.label}</h4>
           <p>{character.entity_kind} · {character.narrative_role}</p>
@@ -97,6 +110,35 @@ export function StyleBibleWorkspace(){
           <p>Source occurrences: {character.occurrences.length} ·
             stable markers: {character.identity_markers.join(', ')||'not source-established'}</p>
           <p>Reference readiness: <strong>{character.visual_readiness}</strong></p>
+          {approved&&<div className="identity-reference-generation" data-testid="identity-reference-generation">
+            <div className="info">Reference generation is 1:1 and potentially paid.
+              Shot image settings remain unchanged; only an explicit owner click sends POST.</div>
+            <button className="button" type="button"
+              disabled={busy||unresolved||character.visual_readiness!=='READY_FOR_REFERENCE'}
+              onClick={()=>action(id=>window.studio!.identityGenerateReference(id,{
+                anchorId:character.char_id,authorized:true,
+                ...(referenceJobs.length?{regenerate:true}:{})
+              }))}>
+              {referenceJobs.length?'Regenerate Reference (Paid)':'Generate Reference (Paid)'}
+            </button>
+            {referenceJobs.map(job=><div key={job.id} className="identity-job"
+              data-testid="identity-reference-job">
+              <span>1:1 · {job.model} · {job.status} · {job.id.slice(0,8)}</span>
+              {job.providerTaskId&&<small>Provider task {job.providerTaskId}</small>}
+              {job.reason&&<small>{job.reason}</small>}
+              {job.status==='UNKNOWN'&&<strong>UNKNOWN may have charged.
+                No automatic paid retry.</strong>}
+              {['RUNNING','SUBMITTED','UNKNOWN'].includes(job.status)&&
+                <button type="button" className="button" disabled={busy||active&&
+                  referenceJobs.some(other=>other.id!==job.id&&
+                    ['QUEUED','SUBMITTED','RUNNING'].includes(other.status))}
+                  onClick={()=>action(id=>window.studio!.identitySyncReference(id,job.id))}>
+                  Retry Sync (GET only)
+                </button>}
+              {job.status==='VALIDATED'&&<small>Image validated; owner must preview and approve
+                the registered candidate below before publication.</small>}
+            </div>)}
+          </div>}
           {approved&&<div className="identity-owner-import">
             <label>Existing owner-imported project image path
               <input className="input" aria-label={'Owner image '+character.char_id}
@@ -164,9 +206,9 @@ export function StyleBibleWorkspace(){
       {journal.referenceApprovalSet&&<p>Published SHA:
         {' '}{journal.referenceApprovalSet.approval_set_sha256}</p>}
     </section>}
-    <p className="info">Separate paid 1:1 G-Labs reference-generation service is
-      <strong> NOT IMPLEMENTED</strong> on this draft branch. Importing genuine owned media
-      is available; no action here sends a paid POST. F24 Native auto-binding remains blocked.</p>
+    <p className="info">Reference jobs use a separate 1:1 journal. Provider completion
+      never implies visual approval. F24 Native automatic binding remains blocked
+      until exact Shot/Layer lineage gates are integrated and verified.</p>
     {error&&<p className="info error" role="alert">{error}</p>}
   </div>;
 }
