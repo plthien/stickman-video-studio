@@ -18,8 +18,14 @@ export function compileStyleBible(analysis:ScriptAnalysis,script:ApprovedScriptS
   const characters:BibleCharacter[]=analysis.continuity_catalog.characters.map(char=>{
     const inherited=structuredClone(char);
     const source_definition_hash=contentHash({inherited,styleId:pinned.id,styleSha:pinned.sha256});
+    // Merely naming a character is NOT a source-grounded appearance.
+    // Require some visual/physical evidence before asking a generator to draw
+    // an individual. Underspecified actors may instead use a real owner image.
+    const visualMarkers=char.identity_markers.filter(marker=>
+      marker.trim().toLocaleLowerCase('en')!==char.label.trim().toLocaleLowerCase('en'));
     return{...inherited,source_definition_hash,
-      visual_readiness:char.explicit_visual_traits.length||char.identity_markers.length?
+      visual_readiness:char.explicit_visual_traits.length||
+        char.physical_constraints.length||visualMarkers.length?
         'READY_FOR_REFERENCE' as const:'NEEDS_OWNER_DEFINITION' as const};
   });
   const base={schema:'stickman-project-style-bible-v1' as const,
