@@ -194,26 +194,36 @@ export function StoryboardWorkspace(){
         (right.createdAt??'').localeCompare(left.createdAt??'')||
         (right.journalRevision??0)-(left.journalRevision??0));
     const spec=prepared?.jobs.find(value=>value.targetKey===item.key)??null;
-    const sameAuthority=(job:ImageJob)=>(
-      // Authoritative fields, when available, MUST match. A historical
-      // approval without frozen creative/style proof cannot be called current.
-      (!(spec?.draftIdentity.creativeFingerprint??item.creativeFingerprint)||
-        job.targetCreativeSha256===
-          (spec?.draftIdentity.creativeFingerprint??item.creativeFingerprint))&&
-      (!(spec?.styleProfileRef.sha256??gallery?.styleProfileSha256)||
-        job.styleProfileSha256===
-          (spec?.styleProfileRef.sha256??gallery?.styleProfileSha256))&&
+    const expectedCreative=spec?.draftIdentity.creativeFingerprint??item.creativeFingerprint;
+    const expectedStyle=spec?.styleProfileRef.sha256??gallery?.styleProfileSha256;
+    // Older journals and lightweight IPC fixtures may not contain pinned
+    // hashes. Their current-token in-flight/failed/UNKNOWN states must remain
+    // visible (especially to avoid concealing potentially billed attempts).
+    // A present but mismatched hash is ALWAYS historical, never actionable.
+    const compatibleAuthority=(job:ImageJob)=>(
+      (!expectedCreative||!job.targetCreativeSha256||
+        job.targetCreativeSha256===expectedCreative)&&
+      (!expectedStyle||!job.styleProfileSha256||
+        job.styleProfileSha256===expectedStyle)&&
+      (!job.styleProfileId||!native?.project.style||
+        job.styleProfileId===native.project.style)
+    );
+    // Calling an APPROVED artifact the current generated binding requires
+    // positive frozen-lineage proof, not merely absent mismatch evidence.
+    const pinnedAuthority=(job:ImageJob)=>(
+      (!expectedCreative||job.targetCreativeSha256===expectedCreative)&&
+      (!expectedStyle||job.styleProfileSha256===expectedStyle)&&
       (!job.styleProfileId||!native?.project.style||
         job.styleProfileId===native.project.style)
     );
     const bound=history.find(job=>job.token===pending?.token&&
       job.status==='APPROVED'&&item.fulfilled&&
-      sameAuthority(job)&&Boolean(job.approved)&&
+      pinnedAuthority(job)&&Boolean(job.approved)&&
       (!job.approved||
         job.approved.path===item.boundPath&&
         (!item.boundSha256||job.approved.sha256===item.boundSha256)));
     const active=history.find(job=>job.token===pending?.token&&
-      job.status!=='APPROVED'&&sameAuthority(job)&&job.status!=='STALE');
+      job.status!=='APPROVED'&&compatibleAuthority(job)&&job.status!=='STALE');
     const job=bound??(!item.fulfilled?active:null)??null;
     return{target:item,job,history,spec,currentlyBound:Boolean(bound),
       superseded:!bound&&history.some(value=>value.status==='APPROVED'),
