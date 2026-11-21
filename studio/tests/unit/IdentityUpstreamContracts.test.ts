@@ -71,7 +71,7 @@ describe('F24 upstream source-grounded contract gates',()=>{
       const contract=operation==='author'?frozen.prompt:
         analysisAuthorContract(frozen);
       expect(contract).toContain('"mode-b-identity-external-result-v1"');
-      expect(contract).toContain('"script-analysis-v1"');
+      expect(contract).toContain('"stickman-script-analysis-v1"');
       expect(contract).toContain('"char_id"');
       expect(contract).toContain('"presence_ranges"');
       expect(contract).toContain('"input_sha256": "'+frozen.input_sha256+'"');
