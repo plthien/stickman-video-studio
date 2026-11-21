@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {getPendingMedia,nativeImageTargetIdentity,nativeImageTargetIdentityFromSnapshot,readNativeDraft} from './externalTasks.js';
 import {imageRequirementsForTarget} from './imageRequirements.js';
+import {resolveVisualReferences,type ReferencePlan} from './visualReferenceResolver.js';
 import {nativeSkillRoot,readState,resolveProjectFile,sha,atomicJson,strictJson} from './services.js';
 
 type Row=Record<string,unknown>;
@@ -18,6 +19,9 @@ export interface ImageJobSpec {
   references:string[];styleAnchors:Array<{id:string;label:string;sha256:string}>;
   draftIdentity:{projectId:string;authorTaskId:string;token:string;revision:number;creativeFingerprint:string};
   occurrencesAtPath:number; ownerEdited:boolean;
+  /** Separately pinned visual identity authority; legacy specs omit all three fields. */
+  referenceSetSha256?:string;identityOwnerReferences?:string[];
+  visualReferencePlan?:ReferencePlan;
 }
 interface Candidate {
   key:string;kind:'image'|'sfx';path:string;shotId?:string;layerId?:string;
@@ -235,6 +239,22 @@ function findExactLayer(layers:unknown[],layerId:string,pathValue:string):boolea
   }
   return false;
 }
+/** One compiler extension for opt-in strict identity. Never edits Native Author JSON. */
+function withVisualIdentity(root:string,item:ImageJobSpec):ImageJobSpec{
+  const plan=resolveVisualReferences(root,item.targetKey,item.references);
+  if(!plan.enabled)return item;
+  const ownerReferences=[...item.references];
+  const addition=plan.effectivePromptAppendix;
+  const effectivePrompt=addition&&item.effectivePrompt?
+    item.effectivePrompt+'\\n\\n'+addition:item.effectivePrompt;
+  return{...item,
+    state:item.state==='READY'&&plan.readiness!=='READY'?'BLOCKED':item.state,
+    reason:item.state==='READY'&&plan.readiness!=='READY'?plan.blockers.join(', '):item.reason,
+    references:plan.orderedPaths,
+    effectivePrompt,effectivePromptSha256:effectivePrompt?sha(effectivePrompt):'',
+    identityOwnerReferences:ownerReferences,
+    referenceSetSha256:plan.referenceSetSha256,visualReferencePlan:plan};
+}
 export function prepareNativeImages(appPath:string,root:string,persist=false){
   const state=readState(root),draft=readNativeDraft(root,state),pending=getPendingMedia(appPath,root);
   if(!draft||!pending||draft.token!==pending.token)
@@ -248,7 +268,8 @@ export function prepareNativeImages(appPath:string,root:string,persist=false){
   }
   const profile=loadImageStyleProfile(appPath,style);
   const jobs=compileImageJobSpecs({projectId:state.project.id,style,authorTaskId:draft.authorTaskId,draftRevision:draft.revision,
-    token:draft.token,pending,profile,fingerprints,overrides:overrides.items});
+    token:draft.token,pending,profile,fingerprints,overrides:overrides.items})
+    .map(job=>withVisualIdentity(root,job));
   const result={status:'PRE_MEDIA_PROJECTION' as const,style,revision:draft.revision,token:draft.token,
     jobs,shotCount:Array.isArray(pending.after?.shots)?pending.after!.shots!.length:0,imageOccurrences:image.length,
     uniquePaths:new Set(image.map(target=>target.path)).size};
@@ -277,11 +298,12 @@ export function prepareNativeImageTarget(appPath:string,root:string,targetKey:st
   const style=state.project.style as Style,profile=loadImageStyleProfile(appPath,style);
   const overrides=readOverrides(root,state.project.id);
   const selectedPending={...pending,missing:[target]};
-  return compileImageJobSpecs({
+  const candidate=compileImageJobSpecs({
     projectId:state.project.id,style,authorTaskId:draft.authorTaskId,
     draftRevision:draft.revision,token:draft.token,pending:selectedPending,profile,
     fingerprints:{[targetKey]:fingerprint},overrides:overrides.items
-  })[0]??null;
+  })[0];
+  return candidate?withVisualIdentity(root,candidate):null;
 }
 export function saveNativeImagePrompt(appPath:string,root:string,input:{
   targetKey:string;fingerprint:string;styleSha256?:string;prompt:string;references:string[]
