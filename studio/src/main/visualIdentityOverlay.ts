@@ -3,8 +3,7 @@
 import fs from 'node:fs';
 import {getNativeImageGallery} from './externalTasks.js';
 import {listGlabsJobs} from './glabs.js';
-import {readCharacterRegistry} from './visualIdentityRegistry.js';
-import {readTargetBindings} from './visualIdentityRegistry.js';
+import {readCharacterRegistry,readTargetBindings} from './visualIdentityRegistry.js';
 import {readVisualReviews} from './visualIdentityReview.js';
 import {resolveVisualReferences} from './visualReferenceResolver.js';
 import {atomicJson,readState,resolveProjectFile,sha,strictJson} from './services.js';
@@ -33,8 +32,9 @@ export function previewContinuityOverlay(root:string):Omit<ContinuityOverlay,'re
     const historical=jobs.filter(job=>job.targetKey===target.key);
     const current=historical.filter(job=>job.targetCreativeSha256===target.creativeFingerprint);
     const latest=current.find(job=>job.status==='VALIDATED'||job.status==='APPROVED')??current[0];
-    const ownerRefs=latest?.identityOwnerReferences??[];
-    const plan=resolveVisualReferences(root,target.key,ownerRefs);
+    // Undefined selects exact current Native owner overrides (B4/manual);
+    // current jobs instead retain the frozen explicit owner selections.
+    const plan=resolveVisualReferences(root,target.key,latest?.identityOwnerReferences);
     let status:ContinuityOverlayRow['status']=plan.readiness;
     const currentDigest=plan.referenceSetSha256;
     if(status==='READY'){
