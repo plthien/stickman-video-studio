@@ -44,6 +44,7 @@ const prepared=(id:string)=>({
 type ImageJob={id:string;projectId:string;token:string;targetKey:string;shotId:string;
   layerId:string;targetPath:string;status:string;model:string;aspectRatio:string;
   prompt:string;reason?:string;journalRevision?:number;
+  targetCreativeSha256?:string;styleProfileSha256?:string;
   staged?:{path:string;sha256:string;width:number;height:number}};
 const job=(id:string,targetIndex:number,status='RUNNING'):ImageJob=>{
   const t=targets[targetIndex];
@@ -109,6 +110,41 @@ describe('Phase-1 Storyboard viewport and owner-started safe bulk generation',()
     expect(records()).toHaveLength(2);
     expect(await screen.findByTestId('image-batch-progress')).toHaveTextContent('2 / 2 requests submitted');
     expect(screen.getByRole('button',{name:'Generate All Ready (0 paid attempts)'})).toBeDisabled();
+  });
+  it('F23-BULK-01 two superseded same-token image attempts regenerate in an owner-started paid batch',async()=>{
+    const prior=[
+      {...job('old-approved-a',0,'APPROVED'),targetCreativeSha256:'9'.repeat(64),
+        styleProfileSha256:'c'.repeat(64)},
+      {...job('old-stale-b',1,'STALE'),targetCreativeSha256:'8'.repeat(64),
+        styleProfileSha256:'c'.repeat(64)}
+    ];
+    const {generate}=install(prior);
+    render(<AppStateProvider><Harness/></AppStateProvider>);
+    const button=await screen.findByRole('button',{
+      name:'Generate All Ready (2 paid attempts · 2 regenerations)'
+    });
+    expect(button).toBeEnabled();
+    expect(generate).not.toHaveBeenCalled();
+    fireEvent.click(button);
+    await waitFor(()=>expect(generate).toHaveBeenCalledTimes(2));
+    expect(generate.mock.calls.map(call=>call[1].targetKey)).toEqual(targets.map(item=>item.key));
+    for(const call of generate.mock.calls){
+      expect(call[1]).toMatchObject({authorized:true,acknowledgeUnknown:false,regenerate:true});
+    }
+    expect(generate).toHaveBeenCalledTimes(2);
+  });
+  it('F23-BULK-02 current VALIDATED and active/UNKNOWN images never enter ordinary Generate All',async()=>{
+    const current=[
+      {...job('validated-a',0,'VALIDATED'),targetCreativeSha256:'a'.repeat(64),
+        styleProfileSha256:'c'.repeat(64)},
+      {...job('running-b',1,'RUNNING'),targetCreativeSha256:'b'.repeat(64),
+        styleProfileSha256:'c'.repeat(64)}
+    ];
+    const {generate}=install(current);
+    render(<AppStateProvider><Harness/></AppStateProvider>);
+    expect(await screen.findByRole('button',{name:'Generate All Ready (0 paid attempts)'}))
+      .toBeDisabled();
+    expect(generate).not.toHaveBeenCalled();
   });
   it('BULK-03 a prior UNKNOWN attempt is excluded from bulk and never acknowledged',async()=>{
     const {generate}=install([job('uncertain-1',0,'UNKNOWN')]);
