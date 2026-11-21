@@ -4,10 +4,10 @@ import fs from 'node:fs';
 import {randomUUID} from 'node:crypto';
 import {atomicJson,readState,resolveProjectFile,strictJson,sha,writeState,type StudioState} from '../services.js';
 import {loadImageStyleProfile} from '../imagePreparation.js';
-import {contentHash,type ScriptAnalysis,type StyleBible} from './contracts.js';
+import {contentHash,type ScriptAnalysis,type StyleBible,type IdentityReviewOperation} from './contracts.js';
 import {analysisLineage,freezeAnalysisTask,validateAnalysisEnvelope,
   validateScriptAnalysis,verifyIndependentReview,type ApprovedScriptSnapshot,
-  type AnalysisTask,type AnalysisReview,type IdentityReviewOperation} from './scriptAnalysis.js';
+  type AnalysisTask,type AnalysisReview} from './scriptAnalysis.js';
 import {compileStyleBible,type PinnedStyle} from './styleBible.js';
 import {approveCandidate,publishApprovalSet,validatePublishedSet,verifyReferenceFile,
   type ReferenceCandidate,type ReferenceApprovalSet,type IdentityDecoder} from './referencePublication.js';
