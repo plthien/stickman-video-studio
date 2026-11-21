@@ -29,6 +29,7 @@ export interface IdentityWorkflowStore{
   bible:StyleBible|null;bibleTextApproved:{sha256:string;approvedAt:string}|null;
   referenceCandidates:ReferenceCandidate[];
   referenceApprovalSet:ReferenceApprovalSet|null;
+  referenceApprovalHistory?:ReferenceApprovalSet[];
   events:JournalEvent[];
 }
 const file=(root:string)=>resolveProjectFile(root,'.studio/identity/workflow-v1.json');
@@ -37,7 +38,7 @@ function empty(projectId:string):IdentityWorkflowStore{
   return{schema:'stickman-identity-workflow-v1',projectId,revision:0,
     currentTask:null,draftAnalysis:null,draftSha256:null,
     independentReview:null,analysisApproved:null,bible:null,bibleTextApproved:null,
-    referenceCandidates:[],referenceApprovalSet:null,events:[]};
+    referenceCandidates:[],referenceApprovalSet:null,referenceApprovalHistory:[],events:[]};
 }
 export const identityPolicy=(state:StudioState):'legacy'|'v1'=>state.identityPolicy??'legacy';
 export function currentApprovedSource(root:string):ApprovedScriptSnapshot{
@@ -424,7 +425,7 @@ export function approveOwnerReference(root:string,appPath:string,input:{
   const next=clone(prior);
   next.referenceCandidates=next.referenceCandidates.map(c=>
     c.candidate_id===approved.candidate_id?approved:c);
-  next.referenceApprovalSet=null;
+  // Reviewing an alternative candidate does NOT republish or revoke canonical authority.
   return save(root,prior,next,'approve:reference',approved);
 }
 export function publishStyleBibleReferences(root:string,appPath:string,
@@ -451,7 +452,12 @@ export function publishStyleBibleReferences(root:string,appPath:string,
     return prior;
   const approvalSet=publishApprovalSet(root,bible,selected as ReferenceCandidate[],
     (prior.referenceApprovalSet?.revision??0)+1,decode);
-  const next=clone(prior);next.referenceApprovalSet=approvalSet;
+  const next=clone(prior);
+  if(prior.referenceApprovalSet){
+    next.referenceApprovalHistory=[...(prior.referenceApprovalHistory??[]),
+      prior.referenceApprovalSet].slice(-100);
+  }
+  next.referenceApprovalSet=approvalSet;
   return save(root,prior,next,'publish:reference-set',approvalSet);
 }
 export function assertIdentityUpstreamCurrent(root:string,appPath:string,
