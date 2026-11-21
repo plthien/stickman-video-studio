@@ -22,6 +22,9 @@ export interface GLabsJob {
   syncPhase?:'provider'|'result'|'download'|'decode'|'stage'|'validated';
   providerCompletedAt?:string;
   lastSyncError?:{stage:string;code:string;at:string};
+  /** Sanitized provider MIME evidence; actual MIME always comes from magic bytes. */
+  sourceMime?:'image/png'|'image/jpeg'|'image/webp';
+  mimeDiagnostic?:{declared:string;detected:string;classification:'missing'|'generic'|'alias'|'mismatch'};
   reason?:string;approved?:{rights:string;path:string;sha256:string;provenance?:{
     source:'G-Labs generated output';projectId:string;jobId:string;providerTaskId:string|null;
     model:string;promptSha256:string;imageSha256:string;nativeToken:string;
@@ -488,10 +491,29 @@ async function downloadImage(settings:GLabsSettings,urlText:string,userData:stri
       if(total>MAX_IMAGE)throw new Error('GLABS_DOWNLOAD_OVERSIZE');parts.push(next.value);}
   }finally{reader.releaseLock();}
   if(!total)throw new Error('GLABS_DOWNLOAD_EMPTY');
-  const data=Buffer.concat(parts.map(x=>Buffer.from(x))),mime=imageMime(data);
-  const ct=res.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
-  if(!ct||ct!==mime)throw new Error('GLABS_MIME_SIGNATURE_MISMATCH');
-  return{data,mime};
+  const data=Buffer.concat(parts.map(x=>Buffer.from(x)));
+  // HTTP success does not prove an image. Classify by bytes first, and reject
+  // HTML/JSON/XML error bodies before any decoder or staging operation.
+  let mime:'image/png'|'image/jpeg'|'image/webp';
+  try{mime=imageMime(data) as typeof mime;}
+  catch{throw new Error('GLABS_IMAGE_BODY_NOT_SUPPORTED');}
+  const declaredRaw=res.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase()??'';
+  const aliases:Record<string,string>={
+    'image/jpg':'image/jpeg','image/pjpeg':'image/jpeg',
+    'image/x-png':'image/png','image/x-webp':'image/webp'
+  };
+  const declared=aliases[declaredRaw]??declaredRaw;
+  const supported=['image/png','image/jpeg','image/webp'];
+  if(declared&&declared!=='application/octet-stream'&&!supported.includes(declared))
+    throw new Error('GLABS_DECLARED_MIME_UNSUPPORTED');
+  // A missing/generic header or a mismatch among supported IMAGE declarations
+  // is recoverable only because the caller MUST decode and validate the PNG.
+  const classification=!declared?'missing':declared==='application/octet-stream'?'generic':
+    declared!==mime?'mismatch':declaredRaw!==declared?'alias':null;
+  const mimeDiagnostic=classification?{
+    declared:declared||'(missing)',detected:mime,classification
+  }:undefined;
+  return{data,mime,mimeDiagnostic};
 }
 export async function pollGlabsImage(appPath:string,root:string,userData:string,cipher:CredentialCipher,id:string,
   decode:GLabsDecoder){
@@ -508,12 +530,35 @@ export async function pollGlabsImage(appPath:string,root:string,userData:string,
     return job;
   }
   const config=glabsSettings(userData),task=job.providerTaskId;
-  const response=await requestJson(config,userData,cipher,'GET','api/status/'+task);
+  let response:unknown;
+  try{
+    response=await requestJson(config,userData,cipher,'GET','api/status/'+task);
+    if(!pureObject(response)||response.task_id!==task)
+      throw new Error('GLABS_STATUS_TASK_ID_MISMATCH');
+  }catch(error){
+    // Read the latest durable evidence: a concurrent GET may have already
+    // validated this image. Never downgrade that journal from a stale failure.
+    const latest=readJob(root,id);
+    if(['VALIDATED','APPROVED','STALE','CANCELLED'].includes(latest.status))return latest;
+    if(!currentJobTarget(appPath,root,latest))return latest;
+    const code=error instanceof Error&&/^GLABS_[A-Z0-9_]+$/.test(error.message)?
+      error.message:'GLABS_STATUS_READ_FAILED';
+    latest.lastSyncError={stage:'provider',code,at:timestamp()};
+    if(!latest.providerCompletedAt)latest.syncPhase='provider';
+    writeJob(root,latest);
+    throw error;
+  }
   if(!currentJobTarget(appPath,root,job))return job;
-  if(!pureObject(response)||response.task_id!==task)throw new Error('GLABS_STATUS_TASK_ID_MISMATCH');
-  const status=String(response.status);
+  const latest=readJob(root,id);
+  if(['VALIDATED','APPROVED'].includes(latest.status))return latest;
+  Object.assign(job,latest);
+  const status=String((response as Record<string,unknown>).status);
   if((status==='pending'||status==='running')&&!job.providerCompletedAt){
-    if(job.status!=='RUNNING'){job.status='RUNNING';job.syncPhase='provider';writeJob(root,job);}
+    if(job.status!=='RUNNING'||job.lastSyncError?.stage==='provider'){
+      job.status='RUNNING';job.syncPhase='provider';
+      if(job.lastSyncError?.stage==='provider')delete job.lastSyncError;
+      writeJob(root,job);
+    }
     return job;
   }
   if(status==='failed'&&!job.providerCompletedAt){
@@ -527,8 +572,11 @@ export async function pollGlabsImage(appPath:string,root:string,userData:string,
     throw new Error('GLABS_STATUS_UNRECOGNIZED');
   // Provider completion is independently durable evidence. Errors below are
   // result-ingestion errors, never a failed/chargeable generation or new POST.
-  if(!job.providerCompletedAt){
-    job.providerCompletedAt=timestamp();job.syncPhase='result';writeJob(root,job);
+  if(!job.providerCompletedAt||job.lastSyncError?.stage==='provider'){
+    if(!job.providerCompletedAt)job.providerCompletedAt=timestamp();
+    job.syncPhase='result';
+    if(job.lastSyncError?.stage==='provider')delete job.lastSyncError;
+    writeJob(root,job);
   }
   try{
     const resolved=await requestJson(config,userData,cipher,'GET','api/result/'+task);
@@ -539,6 +587,9 @@ export async function pollGlabsImage(appPath:string,root:string,userData:string,
     job.status='DOWNLOADED';job.syncPhase='download';writeJob(root,job);
     const image=await downloadImage(config,resolved.results[0],userData,cipher);
     if(!currentJobTarget(appPath,root,job))return job;
+    job.sourceMime=image.mime;
+    if(image.mimeDiagnostic)job.mimeDiagnostic=image.mimeDiagnostic;
+    else delete job.mimeDiagnostic;
     job.syncPhase='decode';writeJob(root,job);
     const decoded=decode(image.data);
     if(!decoded||!Buffer.isBuffer(decoded.png)||imageMime(decoded.png)!=='image/png'||
