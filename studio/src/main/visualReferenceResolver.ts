@@ -162,7 +162,7 @@ export function resolveVisualReferences(root:string,targetKey:string,ownerRefs:s
   // Do not silently omit any required image; provider budget is additionally verified
   // against exact base64 bytes by G-Labs before it sends its paid POST.
   const referenceSetSha256=hash({targetKey,token:gallery.token,
-    creative:matched.target.creativeFingerprint,references:deduped,
+    creative:matched.target.creativeFingerprint,references:refs,
     styleRefs:ownerRefs.filter(ref=>ref.startsWith('@modeb/b4/')),
     sourceSnapshotSha256});
   const effectivePromptAppendix=binding.characters.length?[
@@ -175,7 +175,7 @@ export function resolveVisualReferences(root:string,targetKey:string,ownerRefs:s
     ']\nSource target '+binding.continuity.sourceTargetKey+
     '. Canonical character references control identity; previous image controls only the declared transient relationship. Do not copy unrelated actors or props.':'';
   return{enabled:true,targetKey,characterIds:[...binding.characters],
-    references:deduped,referenceSetSha256,readiness,blockers,
+    references:refs,referenceSetSha256,readiness,blockers,
     sourceSnapshotSha256,effectivePromptAppendix:effectivePromptAppendix+continuityPrompt,
     orderedPaths};
 }
