@@ -176,8 +176,10 @@ export function addCharacterReference(root:string,input:{
   if(ledger.rights.includes('G-Labs-generated')&&!input.sourceJobId)
     throw new Error('CHARACTER_GENERATED_PROVENANCE_REQUIRED');
   const decoded=decode(image.bytes);
-  if(!decoded||!Buffer.isBuffer(decoded.png)||decoded.width<1||decoded.height<1||
-    decoded.width>8192||decoded.height>8192)throw new Error('CHARACTER_REFERENCE_DECODE_FAILED');
+  if(!decoded||!Buffer.isBuffer(decoded.png)||
+    !Number.isSafeInteger(decoded.width)||!Number.isSafeInteger(decoded.height)||
+    decoded.width<1||decoded.height<1||decoded.width>8192||decoded.height>8192)
+    throw new Error('CHARACTER_REFERENCE_DECODE_FAILED');
   let sourceKind:CharacterReference['sourceKind']='OWNER_IMPORTED';
   if(input.sourceJobId){
     const jobPath=resolveProjectFile(root,'.studio/glabs/jobs/'+input.sourceJobId+'.json');
