@@ -14,6 +14,7 @@ export interface GalleryCard{
   history:ImageJob[];
   spec:Prepared['jobs'][number]|null;
   currentlyBound?:boolean;superseded?:boolean;hasCurrentAttempt?:boolean;
+  continuityStatus?:string;
 }
 export interface ShotImageGalleryProps{
   projectId:string;shotId:string;cards:GalleryCard[];urls:Record<string,string>;
@@ -38,7 +39,15 @@ export interface ShotImageGalleryProps{
   identityReviews?:Array<{jobId?:string;targetKey:string;sha256:string;
     referenceSetSha256:string;kind:string}>;
 }
+/** Current strict authority overrides historical candidate status, not its durable journal. */
+const staleIdentity=(card:GalleryCard)=>Boolean(
+  card.continuityStatus&&card.continuityStatus!=='READY'||
+  card.spec?.visualReferencePlan?.enabled&&(
+    card.spec.visualReferencePlan.readiness!=='READY'||
+    (card.job&&card.job.referenceSetSha256!==card.spec.referenceSetSha256))
+);
 const status=(card:GalleryCard)=>{
+  if(staleIdentity(card))return'Needs Regeneration — reference changed';
   if(card.currentlyBound??(card.target.fulfilled&&card.job?.status==='APPROVED'))return'Approved';
   if(card.target.fulfilled)return'Bound (manual)';
   if(card.job?.lastSyncError?.stage==='provider'&&!card.job.providerCompletedAt)
@@ -205,8 +214,9 @@ function ImagePreviewLightbox({card,url,onClose,triggerRef,projectId,onIdentityR
   if(!staged)return null;
   const original=scale==='original';
   const plan=card.spec?.visualReferencePlan;
-  const ownerMustReview=Boolean(plan?.enabled&&card.job?.status==='VALIDATED'&&
-    plan.readiness==='READY'&&card.spec?.referenceSetSha256);
+  const ownerMustReview=Boolean(plan?.enabled&&!staleIdentity(card)&&
+    card.job?.status==='VALIDATED'&&plan.readiness==='READY'&&
+    card.spec?.referenceSetSha256);
   const canonical=plan?.references.filter(ref=>ref.kind==='character')??[];
   return <div className="shot-image-lightbox" role="dialog" aria-modal="true"
     aria-label="Expanded generated image" ref={dialogRef}
@@ -278,7 +288,7 @@ export function ShotImageGallery({
   const [openDetails,setOpenDetails]=useState<Set<string>>(new Set());
   const eligible=(card:GalleryCard)=>{
     const job=card.job;
-    return Boolean(job&&job.status==='VALIDATED'&&job.staged&&
+    return Boolean(!staleIdentity(card)&&job&&job.status==='VALIDATED'&&job.staged&&
       urls[job.id]&&!previewErrors[job.id]&&
       previewReady[job.id]===previewIdentity(job));
   };
@@ -436,6 +446,10 @@ export function ShotImageGallery({
               {card.spec.visualReferencePlan.sourceSnapshotSha256&&<div>
                 Continuity source digest {card.spec.visualReferencePlan.sourceSnapshotSha256.slice(0,16)}
               </div>}
+            </div>}
+            {staleIdentity(card)&&<div className="info error" data-testid="character-reference-stale">
+              Needs Regeneration — reference changed. Existing media and candidate history are retained;
+              strict approval and publication are blocked until references are current and owner-reviewed.
             </div>}
             <CardPromptEditor card={card} onSave={onSavePrompt}/>
             {job&&<><div>Model {job.model} · Provider {job.providerTaskId??'not confirmed'} · Job {job.id}</div>
