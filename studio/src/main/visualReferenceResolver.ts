@@ -42,13 +42,14 @@ export function currentSourceOwnerReferences(root:string,key:string):string[]{
   if(!fs.existsSync(filename))return[];
   const value=strictJson(fs.readFileSync(filename,'utf8')) as {
     schema?:string;projectId?:string;
-    items?:Record<string,{creativeFingerprint?:string;references?:unknown}>
+    items?:Record<string,{creativeFingerprint?:string;style?:string;references?:unknown}>
   };
   if(value.schema!=='storyboard-image-overrides-v1'||
     value.projectId!==readState(root).project.id)return[];
   const item=value.items?.[key];
   const current=getNativeImageGallery('',root).targets.find(t=>t.key===key);
   if(!item||item.creativeFingerprint!==current?.creativeFingerprint||
+    item.style!==readState(root).project.style||
     !Array.isArray(item.references)||item.references.some(r=>typeof r!=='string'))
     return[];
   return item.references as string[];
