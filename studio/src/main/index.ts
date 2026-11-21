@@ -19,7 +19,9 @@ import {createProjectStaged} from './projectCreation.js';
 import {identityWorkflowSnapshot,freezeIdentityTask,importIdentityResult,
   approveScriptAnalysis,prepareProjectStyleBible,approveProjectStyleBible,
   registerOwnerReference,approveOwnerReference,publishStyleBibleReferences,
-  previewIdentityUpgrade,upgradeIdentityPolicy} from './identity/identityWorkflow.js';
+  previewIdentityUpgrade,upgradeIdentityPolicy,registerValidatedGeneratedReference,
+  readIdentityWorkflow} from './identity/identityWorkflow.js';
+import {listReferenceJobs,submitReferenceJob,syncReferenceJob} from './identity/referenceGeneration.js';
 import type {IdentityReviewOperation} from './identity/contracts.js';
 import { assertLocalRoot, assertMediaRelative, fileFetchUrl, mediaUrl, projectId, readState, strictJson, writeState, type NativeCommand, type Stage, type StudioState } from './services.js';
 
@@ -114,6 +116,23 @@ function registerIpc() {
   ipcMain.handle('identity:publishReferences',(_event,id:string,revision:number,
     selectedIds:string[])=>publishStyleBibleReferences(rootFor(id),app.getAppPath(),
       revision,selectedIds,decodeGlabsImage));
+  ipcMain.handle('identity:referenceJobs',(_event,id:string)=>
+    listReferenceJobs(rootFor(id)));
+  ipcMain.handle('identity:generateReference',(_event,id:string,input:{
+    anchorId:string;authorized:true;regenerate?:boolean;acknowledgeUnknown?:boolean
+  })=>submitReferenceJob(app.getAppPath(),rootFor(id),app.getPath('userData'),
+    safeStorage,input));
+  ipcMain.handle('identity:syncReference',async(_event,id:string,jobId:string)=>{
+    const root=rootFor(id);
+    const job=await syncReferenceJob(app.getAppPath(),root,app.getPath('userData'),
+      safeStorage,jobId,decodeGlabsImage);
+    if(job.status==='VALIDATED')
+      registerValidatedGeneratedReference(root,app.getAppPath(),{
+        expectedRevision:readIdentityWorkflow(root).revision,job
+      },decodeGlabsImage);
+    return job;
+  });
+
   ipcMain.handle('storyboard:gallery',(_event,id:string)=>{
     const root=rootFor(id),inventory=getNativeImageGallery(app.getAppPath(),root);
     const style=readState(root).project.style;
