@@ -33,6 +33,7 @@ const file=(root:string,id:string)=>{
 };
 const stamp=()=>new Date().toISOString();
 const locks=new Set<string>();
+const syncLocks=new Set<string>();
 export function readReferenceJob(root:string,id:string):ReferenceJob{
   const value=strictJson(fs.readFileSync(file(root,id),'utf8')) as unknown as ReferenceJob;
   if(value.schema!=='stickman-reference-generate-job-v1'||
@@ -181,6 +182,10 @@ export async function submitReferenceJob(appPath:string,root:string,userData:str
 }
 export async function syncReferenceJob(appPath:string,root:string,userData:string,
   cipher:CredentialCipher,id:string,decode:IdentityDecoder):Promise<ReferenceJob>{
+  const lock=readState(root).project.id+'|'+id;
+  if(syncLocks.has(lock))throw Error('REFERENCE_SYNC_ALREADY_RUNNING');
+  syncLocks.add(lock);
+  try{
   const job=readReferenceJob(root,id);
   if(['VALIDATED','FAILED','CANCELLED','STALE'].includes(job.status))return job;
   if(!isCurrent(root,appPath,job))return markStale(root,job);
@@ -234,4 +239,5 @@ export async function syncReferenceJob(appPath:string,root:string,userData:strin
     height:decoded.height,mime:'image/png'};
   job.status='VALIDATED';write(root,job);
   return job;
+  }finally{syncLocks.delete(lock);}
 }
