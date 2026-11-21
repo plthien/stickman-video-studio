@@ -1,0 +1,234 @@
+// @vitest-environment node
+import fs from 'node:fs';
+import path from 'node:path';
+import {afterEach,describe,expect,it} from 'vitest';
+import {freezeTask,confirmImport} from '../../src/main/externalTasks';
+import {freezeLifecycleTask,stageLifecycleResult,confirmLifecycleResult,exportReviewPack} from '../../src/main/externalLifecycle';
+import {readState,writeState} from '../../src/main/services';
+import {appPath,cleanup,fixture,nativePayload,stageNative,validator} from './SixIssueFixtures';
+
+afterEach(cleanup);
+type Lifecycle=ReturnType<typeof freezeLifecycleTask>;
+function result(root:string,task:Lifecycle,operation:'review'|'correct'|'recheck'|'media-review',payload:unknown){
+  const state=readState(root);
+  return JSON.stringify({schema:'mode-b-lifecycle-result-v1',project_id:state.project.id,
+    task_id:task.id,revision:task.revision,input_sha256:task.inputSha256,
+    stage:task.stage,operation,payload});
+}
+const finding=(id:string,target:string,status='open')=>({
+  id,severity:'major',status,target_ids:[target],requirement:'The stated original causal requirement',
+  evidence:{kind:'manifest',detail:'Synthetic fixture text establishes the narrow causal problem.'},
+  recommendation:'Clarify the existing causal relation without editing locked content.'
+});
+function reviewPayload(task:Lifecycle,targetIds:string[],found:ReturnType<typeof finding>[],stage:'script'|'native'){
+  return {schema:'mode-b-review-v1',artifact_sha256:task.artifactSha256,
+    status:found.length?'REVIEWED_WITH_FINDINGS':'REVIEWED_NO_FINDINGS',
+    coverage:{target_ids:targetIds,modalities:[stage==='script'?'script':'manifest'],ranges:[],media_sha256s:[]},
+    findings:found};
+}
+async function confirmedScriptReview(){
+  const {root}=fixture();
+  freezeTask(appPath,root,'script');
+  const review=freezeLifecycleTask(appPath,root,'script','review');
+  const staged=stageLifecycleResult(appPath,root,'script','review',result(root,review,'review',
+    reviewPayload(review,['opening'],[finding('F-SCOPE','opening')],'script')));
+  await Promise.resolve(confirmLifecycleResult(root,staged.token));
+  return{root,review};
+}
+async function correctedScript(){
+  const {root,review}=await confirmedScriptReview();
+  const correct=freezeLifecycleTask(appPath,root,'script','correct');
+  const current=readState(root).approvedScript!;
+  const corrected={schema:'mode-b-script-v1',
+    sections:current.sections.map(row=>({...row,text:'The established danger forces an actual rescue decision.'})),
+    authoring:current.authoring??{}};
+  const payload={schema:'mode-b-correction-v1',artifact_sha256:correct.artifactSha256,
+    finding_ids:correct.findingIds,editable_ids:correct.editableIds,
+    editable_paths:correct.editablePaths,artifact:corrected};
+  const staged=stageLifecycleResult(appPath,root,'script','correct',result(root,correct,'correct',payload));
+  await Promise.resolve(confirmLifecycleResult(root,staged.token));
+  return{root,review,correct};
+}
+async function nativeBaseline(){
+  const {root}=fixture({style:'B1'});
+  const staged=stageNative(root,nativePayload(root));
+  await confirmImport(appPath,root,staged.response.token,{validator:validator().run});
+  return root;
+}
+
+describe('P-01 through P-14 lifecycle prompt, lock, evidence and ancestry contracts',()=>{
+  it('P-02 Script Correct refuses unresolved no-op and locked authoring mutation',async()=>{
+    const {root}=await confirmedScriptReview();
+    const correct=freezeLifecycleTask(appPath,root,'script','correct');
+    expect(correct.findingIds).toEqual(['F-SCOPE']);
+    expect(correct.editableIds).toEqual(['opening']);
+    const current=readState(root).approvedScript!;
+    const noOp={schema:'mode-b-script-v1',sections:current.sections,authoring:current.authoring};
+    const wrap=(artifact:unknown)=>result(root,correct,'correct',{
+      schema:'mode-b-correction-v1',artifact_sha256:correct.artifactSha256,
+      finding_ids:correct.findingIds,editable_ids:correct.editableIds,
+      editable_paths:correct.editablePaths,artifact});
+    expect(()=>stageLifecycleResult(appPath,root,'script','correct',wrap(noOp)))
+      .toThrow(/SCRIPT_CORRECT_NO_OP/);
+    expect(()=>stageLifecycleResult(appPath,root,'script','correct',wrap({
+      ...noOp,authoring:{creative_direction:{premise:'Unauthorized replacement'}}
+    }))).toThrow(/Locked/);
+    const changed={...noOp,sections:[{id:'opening',text:'The true cause now drives the action.'}]};
+    expect(()=>stageLifecycleResult(appPath,root,'script','correct',wrap(changed))).not.toThrow();
+  });
+
+  it('P-02/P-03 broad or nonexistent JSON pointers cannot unlock whole Script/Native trees',async()=>{
+    const {root}=fixture();freezeTask(appPath,root,'script');
+    for(const pointer of ['/sections','/authoring','/sections/0','/sections/99/text','/authoring/missing']){
+      expect(()=>freezeLifecycleTask(appPath,root,'script','correct',
+        {editablePaths:[pointer]})).toThrow(/INVALID_EDITABLE_PATH/);
+    }
+    const valid=freezeLifecycleTask(appPath,root,'script','correct',
+      {editablePaths:['/sections/0/text']});
+    expect(valid.editablePaths).toEqual(['/sections/0/text']);
+    const native=await nativeBaseline();
+    for(const pointer of ['/manifest/shots','/shot_ledger','/sound_script','/asset_needs',
+      '/manifest/voice','/manifest/shots/99/layers/0']){
+      expect(()=>freezeLifecycleTask(appPath,native,'native','correct',
+        {editablePaths:[pointer]})).toThrow(/INVALID_EDITABLE_PATH/);
+    }
+  });
+
+  it('P-04 Script Recheck requires exact confirmed correction, includes findings and can activate only after clean result',async()=>{
+    const {root}=await correctedScript();
+    const recheck=freezeLifecycleTask(appPath,root,'script','recheck');
+    expect(recheck.findingIds).toEqual(['F-SCOPE']);
+    expect(recheck.prompt).toContain('SCRIPT RECHECK — TEXT EVIDENCE AND ACTIVATION GATE');
+    expect(recheck.prompt).toContain('Required exact finding IDs: ["F-SCOPE"]');
+    expect(recheck.prompt).not.toMatch(/"status"\s*:\s*"REVIEWED_NO_FINDINGS"/);
+    const incomplete=reviewPayload(recheck,['opening'],[],'script');
+    expect(()=>stageLifecycleResult(appPath,root,'script','recheck',
+      result(root,recheck,'recheck',incomplete))).toThrow(/omitted/);
+    const correctedCandidate=structuredClone(readState(root).scriptCandidate!);
+    const originalApprovedSha=readState(root).approvedScript?.sha256;
+    expect(correctedCandidate.sha256).not.toBe(originalApprovedSha);
+    const resolved=reviewPayload(recheck,['opening'],[finding('F-SCOPE','opening','resolved')],'script');
+    resolved.status='REVIEWED_NO_FINDINGS';
+    const staged=stageLifecycleResult(appPath,root,'script','recheck',
+      result(root,recheck,'recheck',resolved));
+    await Promise.resolve(confirmLifecycleResult(root,staged.token));
+    const activated=readState(root).approvedScript;
+    expect(activated?.approvedBy).toBe('AUTO');
+    expect(activated?.sha256).toBe(correctedCandidate.sha256);
+    expect(activated?.sections).toEqual(correctedCandidate.sections);
+  });
+
+  it('P-04 unresolved Recheck findings do not auto-activate a corrected Script',async()=>{
+    const {root}=await correctedScript();
+    const approvedBefore=readState(root).approvedScript?.sha256;
+    const recheck=freezeLifecycleTask(appPath,root,'script','recheck');
+    const unresolved=reviewPayload(recheck,['opening'],[finding('F-SCOPE','opening','open')],'script');
+    const staged=stageLifecycleResult(appPath,root,'script','recheck',
+      result(root,recheck,'recheck',unresolved));
+    await Promise.resolve(confirmLifecycleResult(root,staged.token));
+    expect(readState(root).approvedScript?.sha256).toBe(approvedBefore);
+    expect(readState(root).scriptCandidate?.sha256).not.toBe(approvedBefore);
+  });
+
+  it('P-04/P-06 second Correct round derives findings from the last confirmed unresolved Recheck',async()=>{
+    const {root}=await correctedScript();
+    const firstRecheck=freezeLifecycleTask(appPath,root,'script','recheck');
+    const stillOpen=reviewPayload(firstRecheck,['opening'],[finding('F-SCOPE','opening','open')],'script');
+    const pending=stageLifecycleResult(appPath,root,'script','recheck',
+      result(root,firstRecheck,'recheck',stillOpen));
+    await Promise.resolve(confirmLifecycleResult(root,pending.token));
+    const secondCorrect=freezeLifecycleTask(appPath,root,'script','correct');
+    expect(secondCorrect.sourceReviewTaskId).toBe(firstRecheck.id);
+    expect(secondCorrect.findingIds).toEqual(['F-SCOPE']);
+    expect(secondCorrect.editableIds).toEqual(['opening']);
+    const current=readState(root).scriptCandidate!;
+    const updated={schema:'mode-b-script-v1',
+      sections:current.sections.map(row=>({...row,text:'The proven rule supports the final safe rescue.'})),
+      authoring:current.authoring??{}};
+    const response={schema:'mode-b-correction-v1',artifact_sha256:secondCorrect.artifactSha256,
+      finding_ids:secondCorrect.findingIds,editable_ids:secondCorrect.editableIds,
+      editable_paths:secondCorrect.editablePaths,artifact:updated};
+    const imported=stageLifecycleResult(appPath,root,'script','correct',
+      result(root,secondCorrect,'correct',response));
+    await Promise.resolve(confirmLifecycleResult(root,imported.token));
+    const next=freezeLifecycleTask(appPath,root,'script','recheck');
+    expect(next.findingIds).toEqual(['F-SCOPE']);
+    expect(next.prompt).toContain(firstRecheck.id);
+    expect(next.prompt).toContain(secondCorrect.id);
+  });
+
+  it('P-05/P-06 native Recheck binds exact published correction, rejecting unrelated review history',async()=>{
+    const root=await nativeBaseline();
+    const review=freezeLifecycleTask(appPath,root,'native','review');
+    const staged=stageLifecycleResult(appPath,root,'native','review',
+      result(root,review,'review',reviewPayload(review,['shot-1','shot-2'],
+        [finding('F-NATIVE','shot-1')],'native')));
+    await Promise.resolve(confirmLifecycleResult(root,staged.token));
+    const correct=freezeLifecycleTask(appPath,root,'native','correct',{editableIds:['shot-1']});
+    const state=readState(root);
+    const previous=state.external.native!.artifact as Record<string,unknown>;
+    const artifact={manifest:JSON.parse(fs.readFileSync(path.join(root,'project.json'),'utf8')),
+      shot_ledger:previous.shotLedger??[],sound_script:previous.soundScript??[],asset_needs:previous.assetNeeds??[]};
+    const payload={schema:'mode-b-correction-v1',artifact_sha256:correct.artifactSha256,
+      finding_ids:correct.findingIds,editable_ids:correct.editableIds,
+      editable_paths:correct.editablePaths,artifact};
+    const pending=stageLifecycleResult(appPath,root,'native','correct',
+      result(root,correct,'correct',payload));
+    await Promise.resolve(confirmLifecycleResult(root,pending.token));
+    // Synthetic hostile history only: 6 foreign/stale records must never
+    // become evidence that this exact Native correction resolved a finding.
+    const changed=readState(root);
+    for(let i=0;i<6;i++)changed.lifecycle!.artifacts['foreign-'+i]={
+      taskId:'foreign-'+i,stage:i%2?'script':'native',
+      operation:i%2?'review':'media-review',artifactSha256:'unrelated',
+      createdAt:'2099-01-01T00:00:00.000Z',status:'REVIEWED_WITH_FINDINGS',
+      value:{artifact_sha256:'other',findings:[finding('F-FOREIGN-'+i,'shot-2')]}
+    };
+    writeState(root,changed);
+    const recheck=freezeLifecycleTask(appPath,root,'native','recheck');
+    expect(recheck.findingIds).toEqual(['F-NATIVE']);
+    expect(recheck.prompt).toContain('NATIVE RECHECK');
+    expect(recheck.prompt).not.toContain('F-FOREIGN-0');
+    expect(recheck.prompt).not.toContain('F-FOREIGN-5');
+  });
+
+  it('REG-F04-02/05 disables new Voice/Captions review tasks without affecting verified media packing',()=>{
+    const {root}=fixture();freezeTask(appPath,root,'script');
+    const voicePack=exportReviewPack(root,'voice');
+    expect((voicePack.pack.attachments as Array<{sha256:string}>)
+      .some(item=>item.sha256===readState(root).voice!.sha256)).toBe(true);
+    exportReviewPack(root,'captions');
+    for(const kind of ['voice','captions'] as const)
+      expect(()=>freezeLifecycleTask(appPath,root,'script','media-review',{media:kind}))
+        .toThrow(/MEDIA_REVIEW_DISABLED/);
+    expect(readState(root).alignment!.captionReview?.sha256).toBeTruthy();
+  });
+
+  it('REG-F04-02/05 rejects Native Film/Preview Media Review tasks independently of Native readiness',async()=>{
+    const root=await nativeBaseline(),before=readState(root);
+    for(const kind of ['preview','film'] as const)
+      expect(()=>freezeLifecycleTask(appPath,root,'native','media-review',{media:kind}))
+        .toThrow(/MEDIA_REVIEW_DISABLED/);
+    expect(readState(root).nativeReadiness).toEqual(before.nativeReadiness);
+    expect(readState(root).external.native).toEqual(before.external.native);
+  });
+
+  it('P-12/P-13 lifecycle response examples contain frozen identity but never preset review outcomes',async()=>{
+    const root=await nativeBaseline();
+    const review=freezeLifecycleTask(appPath,root,'native','review');
+    const prompt=review.prompt.split('## G — RESPONSE CONTRACT — NO PRESET OUTCOME')[1]
+      ?.split('## H — ORIGINAL FROZEN AUTHOR TASK')[0]??'';
+    expect(prompt).toContain('"task_id": "'+review.id+'"');
+    expect(prompt).toContain('"artifact_sha256": "'+review.artifactSha256+'"');
+    expect(prompt).not.toMatch(/"status"\s*:\s*"(?:REVIEWED_WITH_FINDINGS|REVIEWED_NO_FINDINGS|INSUFFICIENT_EVIDENCE|NOT_VERIFIED)"/);
+    expect(prompt).toContain('payload.status is REQUIRED and NOT PRESELECTED');
+    expect(review.prompt).toContain('mode_b_native_review_r'+review.revision+'_');
+    const same=freezeLifecycleTask(appPath,root,'native','review');
+    expect(same.id).toBe(review.id);
+    expect(same.prompt).toBe(review.prompt);
+    const rebuilt=freezeLifecycleTask(appPath,root,'native','review',{},true);
+    expect(rebuilt.id).not.toBe(review.id);
+    expect(()=>stageLifecycleResult(appPath,root,'native','review',result(root,review,'review',
+      reviewPayload(review,['shot-1','shot-2'],[],'native')))).toThrow(/binding mismatch/);
+  });
+});

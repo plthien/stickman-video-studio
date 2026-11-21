@@ -4,7 +4,7 @@ import tseslint from 'typescript-eslint';
 import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
 export default tseslint.config(
-  { ignores: ['dist', 'dist-electron', 'node_modules', '.artifacts', 'r1-local-results'] },
+  { ignores: ['dist', 'dist-electron', 'node_modules', '.artifacts', 'r1-local-results*', 'r2-local-results-*'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   { files: ['scripts/**/*.mjs'], languageOptions: { globals: globals.node } },

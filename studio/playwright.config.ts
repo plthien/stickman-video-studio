@@ -8,12 +8,12 @@ if (!Number.isInteger(previewPort) || previewPort < 1024 || previewPort > 65535 
 const previewUrl = `http://127.0.0.1:${previewPort}`;
 export default defineConfig({
   testDir: './tests/ui',
-  testMatch: '**/r1.spec.ts',
+  testMatch: '**/r*.spec.ts',
   outputDir: process.env.R1_SCREENSHOTS || './test-results',
   timeout: 30_000,
   use: { baseURL: previewUrl, trace: 'retain-on-failure' },
-  webServer: {
-    command: `npx.cmd vite preview --host 127.0.0.1 --port ${previewPort} --strictPort`,
+  webServer: process.env.R2_EXTERNAL_SERVER ? undefined : {
+    command: `node ./node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port ${previewPort} --strictPort`,
     url: previewUrl,
     reuseExistingServer: false,
     timeout: 120_000

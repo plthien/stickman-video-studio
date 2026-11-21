@@ -1,0 +1,76 @@
+// @vitest-environment node
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {afterEach,describe,expect,it} from 'vitest';
+import {acceptNarration,projectId,readState,sha,writeState,type StudioState} from '../../src/main/services';
+import {projectSnapshot} from '../../src/main/projectSnapshot';
+import {currentNativeEvidence,verifyPreviewEvidence} from '../../src/main/nativeEvidence';
+import {nativeJob} from '../../src/main/nativeJobs';
+import {freezeTask,importMediaFile,stageImport} from '../../src/main/externalTasks';
+import {runLongform} from '../../src/main/voiceMedia';
+import {createNanoTestProducer} from './NanoHttpMock';
+import {appPath,cleanup,fixture,frozenEnvelope,importedSource,nativePayload,png,wav} from './SixIssueFixtures';
+import {verifier,writePreviewEvidence} from './NativeEvidenceFixtures';
+
+const roots:string[]=[];
+afterEach(()=>{cleanup();for(const root of roots.splice(0))fs.rmSync(root,{recursive:true,force:true})});
+function emptyCore(){const root=fs.mkdtempSync(path.join(os.tmpdir(),'r2-v5-empty-'));roots.push(root);fs.mkdirSync(path.join(root,'.studio'),{recursive:true});const manifest={version:1,style:'B1',width:1280,height:720,fps:30,voice:{path:'narration.wav',lead:0,tail:0},captions:[],shots:[],sfx:[]};fs.writeFileSync(path.join(root,'project.json'),JSON.stringify(manifest));const state:StudioState={schema:'mode-b-studio-state-v1',project:{id:projectId(root),root,title:'',style:'B1',updatedAt:new Date().toISOString(),projectFile:path.join(root,'project.json')},brief:{topic:'',language:'English',ratio:'9:16'},external:{},tasks:{},nano:{endpoint:'http://127.0.0.1:3901'},imports:[],media:[]};writeState(root,state);return root}
+function writePreview(root:string,evidence=currentNativeEvidence(root,readState(root),{seconds:20})){return{evidence,...writePreviewEvidence(root,evidence)}}
+function deferred(work:()=>void){let release!:()=>void,enter!:()=>void;const waiting=new Promise<void>(resolve=>{release=resolve}),entered=new Promise<void>(resolve=>{enter=resolve});return{entered,release,runner:async()=>{enter();await waiting;work();return{code:0,stdout:'ok',stderr:''}}}}
+
+describe('V5 no-sample / zero-fallback production behavior',()=>{
+  it('UT-NF01 original Core empty scaffold projects no sample data or false progress',async()=>{const root=emptyCore(),snapshot=await projectSnapshot(root,appPath);expect(snapshot.projection).toMatchObject({shots:[],duration:0,captionReady:false});expect(snapshot.approvedScript).toBeUndefined();expect(snapshot.voice).toBeUndefined();expect(snapshot.preview).toBeUndefined();expect(snapshot.render).toBeUndefined();expect(snapshot.job).toBeNull()});
+  it('UT-NF02 malformed registered project/job cannot become empty or fabricated canonical data',async()=>{const root=emptyCore(),file=path.join(root,'project.json'),manifest=JSON.parse(fs.readFileSync(file,'utf8'));manifest.shots=[{start:0,end:1,layers:[{type:'text',text:'actual'}]}];manifest.captions=[{start:0,end:1,text:'actual'}];fs.writeFileSync(file,JSON.stringify(manifest));await expect(projectSnapshot(root,appPath)).rejects.toThrow(/shot.*ID/i);manifest.shots=[{id:'real',start:'0',end:1,layers:[{type:'text',text:'actual'}]}];fs.writeFileSync(file,JSON.stringify(manifest));await expect(projectSnapshot(root,appPath)).rejects.toThrow(/start/i);manifest.shots=[];manifest.captions=[];fs.writeFileSync(file,JSON.stringify(manifest));const job=path.join(root,'.studio/jobs/latest.json');fs.mkdirSync(path.dirname(job),{recursive:true});fs.writeFileSync(job,'{bad');await expect(projectSnapshot(root,appPath)).rejects.toThrow()});
+  it('UT-NF03 SCRIPT freezes without voice while NATIVE without reviewed real cues is BLOCKED',()=>{const root=emptyCore();expect(freezeTask(appPath,root,'script').status).toBe('FROZEN');expect(()=>freezeTask(appPath,root,'native')).toThrow(/BLOCKED|REVIEW_REQUIRED/)});
+  it('UT-NF04 changed WAV, WORDS or cue bytes makes native task/import stale',()=>{for(const kind of ['wav','words','cues'] as const){const {root,voicePath,wordsPath,coreCuesPath}=fixture(),envelope=frozenEnvelope(root,'native',nativePayload(root)),file=path.join(root,kind==='wav'?voicePath:kind==='words'?wordsPath:coreCuesPath);if(kind==='wav'){const bytes=fs.readFileSync(file);bytes[100]^=1;fs.writeFileSync(file,bytes)}else fs.appendFileSync(file,' ');expect(()=>stageImport(appPath,root,'native',JSON.stringify(envelope))).toThrow(/stale|changed|blocked/i)}});
+  it('UT-NF05 frozen Script examples are clearly illustrative; retired/empty outputs cannot import',()=>{const root=emptyCore(),task=freezeTask(appPath,root,'script');expect(task.prompt).not.toContain(['Exact','approved','wording'].join(' '));expect(task.prompt).not.toContain('REQUIRED_NONEMPTY_ARRAY');expect(task.prompt).not.toContain('REPLACE_WITH_ACTUAL_SECTION_ID');const old={schema:'mode-b-external-result-v1',project_id:readState(root).project.id,task_id:task.id,revision:task.revision,input_sha256:task.inputSha256,stage:'script',payload:{schema:'mode-b-script-v1',sections:[{id:'section-01',text:['Exact','approved','wording'].join(' ')}],authoring:{creative_direction:{},characters:[],style_decisions:{},source_references:[],voice_intentions:{},sound_intentions:{}}}};expect(()=>stageImport(appPath,root,'script',JSON.stringify(old))).toThrow(/placeholder/);const approved=fixture();const empty={...nativePayload(approved.root),manifest:{...nativePayload(approved.root).manifest,shots:[],captions:[]}};expect(()=>stageImport(appPath,approved.root,'native',JSON.stringify(frozenEnvelope(approved.root,'native',empty)))).toThrow(/required/i)});
+  it('UT-NF06 current WAV/cue/mapped-image bytes must agree before preview reuse',async()=>{const {root}=fixture(),file=path.join(root,'project.json'),manifest=JSON.parse(fs.readFileSync(file,'utf8')),image='assets/images/actual.png',imageFile=path.join(root,image);fs.mkdirSync(path.dirname(imageFile),{recursive:true});fs.writeFileSync(imageFile,png());manifest.shots[0].layers=[{id:'actual-image',type:'image',path:image}];fs.writeFileSync(file,JSON.stringify(manifest));const state=readState(root);state.media=[{path:image,sha256:sha(fs.readFileSync(imageFile)),kind:'image',shotId:'old-shot',layerId:'actual-image',rights:'owner',importedAt:new Date().toISOString()}];writeState(root,state);const evidence=currentNativeEvidence(root,readState(root),{seconds:20});writePreview(root,evidence);expect((await verifyPreviewEvidence(appPath,root,evidence,verifier(evidence))).sha256).toMatch(/^[a-f0-9]{64}$/);fs.appendFileSync(imageFile,'tamper');expect(()=>currentNativeEvidence(root,readState(root),{seconds:20})).toThrow(/BLOCKED/)});
+  it('UT-NF07 deferred native run preserves unrelated imports and refuses true dependency changes',async()=>{const first=fixture(),firstEvidence=currentNativeEvidence(first.root,readState(first.root),{seconds:20}),gate=deferred(()=>writePreview(first.root,firstEvidence)),run=nativeJob(appPath,first.root,'preview',{seconds:20,replace:true},{runner:gate.runner,verifier:verifier(firstEvidence)});await gate.entered;const imported=importMediaFile(first.root,importedSource(first.root),'image','owner');gate.release();await run;expect(readState(first.root).media).toContainEqual(expect.objectContaining({path:imported.path}));const second=fixture(),old=path.join(second.root,'output/preview.mp4'),checkpoint=path.join(second.root,'output/checkpoint.json');fs.mkdirSync(path.dirname(old),{recursive:true});fs.writeFileSync(old,Buffer.from('last-good'));fs.writeFileSync(checkpoint,'{"stage":"last-good"}');const before=fs.readFileSync(old),checkpointBefore=fs.readFileSync(checkpoint),initial=currentNativeEvidence(second.root,readState(second.root),{seconds:20}),blocked=deferred(()=>{writePreview(second.root,initial);fs.writeFileSync(checkpoint,'{"stage":"invalid-new"}')}),pending=nativeJob(appPath,second.root,'preview',{seconds:20,replace:true},{runner:blocked.runner,verifier:verifier(initial)});await blocked.entered;fs.appendFileSync(path.join(second.root,second.voicePath),'x');blocked.release();await expect(pending).rejects.toThrow(/STALE|BLOCKED/);expect(fs.readFileSync(old)).toEqual(before);expect(fs.readFileSync(checkpoint)).toEqual(checkpointBefore)});
+  it('UT-NF08 corrupt MP4/report/job evidence never becomes VERIFIED',async()=>{const {root}=fixture(),{evidence}=writePreview(root);fs.writeFileSync(path.join(root,'output/preview.mp4'),'corrupt');await expect(verifyPreviewEvidence(appPath,root,evidence,verifier(evidence))).rejects.toThrow(/probe|MP4|media/i);const empty=emptyCore(),job=path.join(empty,'.studio/jobs/latest.json');fs.mkdirSync(path.dirname(job),{recursive:true});fs.writeFileSync(job,'not-json');await expect(projectSnapshot(empty,appPath)).rejects.toThrow()});
+  it('UT-NF11 unified API/import narration share atomic voice.path publication and retain B4 fields',async()=>{for(const origin of ['NANO_GENERATED','NANO_LONGFORM','IMPORTED_WAV'] as const){const {root}=fixture({style:'B4'}),file=path.join(root,'project.json'),manifest=JSON.parse(fs.readFileSync(file,'utf8'));manifest.voice={path:'narration.wav',name:'Brian',id:'brian',user_override:'owner',lead:.5,tail:1,trim_start:0};fs.writeFileSync(file,JSON.stringify(manifest));const state=readState(root),voice=acceptNarration(root,{wav:wav(1),expectedScriptSha256:state.approvedScript!.sha256,voice:{origin}}),saved=JSON.parse(fs.readFileSync(file,'utf8'));expect(voice.path).toBe('assets/audio/narration.wav');expect(saved.voice).toMatchObject({path:voice.path,name:'Brian',id:'brian',user_override:'owner',lead:.5,tail:1,trim_start:0})}const api=createNanoTestProducer({voiceId:'owner'});
+    const endpoint=await api.start();
+    try{
+      const sample=fixture({style:'B4'}),file=path.join(sample.root,'project.json');
+      const manifest=JSON.parse(fs.readFileSync(file,'utf8'));
+      manifest.voice={...manifest.voice,name:'Brian',id:'brian',user_override:'owner',lead:.5,tail:1,trim_start:0};
+      fs.writeFileSync(file,JSON.stringify(manifest));
+      const state=readState(sample.root);
+      state.approvedScript!.sections=[{id:'a',text:'One two'},{id:'b',text:'three'}];
+      state.approvedScript!.text='One two\n\nthree';
+      state.approvedScript!.sha256=sha(state.approvedScript!.text);
+      state.nano={endpoint,profileId:'owner'};
+      writeState(sample.root,state);
+      await runLongform(sample.root,{voice:'owner'});
+      expect(readState(sample.root).voice?.origin).toBe('NANO_LONGFORM');
+      expect(api.get().speechCalls).toBe(2);
+      const saved=JSON.parse(fs.readFileSync(file,'utf8'));
+      expect(saved.voice).toMatchObject({path:'assets/audio/narration.wav',name:'Brian',id:'brian',
+        user_override:'owner',lead:.5,tail:1,trim_start:0});
+    }finally{await api.close();}});
+  // Each injected boundary gets its own timeout and isolated temporary project.
+  // Previously all three serial rollback checks shared 20 seconds (27s on Windows).
+  it.each(['afterWav','afterManifest','afterState'] as const)(
+    'UT-NF12 injected %s boundary failure restores exact last-good bytes',
+    boundary=>{
+      const {root}=fixture({style:'B4'});
+      const project=fs.readFileSync(path.join(root,'project.json'));
+      const state=fs.readFileSync(path.join(root,'.studio/state.json'));
+      const audio=fs.readFileSync(path.join(root,'assets/audio/narration.wav'));
+      const approved=readState(root).approval;
+      expect(()=>acceptNarration(root,{
+        wav:wav(1),
+        expectedScriptSha256:readState(root).approvedScript!.sha256,
+        voice:{origin:'IMPORTED_WAV'},
+        hooks:{[boundary]:()=>{throw new Error('injected '+boundary)}}
+      })).toThrow(/injected/);
+      expect(fs.readFileSync(path.join(root,'project.json'))).toEqual(project);
+      expect(fs.readFileSync(path.join(root,'.studio/state.json'))).toEqual(state);
+      expect(fs.readFileSync(path.join(root,'assets/audio/narration.wav'))).toEqual(audio);
+      expect(readState(root).approval).toEqual(approved);
+    },
+    30_000
+  );
+  it('UT-NF14 production src has no runtime test fixture/sample import or fake sample output',()=>{const base=path.resolve('src'),files:string[]=[];const walk=(dir:string)=>{for(const entry of fs.readdirSync(dir,{withFileTypes:true})){const file=path.join(dir,entry.name);if(entry.isDirectory())walk(file);else files.push(file)}};walk(base);const source=files.map(file=>fs.readFileSync(file,'utf8')).join('\n');expect(source).not.toMatch(/(?:from|import\()\s*['"][^'"]*(?:tests|mockups)/);expect(source).not.toContain('r2-offline-native');expect(source).not.toContain(['Exact','approved','wording'].join(' '));expect(fs.existsSync(path.resolve('tests/fixtures/nano_api_v1/golden_receipt.json'))).toBe(true)});
+  it('UT-NF15 recovery reaches VERIFIED only after current evidence and explicit human approval',async()=>{const {root}=fixture();await expect(nativeJob(appPath,root,'approve',{note:'reviewed',attested:true,reviewedSha256:'x'})).rejects.toThrow(/preview/i);const evidence=currentNativeEvidence(root,readState(root),{seconds:20}),boundary=verifier(evidence);await nativeJob(appPath,root,'preview',{seconds:20,replace:true},{runner:async()=>{writePreview(root,evidence);return{code:0,stdout:'preview',stderr:''}},verifier:boundary});const preview=readState(root).preview!;await expect(nativeJob(appPath,root,'approve',{note:'reviewed',reviewedSha256:preview.sha256},{verifier:boundary})).rejects.toThrow(/Explicit/);await nativeJob(appPath,root,'approve',{note:'Owner watched current MP4',attested:true,reviewedSha256:preview.sha256},{runner:async()=>{const report=JSON.parse(fs.readFileSync(path.join(root,'output/preview-report.json'),'utf8'));fs.writeFileSync(path.join(root,'output/approval.json'),JSON.stringify({preview_fingerprint:report.fingerprint,preview_seconds:evidence.scopeSeconds,preview_sha256:preview.sha256,note:'Owner watched current MP4',approved_at:new Date().toISOString()}));return{code:0,stdout:'approved',stderr:''}},verifier:boundary});expect(readState(root).approval).toMatchObject({previewSha256:preview.sha256})});
+});
