@@ -6,7 +6,7 @@ import {afterEach,describe,expect,it,vi} from 'vitest';
 import {appPath,cleanup,fixture,nativePayload,stageNative,png} from './SixIssueFixtures';
 import {importMediaFile,confirmImport,getNativeImageGallery} from '../../src/main/externalTasks';
 import {prepareNativeImages} from '../../src/main/imagePreparation';
-import {glabsSettings,saveGlabsKey,submitGlabsImage,
+import {saveGlabsKey,submitGlabsImage,
   pollGlabsImage,approveGlabsImage} from '../../src/main/glabs';
 import {readState,writeState,atomicJson,sha} from '../../src/main/services';
 import {contentHash} from '../../src/main/identity/contracts';
