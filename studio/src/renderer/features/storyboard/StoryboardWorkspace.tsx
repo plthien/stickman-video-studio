@@ -235,15 +235,31 @@ export function StoryboardWorkspace(){
     urls[card.job.id]&&!previewErrors[card.job.id]&&
     previewReady[card.job.id]===previewIdentity(card.job)
   ));
-  // A bulk click covers only never-attempted, source-backed READY targets.
-  // FAILED/UNKNOWN/staged/approved jobs are excluded; none is retried.
+  // Ordinary bulk may create a NEW candidate after a Native correction, but
+  // never repeat a live/UNKNOWN attempt or auto-regenerate a current candidate.
+  // Backend re-verifies lineage, references and chargeable state before POST.
   const eligibleBulk=prepared&&pending&&prepared.token===pending.token&&config?
-    prepared.jobs.filter(item=>item.state==='READY'&&Boolean(item.prompt.trim())&&
-      imageTargets.some(candidate=>candidate.key===item.targetKey&&
+    prepared.jobs.filter(item=>{
+      if(item.state!=='READY'||!item.prompt.trim())return false;
+      const target=galleryTargets.find(candidate=>candidate.key===item.targetKey&&
         candidate.shotId===item.shotId&&candidate.layerId===item.layerId&&
-        candidate.path===item.path)&&
-      !jobs.some(job=>job.token===pending?.token&&job.targetKey===item.targetKey)&&
-      true):[];
+        candidate.path===item.path);
+      if(!target||target.fulfilled||!target.managed||
+        !imageTargets.some(candidate=>candidate.key===item.targetKey&&
+          candidate.shotId===item.shotId&&candidate.layerId===item.layerId&&
+          candidate.path===item.path))return false;
+      const prior=jobs.filter(job=>job.token===pending.token&&job.targetKey===item.targetKey);
+      if(prior.some(job=>['QUEUED','SUBMITTED','RUNNING','DOWNLOADED','UNKNOWN'].includes(job.status)))
+        return false;
+      // Current VALIDATED/APPROVED/FAILED candidates require per-image owner
+      // review; a STALE or superseded creative identity does not occupy the
+      // newly reviewed Native DRAFT.
+      return !prior.some(job=>job.status!=='STALE'&&
+        job.targetCreativeSha256===item.draftIdentity.creativeFingerprint&&
+        job.styleProfileSha256===item.styleProfileRef.sha256);
+    }).map(item=>({...item,regenerate:jobs.some(job=>
+      job.token===pending.token&&job.targetKey===item.targetKey)})):[];
+  const bulkRegenerated=eligibleBulk.filter(item=>item.regenerate).length;
   const galleryPreviewKey=cards.map(card=>[
     card.job?.id??'',card.job?.staged?.path??'',
     card.job?.staged?.sha256??''
@@ -447,10 +463,22 @@ export function StoryboardWorkspace(){
           candidate.path===item.path)){
           stopReason='Native DRAFT changed or target already fulfilled. No further requests were sent.';break;
         }
+        const existing=await window.studio.glabsJobs(scope.projectId);
+        if(batch.cancelled||!isCurrentProjectSession(scope)){
+          stopReason='Stopped by owner or project change.';break;
+        }
+        const prior=existing.filter(job=>job.token===batch.token&&
+          job.targetKey===item.targetKey);
+        if(prior.some(job=>['QUEUED','SUBMITTED','RUNNING','DOWNLOADED','UNKNOWN'].includes(job.status)||
+          (job.status!=='STALE'&&job.targetCreativeSha256===item.draftIdentity.creativeFingerprint&&
+           job.styleProfileSha256===item.styleProfileRef.sha256))){
+          stopReason='Current provider attempt or reviewed image already exists. Batch stopped before another paid request.';
+          break;
+        }
         const response=await window.studio.glabsGenerate(scope.projectId,{
           targetKey:item.targetKey,prompt:item.prompt,model:selectedConfig.model,
           aspectRatio:selectedConfig.aspectRatio,references:[...item.references],
-          authorized:true,regenerate:false,acknowledgeUnknown:false,
+          authorized:true,regenerate:item.regenerate,acknowledgeUnknown:false,
           preparedFingerprint:item.draftIdentity.creativeFingerprint
         });
         if(response===null){
@@ -513,6 +541,9 @@ export function StoryboardWorkspace(){
       setError('This exact Native target was already approved. No paid POST.');return;
     }
     paidInFlight.current=true;
+    // The historical VALIDATED checkbox/preview never authorizes a future
+    // candidate. A new job requires its own successfully loaded image.
+    setSelectedApproved(new Set());
     setBatchProgress(null);setSubmission({key:targetKey,label:entry.shotId+'/'+entry.layerId});setError('');
     try{
       const result=await window.studio.glabsGenerate(scope.projectId,{
@@ -624,10 +655,10 @@ export function StoryboardWorkspace(){
           READY {counts.ready} · Review {counts.review} · Blocked {counts.blocked}
         </div>
         <Button disabled={!id||busy||Boolean(submission)||!native?.nativeDraft} onClick={()=>void prepare()}>Refresh Images</Button>
-        <span title="Starts one potentially paid G-Labs request per never-attempted READY image. Total cost is unavailable. No automatic retries.">
+        <span title="Starts one potentially paid G-Labs request per eligible current-DRAFT image, including safely superseded targets. Never retries active, validated or UNKNOWN jobs. Total cost is unavailable.">
           <Button variant="primary" disabled={busy||Boolean(submission)||!eligibleBulk.length}
             onClick={()=>void generateAll()}>
-            Generate All Ready ({eligibleBulk.length} paid attempts)
+            Generate All Ready ({eligibleBulk.length} paid attempts{bulkRegenerated>0?' · '+bulkRegenerated+' regenerations':''})
           </Button>
         </span>
         <Button disabled={!shotIds.length} onClick={()=>{
@@ -679,7 +710,7 @@ export function StoryboardWorkspace(){
         <Button variant="primary" disabled={busy||Boolean(submission)||
           !eligibleBulk.some(item=>item.shotId===shotId)}
           onClick={()=>void generateAll(shotId)}>
-          Generate All in Shot ({eligibleBulk.filter(item=>item.shotId===shotId).length} paid attempts)
+          Generate All in Shot ({eligibleBulk.filter(item=>item.shotId===shotId).length} paid attempts{eligibleBulk.some(item=>item.shotId===shotId&&item.regenerate)?' · '+eligibleBulk.filter(item=>item.shotId===shotId&&item.regenerate).length+' regenerations':''})
         </Button>
         <Button disabled={busy||!inspectedReadyCards.some(card=>
           card.target.shotId===shotId&&selectedApproved.has(card.job.id))}
