@@ -137,7 +137,7 @@ export function StyleBibleWorkspace(){
               }))}>I inspected the current reference image · Approve</button>}
             {candidate.status==='APPROVED'&&<label>
               <input type="radio" name={'identity-reference-'+character.char_id}
-                checked={(chosen[character.char_id]??candidates.findLast(c=>
+                checked={(chosen[character.char_id]??[...candidates].reverse().find(c=>
                   c.status==='APPROVED')?.candidate_id)===candidate.candidate_id}
                 onChange={()=>setChosen(old=>({...old,
                   [character.char_id]:candidate.candidate_id}))}/>
@@ -153,11 +153,11 @@ export function StyleBibleWorkspace(){
         owner approvals are eligible. Existing G-Labs/Native assets are never auto-approved.</p>
       <button className="button primary" type="button" disabled={busy||
         bible?.characters.some(character=>!(
-          chosen[character.char_id]??journal.referenceCandidates.findLast(c=>
+          chosen[character.char_id]??[...journal.referenceCandidates].reverse().find(c=>
             c.anchor_id===character.char_id&&c.status==='APPROVED')?.candidate_id))}
         onClick={()=>action((id,revision)=>window.studio!.identityPublishReferences(id,
           revision,bible!.characters.map(character=>
-            chosen[character.char_id]??journal.referenceCandidates.findLast(c=>
+            chosen[character.char_id]??[...journal.referenceCandidates].reverse().find(c=>
               c.anchor_id===character.char_id&&c.status==='APPROVED')!.candidate_id)))}>
         Publish approved canonical Reference Set
       </button>
