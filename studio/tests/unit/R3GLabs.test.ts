@@ -877,6 +877,41 @@ describe('F19/F22 MIME-safe provider ingestion and GET-only recovery',()=>{
     expect(recovered.providerTaskId).toBe(created.providerTaskId);
     expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
   });
+  it('F22-02 provider returns RUNNING after failed GET: obsolete status diagnostic clears without any POST',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls,stub}=transport();
+    let failStatus=true;
+    vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL,options?:RequestInit)=>{
+      if(new URL(String(input)).pathname==='/api/status/ab12cd34'){
+        if(failStatus)throw new Error('read interrupted');
+        return response({task_id:'ab12cd34',status:'running'});
+      }
+      return stub(input,options);
+    }));
+    const submitted=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    await expect(pollGlabsImage(appPath,root,dir,cipher,submitted.id,decode)).rejects.toThrow();
+    expect(listGlabsJobs(root).find(item=>item.id===submitted.id)?.lastSyncError?.stage)
+      .toBe('provider');
+    failStatus=false;
+    const running=await pollGlabsImage(appPath,root,dir,cipher,submitted.id,decode);
+    expect(running.status).toBe('RUNNING');
+    expect(running.lastSyncError).toBeUndefined();
+    expect(running.providerCompletedAt).toBeUndefined();
+    expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
+  });
+  it('F22-03 invalid status payload persists sanitized provider diagnostic, never another paid POST',async()=>{
+    const dir=credential(),{root,targets}=nativeTarget(),{calls,stub}=transport();
+    vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL,options?:RequestInit)=>{
+      if(new URL(String(input)).pathname==='/api/status/ab12cd34')
+        return response({task_id:'ab12cd34',status:'unexpected'});
+      return stub(input,options);
+    }));
+    const submitted=await submitGlabsImage(appPath,root,dir,cipher,request(targets[0].key),decode);
+    await expect(pollGlabsImage(appPath,root,dir,cipher,submitted.id,decode))
+      .rejects.toThrow('GLABS_STATUS_UNRECOGNIZED');
+    expect(listGlabsJobs(root).find(item=>item.id===submitted.id)?.lastSyncError)
+      .toMatchObject({stage:'provider',code:'GLABS_STATUS_UNRECOGNIZED'});
+    expect(calls.filter(call=>call.method==='POST')).toHaveLength(1);
+  });
 });
 describe('F11 crash-safe generated-image approval journal recovery',()=>{
   it('F11-INTEGRITY-03 rejects a forged generated-image prompt SHA before any Native binding',async()=>{
