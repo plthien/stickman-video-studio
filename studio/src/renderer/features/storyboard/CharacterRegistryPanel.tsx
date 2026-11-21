@@ -49,7 +49,7 @@ export function CharacterRegistryPanel({projectId,onChanged,onSnapshot}:{
       if(alive){setSnapshot(value);onSnapshot?.(value);}
     }).catch(e=>{if(alive)setError(message(e));});
     return()=>{alive=false;};
-  },[projectId]);
+  },[projectId,onSnapshot]);
   const act=async(work:()=>Promise<unknown>)=>{
     if(busy)return;
     setBusy(true);setError('');
