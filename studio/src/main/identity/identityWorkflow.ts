@@ -2,7 +2,7 @@
  * All artifacts remain scoped to the exact approved Script and frozen task. */
 import fs from 'node:fs';
 import {randomUUID} from 'node:crypto';
-import {atomicJson,readState,resolveProjectFile,strictJson,type StudioState} from '../services.js';
+import {atomicJson,readState,resolveProjectFile,strictJson,sha,writeState,type StudioState} from '../services.js';
 import {loadImageStyleProfile} from '../imagePreparation.js';
 import {contentHash,type ScriptAnalysis,type StyleBible} from './contracts.js';
 import {analysisLineage,freezeAnalysisTask,validateAnalysisEnvelope,
@@ -112,6 +112,49 @@ export function identityWorkflowSnapshot(root:string,appPath:string){
     }catch(error){readiness=error instanceof Error?error.message:'IDENTITY_INTEGRITY_ERROR';}
   }
   return{policy,readiness,journal:record};
+}
+/** No implicit migration of historical candidates, Core output or reference identity. */
+export function previewIdentityUpgrade(root:string){
+  const state=readState(root);
+  const existing=resolveProjectFile(root,'project.json');
+  const nativeSha=fs.existsSync(existing)?sha(fs.readFileSync(existing)):null;
+  const impacts=(state.media??[]).filter(item=>item.kind==='image').map(item=>({
+    path:item.path,sha256:item.sha256,hasNativeOwner:Boolean(item.shotId||item.layerId)
+  })).sort((a,b)=>a.path.localeCompare(b.path));
+  const details={projectId:state.project.id,policy:identityPolicy(state),
+    approvedScriptSha:state.approvedScript?.sha256??null,
+    nativeProjectSha:nativeSha,media:impacts,
+    importedNativeRevision:state.external.native?.revision??null,
+    existingGlabsHistoryUnchanged:true,
+    publishedOutputRequiresExplicitRevalidation:true};
+  return{...details,impactSha256:contentHash(details)};
+}
+export function upgradeIdentityPolicy(root:string,input:{
+  impactSha256:string;ownerConfirmed:true
+}){
+  const state=readState(root),preview=previewIdentityUpgrade(root);
+  if(identityPolicy(state)!=='legacy'||input.ownerConfirmed!==true||
+    preview.impactSha256!==input.impactSha256)
+    throw Error('IDENTITY_UPGRADE_IMPACT_REVIEW_REQUIRED');
+  const jobsDir=resolveProjectFile(root,'.studio/glabs/jobs');
+  if(fs.existsSync(jobsDir))for(const name of fs.readdirSync(jobsDir).filter(name=>
+    /^[a-f0-9-]{36}\.json$/i.test(name))){
+    const record=strictJson(fs.readFileSync(resolveProjectFile(root,
+      '.studio/glabs/jobs/'+name),'utf8')) as Record<string,unknown>;
+    if(record.projectId===state.project.id&&
+      ['QUEUED','SUBMITTED','RUNNING','DOWNLOADED','UNKNOWN'].includes(String(record.status)))
+      throw Error('IDENTITY_UPGRADE_PROVIDER_JOB_ACTIVE_OR_UNKNOWN');
+  }
+  // Atomic sidecar first, explicit policy switch second. Recovery is fail-closed;
+  // legacy never appears v1-certified until all upstream approvals are current.
+  atomicJson(resolveProjectFile(root,'.studio/identity/migration-v1.json'),{
+    schema:'stickman-identity-migration-v1',projectId:state.project.id,
+    previousPolicy:'legacy',newPolicy:'v1',
+    impactSha256:preview.impactSha256,approvedAt:new Date().toISOString(),
+    impactedMedia:preview.media,preexistingNativeSha:preview.nativeProjectSha
+  });
+  state.identityPolicy='v1';writeState(root,state);
+  return previewIdentityUpgrade(root);
 }
 /** Only a human explicitly selects one of the four external operations. */
 export function freezeIdentityTask(root:string,operation:IdentityReviewOperation,
