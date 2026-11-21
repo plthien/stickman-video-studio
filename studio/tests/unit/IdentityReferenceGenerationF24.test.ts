@@ -22,6 +22,10 @@ afterEach(()=>{cleanup();vi.restoreAllMocks();vi.unstubAllGlobals();
   for(const d of tmp.splice(0))fs.rmSync(d,{recursive:true,force:true});});
 function setup(){
   const {root}=fixture(),state=readState(root);
+  const visualScript='One has a scar and walks.';
+  state.approvedScript!.sections=[{id:'opening',text:visualScript}];
+  state.approvedScript!.text=visualScript;
+  state.approvedScript!.sha256=sha(visualScript);
   state.identityPolicy='v1';writeState(root,state);
   const script=currentApprovedSource(root);
   const analysis={schema:'stickman-script-analysis-v1' as const,
@@ -30,7 +34,7 @@ function setup(){
     continuity_catalog:{characters:[{
       char_id:'char_001' as const,label:'One',description:'One',
       entity_kind:'human_character' as const,narrative_role:'Story character One',
-      explicit_visual_traits:[],identity_markers:['One'],
+      explicit_visual_traits:['scar'],identity_markers:['scar'],
       continuity_notes:[],physical_constraints:[],
       occurrences:[{section_id:'opening',quote:'One',start:0,end:3}],
       presence_ranges:[{start:0,end:3}]
