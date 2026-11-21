@@ -14,6 +14,7 @@ interface Window { studio?: Readonly<{
     bindings:import('../main/visualIdentityRegistry').BindingStore;
     coverage:ReturnType<typeof import('../main/visualReferenceResolver').characterCoverage>;
     reviews:ReturnType<typeof import('../main/visualIdentityReview').readVisualReviews>;
+    overlay:import('../main/visualIdentityOverlay').ContinuityOverlay|null;
   }>;
   visualIdentityCreateCharacter:(id:string,input:Parameters<typeof import('../main/visualIdentityRegistry').registerCharacter>[1])=>Promise<import('../main/visualIdentityRegistry').Registry>;
   visualIdentitySetStrict:(id:string,input:Parameters<typeof import('../main/visualIdentityRegistry').setStrictCharacterMode>[1])=>Promise<import('../main/visualIdentityRegistry').Registry>;
