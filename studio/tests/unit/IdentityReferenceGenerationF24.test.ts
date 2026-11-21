@@ -9,7 +9,8 @@ import {loadImageStyleProfile} from '../../src/main/imagePreparation';
 import {compileStyleBible} from '../../src/main/identity/styleBible';
 import {contentHash} from '../../src/main/identity/contracts';
 import {readIdentityWorkflow,registerValidatedGeneratedReference,
-  approveOwnerReference,currentApprovedSource} from '../../src/main/identity/identityWorkflow';
+  approveOwnerReference,currentApprovedSource,
+  approveOwnerVisualDefinition} from '../../src/main/identity/identityWorkflow';
 import {readReferenceJob,submitReferenceJob,syncReferenceJob} from '../../src/main/identity/referenceGeneration';
 import {saveGlabsKey} from '../../src/main/glabs';
 
@@ -20,9 +21,12 @@ const cipher={isEncryptionAvailable:()=>true,
 const decode=(bytes:Buffer)=>({png:bytes,width:1,height:1});
 afterEach(()=>{cleanup();vi.restoreAllMocks();vi.unstubAllGlobals();
   for(const d of tmp.splice(0))fs.rmSync(d,{recursive:true,force:true});});
-function setup(){
+function setup(underdescribed=false,fromAuthor=false){
   const {root}=fixture(),state=readState(root);
-  const visualScript='One has a scar and walks.';
+  const visualScript=underdescribed?'One walks.':'One has a scar and walks.';
+  if(fromAuthor)state.approvedScript!.authoring={
+    characters:[{name:'One',appearance:'One wears a red coat.'}]
+  };
   state.approvedScript!.sections=[{id:'opening',text:visualScript}];
   state.approvedScript!.text=visualScript;
   state.approvedScript!.sha256=sha(visualScript);
@@ -34,7 +38,8 @@ function setup(){
     continuity_catalog:{characters:[{
       char_id:'char_001' as const,label:'One',description:'One',
       entity_kind:'human_character' as const,narrative_role:'Story character One',
-      explicit_visual_traits:['scar'],identity_markers:['scar'],
+      explicit_visual_traits:underdescribed?[]:['scar'],
+      identity_markers:underdescribed?[]:['scar'],
       continuity_notes:[],physical_constraints:[],
       occurrences:[{section_id:'opening',quote:'One',start:0,end:3}],
       presence_ranges:[{start:0,end:3}]
@@ -122,6 +127,56 @@ describe('F24 isolated 1:1 reference generation with explicit billing/approval b
     expect(mock.calls.filter(call=>call.startsWith('GET /api/'))).toHaveLength(5);
     expect(sha(fs.readFileSync(path.join(root,approved.media_path))))
       .toBe(validated.staged?.sha256);
+  });
+  it('F24-AUD-06 owner approves appearance from exact Script Author evidence before paid 1:1 generation',async()=>{
+    const {root,dir}=setup(true,true),mock=provider();
+    await expect(submitReferenceJob(appPath,root,dir,cipher,{
+      anchorId:'char_001',authorized:true
+    })).rejects.toThrow('REFERENCE_CHARACTER_NOT_READY');
+    expect(mock.posts()).toHaveLength(0);
+    await expect(()=>approveOwnerVisualDefinition(root,appPath,{
+      expectedRevision:readIdentityWorkflow(root).revision,anchorId:'char_001',
+      provenance:'SCRIPT_AUTHOR',traits:['blue hair'],
+      evidence:'One wears a red coat.',ownerInspected:true
+    })).toThrow();
+    const reviewed=approveOwnerVisualDefinition(root,appPath,{
+      expectedRevision:readIdentityWorkflow(root).revision,anchorId:'char_001',
+      provenance:'SCRIPT_AUTHOR',traits:['red coat'],
+      evidence:'One wears a red coat.',ownerInspected:true
+    });
+    expect(reviewed.ownerVisualDefinitions?.[0].traits).toEqual(['red coat']);
+    expect(reviewed.referenceApprovalSet).toBe(null);
+    const created=await submitReferenceJob(appPath,root,dir,cipher,{
+      anchorId:'char_001',authorized:true
+    });
+    expect(created.ownerVisualDefinitionSha)
+      .toBe(reviewed.ownerVisualDefinitions?.[0].definitionSha);
+    expect(created.prompt).toContain('red coat');
+    expect(mock.posts()).toHaveLength(1);
+    const valid=await syncReferenceJob(appPath,root,dir,cipher,created.id,decode);
+    const prior=readIdentityWorkflow(root);
+    const imported=registerValidatedGeneratedReference(root,appPath,{
+      expectedRevision:prior.revision,job:valid
+    },decode);
+    const candidate=imported.referenceCandidates[0];
+    expect(candidate.visual_definition_sha256)
+      .toBe(reviewed.ownerVisualDefinitions?.[0].definitionSha);
+  });
+  it('F24-AUD-06 owner brief is explicit approved identity, never invented from a bare name',async()=>{
+    const {root,dir}=setup(true),mock=provider();
+    const approved=approveOwnerVisualDefinition(root,appPath,{
+      expectedRevision:readIdentityWorkflow(root).revision,anchorId:'char_001',
+      provenance:'OWNER_BRIEF',traits:['plain green scarf'],
+      evidence:'Owner drew a plain green scarf for this character.',
+      ownerInspected:true
+    });
+    const job=await submitReferenceJob(appPath,root,dir,cipher,{
+      anchorId:'char_001',authorized:true
+    });
+    expect(job.prompt).toContain('plain green scarf');
+    expect(job.ownerVisualDefinitionSha).toBe(
+      approved.ownerVisualDefinitions?.[0].definitionSha);
+    expect(mock.posts()).toHaveLength(1);
   });
   it('R06 uncertain paid POST stays UNKNOWN and does not retry without explicit billing acknowledgment',async()=>{
     const {root,dir}=setup(),mock=provider(true);
