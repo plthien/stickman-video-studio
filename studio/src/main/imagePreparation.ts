@@ -3,6 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {getPendingMedia,nativeImageTargetIdentity,nativeImageTargetIdentityFromSnapshot,readNativeDraft} from './externalTasks.js';
 import {imageRequirementsForTarget} from './imageRequirements.js';
+import {resolveNativeTargetBinding} from './identity/nativeBinding.js';
+import {resolveApprovedPreviousImage} from './identity/continuityGraph.js';
+import {contentHash} from './identity/contracts.js';
 import {nativeSkillRoot,readState,resolveProjectFile,sha,atomicJson,strictJson} from './services.js';
 
 type Row=Record<string,unknown>;
@@ -18,6 +21,13 @@ export interface ImageJobSpec {
   references:string[];styleAnchors:Array<{id:string;label:string;sha256:string}>;
   draftIdentity:{projectId:string;authorTaskId:string;token:string;revision:number;creativeFingerprint:string};
   occurrencesAtPath:number; ownerEdited:boolean;
+  /** Current policy's mandatory reference snapshot; absent on legacy jobs. */
+  identityBindingSnapshotSha?:string;
+  identityApprovalSetSha?:string;identityStyleBibleSha?:string;
+  identityRequiredReferences?:string[];
+  identityOwnerReferences?:string[];
+  identityCharacterIds?:string[];
+  identityPreviousSourceSha?:string;
 }
 interface Candidate {
   key:string;kind:'image'|'sfx';path:string;shotId?:string;layerId?:string;
@@ -235,6 +245,65 @@ function findExactLayer(layers:unknown[],layerId:string,pathValue:string):boolea
   }
   return false;
 }
+/** Canonical refs are compiler-owned; owner edits only supplemental refs.
+ * Never mutate legacy specs or silently remove a required reference. */
+function withUpstreamIdentity(appPath:string,root:string,item:ImageJobSpec):ImageJobSpec{
+  if(readState(root).identityPolicy!=='v1')return item;
+  try{
+    const binding=resolveNativeTargetBinding(root,appPath,item.targetKey);
+    const previous=resolveApprovedPreviousImage(appPath,root,item.targetKey);
+    const canonical=binding.canonicalAnchors;
+    const ownerRefs=[...item.references];
+    const lockedStyle=ownerRefs.filter(r=>r.startsWith('@modeb/b4/'));
+    const supplements=ownerRefs.filter(r=>!r.startsWith('@modeb/b4/'));
+    // One identical SHA cannot be claimed as two different character identities.
+    if(new Set(canonical.map(anchor=>anchor.sha256)).size!==canonical.length)
+      throw Error('CHARACTER_REFERENCE_IDENTITY_COLLISION');
+    const mandatory=[...canonical.map(anchor=>anchor.path),...(previous?[previous.path]:[])];
+    const ordered=[...lockedStyle,...mandatory,...supplements.filter(path=>
+      !mandatory.includes(path))];
+    const paths=[...new Set(ordered)];
+    if(paths.length>8)throw Error('REFERENCE_BUDGET_EXCEEDED: '+paths.length+'/8');
+    const frozen={targetKey:item.targetKey,
+      draftIdentity:item.draftIdentity,upstreamSnapshotSha:binding.upstreamSnapshotSha,
+      targetBindingSha:binding.targetBindingSha,
+      characterIds:binding.characterIds,approvalSetSha:binding.approvalSetSha,
+      styleBibleSha:binding.styleBibleSha,
+      canonical:canonical.map(anchor=>({
+        charId:anchor.charId,definitionSha:anchor.sourceDefinitionHash,
+        mediaSha:anchor.sha256,rightsSha:anchor.rightsSha256,path:anchor.path
+      })),
+      previous:previous?{source:previous.sourceTargetKey,sha:previous.sha256,
+        job:previous.sourceJobId,binding:previous.sourceBindingSha,
+        dependency:previous.dependencySha}:null,
+      ownerRefs};
+    const identityBindingSnapshotSha=contentHash(frozen);
+    const appendix=[
+      'APPROVED F24 CHARACTER IMAGE BINDINGS — immutable canonical image bytes',
+      ...canonical.map(anchor=>'Character '+anchor.charId+
+        ': attached approved canonical reference SHA '+anchor.sha256+
+        '; definition SHA '+anchor.sourceDefinitionHash),
+      ...(previous?['APPROVED PREVIOUS-IMAGE CONTINUITY ['+previous.relation+
+        '] from '+previous.sourceTargetKey+'; image SHA '+previous.sha256+
+        '. Match only this specified transient relation, never override canonical character identity.']:[]),
+      'Do not invent character appearance, cast, props or media rights.'
+    ].join('\n');
+    const effectivePrompt=item.effectivePrompt?
+      item.effectivePrompt+'\n\n'+appendix:'';
+    return{...item,references:paths,
+      identityBindingSnapshotSha,identityApprovalSetSha:binding.approvalSetSha,
+      identityStyleBibleSha:binding.styleBibleSha,
+      identityRequiredReferences:mandatory,identityOwnerReferences:ownerRefs,
+      identityCharacterIds:binding.characterIds,
+      identityPreviousSourceSha:previous?.dependencySha,
+      effectivePrompt,effectivePromptSha256:effectivePrompt?sha(effectivePrompt):''};
+  }catch(error){
+    const reason=error instanceof Error?error.message:'IDENTITY_REFERENCE_UNVERIFIED';
+    return{...item,state:'BLOCKED',reason,identityRequiredReferences:[],
+      identityCharacterIds:[],identityOwnerReferences:[...item.references],
+      effectivePrompt:'',effectivePromptSha256:''};
+  }
+}
 export function prepareNativeImages(appPath:string,root:string,persist=false){
   const state=readState(root),draft=readNativeDraft(root,state),pending=getPendingMedia(appPath,root);
   if(!draft||!pending||draft.token!==pending.token)
@@ -248,7 +317,8 @@ export function prepareNativeImages(appPath:string,root:string,persist=false){
   }
   const profile=loadImageStyleProfile(appPath,style);
   const jobs=compileImageJobSpecs({projectId:state.project.id,style,authorTaskId:draft.authorTaskId,draftRevision:draft.revision,
-    token:draft.token,pending,profile,fingerprints,overrides:overrides.items});
+    token:draft.token,pending,profile,fingerprints,overrides:overrides.items})
+    .map(job=>withUpstreamIdentity(appPath,root,job));
   const result={status:'PRE_MEDIA_PROJECTION' as const,style,revision:draft.revision,token:draft.token,
     jobs,shotCount:Array.isArray(pending.after?.shots)?pending.after!.shots!.length:0,imageOccurrences:image.length,
     uniquePaths:new Set(image.map(target=>target.path)).size};
@@ -277,11 +347,12 @@ export function prepareNativeImageTarget(appPath:string,root:string,targetKey:st
   const style=state.project.style as Style,profile=loadImageStyleProfile(appPath,style);
   const overrides=readOverrides(root,state.project.id);
   const selectedPending={...pending,missing:[target]};
-  return compileImageJobSpecs({
+  const candidate=compileImageJobSpecs({
     projectId:state.project.id,style,authorTaskId:draft.authorTaskId,
     draftRevision:draft.revision,token:draft.token,pending:selectedPending,profile,
     fingerprints:{[targetKey]:fingerprint},overrides:overrides.items
-  })[0]??null;
+  })[0];
+  return candidate?withUpstreamIdentity(appPath,root,candidate):null;
 }
 export function saveNativeImagePrompt(appPath:string,root:string,input:{
   targetKey:string;fingerprint:string;styleSha256?:string;prompt:string;references:string[]
