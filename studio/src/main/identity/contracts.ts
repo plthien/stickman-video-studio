@@ -10,9 +10,18 @@ export type ImageRelation = 'same_setup'|'match_subject'|'match_location'|
   'match_composition'|'graphic_sequence';
 export interface Span {section_id:string;quote:string;start:number;end:number}
 export interface PresenceRange {start:number;end:number}
+export type VisualTraitRelationship='intrinsic_appearance'|'stable_wardrobe'|
+  'transient_object'|'transient_action'|'scene_state'|'requires_owner_review';
+export interface VisualTraitEvidence {
+  trait:string;source:Span;relationship:VisualTraitRelationship;
+}
 export interface ScriptCharacter {
   char_id:CharacterId;label:string;description:string;entity_kind:EntityKind;
-  narrative_role:string;explicit_visual_traits:string[];identity_markers:string[];
+  narrative_role:string;explicit_visual_traits:string[];
+  /** Optional only to read older F24 candidates. Missing evidence is NEVER
+   * approved to enter canonical reference prompts. */
+  visual_trait_evidence?:VisualTraitEvidence[];
+  identity_markers:string[];
   continuity_notes:string[];physical_constraints:string[];
   occurrences:Span[];presence_ranges:PresenceRange[];
 }
