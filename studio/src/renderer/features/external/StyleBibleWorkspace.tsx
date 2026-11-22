@@ -104,6 +104,21 @@ export function StyleBibleWorkspace(){
     JSON.stringify(impact.selectedIds)===JSON.stringify(selectedIds)&&
     impact.projectId===projectId);
   return <div className="stack" data-testid="f24-style-bible">
+    {journal.publishedAuthority&&<section className="card"
+      data-testid="f24-published-identity">
+      <h3>Current published identity — remains active during candidate review</h3>
+      <p>Approved reference set SHA {journal.publishedAuthority.referenceApprovalSet
+        .approval_set_sha256.slice(0,16)} ·
+        {journal.publishedAuthority.bible.characters.length} reviewed character identities</p>
+      <div className="identity-impact">
+        {journal.publishedAuthority.referenceApprovalSet.entries.map(entry=>
+          <small key={entry.candidate_id}>
+            {entry.anchor_id}: published candidate {entry.candidate_id}
+          </small>)}
+      </div>
+      <small>Candidate imports, negative reviews and corrections below cannot revoke
+        these last-good published references without explicit owner Publish.</small>
+    </section>}
     <section className="card">
       <h3>Project Style Bible · approved Script Analysis lineage</h3>
       <p>Current upstream readiness: <strong>{snapshot.readiness}</strong></p>
