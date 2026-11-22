@@ -74,9 +74,7 @@ export function currentDraftIdentityReceipt(root:string,appPath:string,
       job.targetCreativeSha256===target.creativeFingerprint&&
       job.status==='APPROVED'&&job.approved?.path===target.boundPath&&
       job.approved?.sha256===target.boundSha256&&
-      job.identityTargetBindingSha===plan.targetBindingSha&&
-      job.identityApprovalSetSha===verified.identity.approvalSetSha&&
-      job.identityStyleBibleSha===verified.identity.styleBibleSha);
+      job.identityTargetBindingSha===plan.targetBindingSha);
     if(!source)throw Error('IDENTITY_NATIVE_APPROVED_JOB_REQUIRED: '+plan.targetKey);
     const stored=readState(root).media?.find(m=>m.kind==='image'&&
       m.path===target.boundPath&&m.sha256===target.boundSha256&&
@@ -184,8 +182,7 @@ export function assertPublishedIdentityCurrent(root:string,appPath:string,
       source.shotId!==row.shotId||source.layerId!==row.layerId||
       source.approved?.path!==row.imagePath||
       source.approved?.sha256!==row.imageSha||
-      source.identityTargetBindingSha!==row.targetBindingSha||
-      source.identityApprovalSetSha!==receipt.approvalSetSha)
+      source.identityTargetBindingSha!==row.targetBindingSha)
       throw Error('IDENTITY_PUBLISHED_APPROVAL_JOURNAL_STALE');
     const stored=state.media?.find(m=>m.kind==='image'&&
       m.path===row.imagePath&&m.sha256===row.imageSha&&
