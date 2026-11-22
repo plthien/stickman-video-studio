@@ -263,9 +263,17 @@ export function freezeIdentityTask(root:string,operation:IdentityReviewOperation
   if(operation==='recheck'&&(!prior.currentTask||
       prior.currentTask.task.operation!=='correct'||prior.currentTask.status!=='IMPORTED'))
     throw Error('SCRIPT_ANALYSIS_RECHECK_CORRECTION_REQUIRED');
+  const recheckFindings=operation==='recheck'?
+    prior.currentTask?.task.review_findings??[]:[];
   const promptInputs={sourceAnalysisSha:prior.draftSha256,
-    unresolvedFindings:prior.independentReview?.findings??[]};
+    unresolvedFindings:operation==='recheck'?recheckFindings:
+      prior.independentReview?.findings??[]};
   const task=freezeAnalysisTask(script,operation,prior.revision+1,promptInputs);
+  if(operation==='correct'){
+    task.finding_ids=prior.independentReview!.findings.map(f=>f.finding_id);
+    task.review_findings=structuredClone(prior.independentReview!.findings);
+    task.review_sha256=contentHash(prior.independentReview);
+  }
   if(operation==='review'||operation==='recheck'){
     task.prompt=[
       '# INDEPENDENT SCRIPT ANALYSIS REVIEW / '+operation.toUpperCase(),
@@ -273,6 +281,10 @@ export function freezeIdentityTask(root:string,operation:IdentityReviewOperation
       'Do not approve invented appearance or unsupported quote spans.',
       'Exact approved script sections '+JSON.stringify(script.sections),
       'Exact previous analysis '+JSON.stringify(prior.draftAnalysis),
+      ...(operation==='recheck'?[
+        'MUST independently re-evaluate every original Correct finding: '+
+          JSON.stringify(recheckFindings)
+      ]:[]),
       analysisReviewContract(task,prior.draftSha256!),
     ].join('\n\n');
   }else if(operation==='correct'){
@@ -282,7 +294,9 @@ export function freezeIdentityTask(root:string,operation:IdentityReviewOperation
       'A second independent Recheck is mandatory.',
       'Exact approved script sections '+JSON.stringify(script.sections),
       'Current analysis '+JSON.stringify(prior.draftAnalysis),
-      'Independent findings '+JSON.stringify(prior.independentReview?.findings??[]),
+      'Independent findings '+JSON.stringify(task.review_findings),
+      'Frozen review SHA '+task.review_sha256,
+      'Resolved finding IDs MUST match task.finding_ids exactly; no extras or omissions.',
       analysisAuthorContract(task),
     ].join('\n\n');
   }
@@ -296,6 +310,13 @@ export function importIdentityResult(root:string,text:string,expectedRevision:nu
   const prior=readIdentityWorkflow(root),script=active(root),entry=prior.currentTask;
   if(prior.revision!==expectedRevision)throw Error('IDENTITY_REVISION_CONFLICT');
   if(!entry||entry.status!=='FROZEN')throw Error('IDENTITY_FROZEN_TASK_REQUIRED');
+  if(entry.frozenArtifactSha!==prior.draftSha256)
+    throw Error('SCRIPT_ANALYSIS_FROZEN_CANDIDATE_STALE');
+  if(entry.task.operation==='correct'&&
+    (!prior.independentReview||
+      contentHash(prior.independentReview)!==entry.task.review_sha256||
+      prior.independentReview.analysis_sha256!==prior.draftSha256))
+    throw Error('SCRIPT_ANALYSIS_CORRECTION_REVIEW_STALE');
   if(text.length>4*1024*1024)throw Error('IDENTITY_RESULT_OVERSIZE');
   const raw=strictJson(text) as Record<string,unknown>,task=entry.task;
   if(raw.schema!=='mode-b-identity-external-result-v1'||raw.stage!=='script_analysis'||
