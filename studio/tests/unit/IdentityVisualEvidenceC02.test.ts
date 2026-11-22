@@ -8,18 +8,20 @@ import {compileStyleBible,referencePromptForCharacter} from '../../src/main/iden
 const projectId='a'.repeat(24);
 const pinned={id:'B1' as const,guidance:'Verified local hand-drawn style.',
   sha256:hash('full-style-document-v1')};
-const fixture=(text:string,trait:string,relation?:VisualTraitRelationship)=>{
+const fixture=(text:string,trait:string,relation?:VisualTraitRelationship,
+  actorName='Kip')=>{
   const authoring={};
   const script={projectId,revision:1,sha256:hash(text),authoring,
     sections:[{id:'opening',text}]};
-  const offset=text.indexOf('Kip');
+  const offset=text.indexOf(actorName);
   const actor:ScriptCharacter={
-    char_id:'char_001',label:'Kip',description:'Role only',
+    char_id:'char_001',label:actorName,description:'Role only',
     narrative_role:'Story actor',entity_kind:'human_character',
     explicit_visual_traits:trait?[trait]:[],identity_markers:[],
     physical_constraints:[],continuity_notes:[],
-    occurrences:[{section_id:'opening',quote:'Kip',start:offset,end:offset+3}],
-    presence_ranges:[{start:offset,end:offset+3}],
+    occurrences:[{section_id:'opening',quote:actorName,
+      start:offset,end:offset+actorName.length}],
+    presence_ranges:[{start:offset,end:offset+actorName.length}],
     ...(relation?{visual_trait_evidence:[{
       trait,relationship:relation,source:{
         section_id:'opening',quote:text,start:0,end:text.length
@@ -62,8 +64,14 @@ describe('F24-C02 permanent visual traits require exact actor/span/relationship'
       .toThrow('SCRIPT_ANALYSIS_VISUAL_RELATION_REVIEW_REQUIRED');
   });
   it('C02-04 wooden club held by an actor is not body appearance',()=>{
-    const f=fixture('Kip holds a wooden club.','wooden club','intrinsic_appearance');
+    const f=fixture('Brog holds a wooden club.','wooden club',
+      'intrinsic_appearance','Brog');
     expect(()=>validateScriptAnalysis(f.analysis,f.script))
+      .toThrow('SCRIPT_ANALYSIS_VISUAL_RELATION_REVIEW_REQUIRED');
+  });
+  it('C02-04b mere ownership of a red hat is not a permanent body trait',()=>{
+    const f=fixture('Kip has a red hat.','red hat','intrinsic_appearance');
+    expect(()=>compileStyleBible(f.analysis,f.script,pinned))
       .toThrow('SCRIPT_ANALYSIS_VISUAL_RELATION_REVIEW_REQUIRED');
   });
   it('C02-05 temporary running is not intrinsic appearance',()=>{
