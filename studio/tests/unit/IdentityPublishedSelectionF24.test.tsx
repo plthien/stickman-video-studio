@@ -68,6 +68,9 @@ describe('F24-A05 canonical selection is distinct from newly approved candidates
     await waitFor(()=>expect(preview).toHaveBeenCalledWith(
       'project-A',['unpublished-B']));
     await waitFor(()=>expect(publishButton).toBeEnabled());
+    // Changing any chosen candidate invalidates the reviewed digest.
+    fireEvent.click(radios[0]);
+    expect(publishButton).toBeDisabled();
     expect(publish).not.toHaveBeenCalled();
   });
   it('A05-05/06 switching projects clears prior choice and preview, restores published canonical',async()=>{
