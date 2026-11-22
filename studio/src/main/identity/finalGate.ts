@@ -1,7 +1,7 @@
 /** F24 final publish/render gate. Never edits Native Core project.json. */
 import fs from 'node:fs';
 import {atomicJson,readState,resolveProjectFile,sha,strictJson} from '../services.js';
-import {getNativeImageGallery,readNativeDraft} from '../externalTasks.js';
+import {getNativeImageGallery,readNativeDraft,isManagedNativeImagePath} from '../externalTasks.js';
 import {listGlabsJobs,readGlabsJob} from '../glabs.js';
 import {readApprovedNativeIdentity,validateNativeBindingPayload} from './nativeBinding.js';
 import {createContinuityResolver} from './continuityGraph.js';
@@ -146,8 +146,12 @@ function actualPublishedImages(manifest:Record<string,unknown>){
       for(const value of layers){
         if(!value||typeof value!=='object'||Array.isArray(value))continue;
         const layer=value as Record<string,unknown>;
-        if(layer.type==='image'&&typeof layer.id==='string'&&typeof layer.path==='string')
-          out.set('image:'+index+':'+layer.id,layer.path);
+        if(layer.type==='image'&&typeof layer.id==='string'&&isManagedNativeImagePath(layer.path))
+          {
+            const key='image:'+index+':'+layer.id;
+            if(out.has(key))throw Error('NATIVE_PUBLISHED_DUPLICATE_IMAGE_TARGET');
+            out.set(key,layer.path);
+          }
         if(Array.isArray(layer.children))walk(layer.children);
       }
     };
