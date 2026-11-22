@@ -271,10 +271,17 @@ export function isManagedNativeImagePath(path:unknown):path is string{
 }
 function nativeRefs(manifest:Record<string,unknown>):MissingNativeReference[]{
   const refs:MissingNativeReference[]=[];
+  const seenImageIds=new Set<string>();
   const shots=manifest.shots as Array<Record<string,unknown>>;
   const visit=(layers:unknown[],shot:Record<string,unknown>,index:number,parentFrom=0)=>{
     for(const layerValue of layers){
       const layer=layerValue as Record<string,unknown>;
+      if(layer?.type==='image'&&typeof layer.id==='string'&&layer.id){
+        const identity=index+':'+layer.id;
+        if(seenImageIds.has(identity))
+          throw Error('NATIVE_DUPLICATE_IMAGE_LAYER_ID');
+        seenImageIds.add(identity);
+      }
       if(layer?.type==='image'&&isManagedNativeImagePath(layer.path)){
         const shotId=typeof shot.id==='string'?shot.id:undefined,layerId=typeof layer.id==='string'?layer.id:undefined;
         refs.push({key:'image:'+index+':'+String(layerId??''),kind:'image',path:layer.path,shotId,shotIndex:index,layerId,scopeStart:Number(shot.start)+Math.max(parentFrom,Number(layer.from??0))});
