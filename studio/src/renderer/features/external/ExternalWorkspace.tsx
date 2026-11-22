@@ -113,6 +113,7 @@ export function ExternalWorkspace(){
     // a newly selected project, stage, operation or Native target.
     for(const name of ['freeze','validate','pending','confirm','export','jsonFile','history'] as const)
       requests.current[name]+=1;
+    if(jsonFilePicker.current)jsonFilePicker.current.value='';
   },[projectId,projectEpoch,stage,operation,effectiveNativeTarget]);
   const suggested=stage==='native'&&effectiveNativeTarget==='PUBLISHED'?
     native?.suggestedCorrectScope?.nativePublished:native?.suggestedCorrectScope?.[stage as 'script'|'native'];
@@ -218,6 +219,14 @@ export function ExternalWorkspace(){
     if(!native||!session){setError('Open a native project before importing JSON.');return;}
     if(!/\.json$/i.test(file.name)){setError('Choose a .json file.');return;}
     const reader=new FileReader();
+    // Do not clear the input before FileReader has consumed its File. Some
+    // DOM/Electron bridges invalidate the pending blob read when selection
+    // is reset synchronously in the change handler.
+    const selectedPicker=jsonFilePicker.current;
+    const clearSelection=()=>{
+      if(selectedPicker&&selectedPicker===jsonFilePicker.current)
+        selectedPicker.value='';
+    };
     let accepted=false;
     const current=()=>sequence===requests.current.jsonFile&&
       activeKey.current===sessionKey&&isCurrentProjectSession(session);
@@ -241,14 +250,26 @@ export function ExternalWorkspace(){
         nativeMediaStatus:null,draftConsent:false,error:''});
       showNotice('JSON loaded from '+file.name+'. Review the content, then select Validate import.');
     };
-    reader.onload=acceptRead;
-    reader.onloadend=acceptRead;
+    reader.onload=()=>{
+      acceptRead();
+      if(accepted)clearSelection();
+    };
+    reader.onloadend=()=>{
+      acceptRead();
+      // Loadend is the completion boundary even when onload was omitted.
+      clearSelection();
+    };
     reader.onerror=()=>{
       if(!accepted&&current()){
         accepted=true;setError('Unable to read the selected JSON file.');
       }
+      clearSelection();
     };
-    reader.readAsText(file);
+    try{reader.readAsText(file);}
+    catch(reason){
+      if(current())setError('Unable to read the selected JSON file: '+String(reason));
+      clearSelection();
+    }
   };
   const refreshPending=async()=>{if(!native||!window.studio||stage!=='native')return;const scope=captureProjectSession(),expectedStage=stage,expectedOperation=operation,sequence=++requests.current.pending;if(!scope)return;try{const value=await window.studio.pendingMedia(native.project.id);if(!isCurrentProjectSession(scope)||expectedStage!==stage||expectedOperation!==operation||sequence!==requests.current.pending||activeKey.current!==sessionKey)return;if(operation==='Author')setPending(value);else setNativeMediaStatus(value);setError('');}catch(reason){if(isCurrentProjectSession(scope)&&expectedStage===stage&&expectedOperation===operation&&sequence===requests.current.pending&&activeKey.current===sessionKey)setError(String(reason));}};
   const validate=async()=>{const scope=captureProjectSession(),expectedStage=stage,expectedOperation=operation,sequence=++requests.current.validate;try{if(!native||!scope||!window.studio||!canImport||scopeDirty)throw new Error('A current FROZEN task is required to validate an import.');const value=operation==='Author'?await window.studio.stageImport(native.project.id,expectedStage,json):await window.studio.stageLifecycle(native.project.id,expectedStage,lifecycleOperation,json);if(!isCurrentProjectSession(scope)||expectedStage!==stage||expectedOperation!==operation||sequence!==requests.current.validate||activeKey.current!==sessionKey)return;setPending(value);setNativeMediaStatus(null);setResult('valid');if(expectedStage==='native'&&expectedOperation==='Author'){const current=await window.studio.projectState(scope.projectId);if(activeKey.current===sessionKey&&sequence===requests.current.validate)setNativeIfSessionCurrent(scope,current);}}catch(reason){if(scope&&(!isCurrentProjectSession(scope)||expectedStage!==stage||sequence!==requests.current.validate||activeKey.current!==sessionKey))return;setResult('invalid');setError(reason instanceof Error?reason.message:String(reason));}};
@@ -277,7 +298,7 @@ export function ExternalWorkspace(){
     {taskReadOnly&&<div className="info" data-testid="external-history-status">Saved {displayedStatus} task · read-only history. Build a new task to import a new response.</div>}
     {visibleHistory?.errors.length?<div className="info error" role="alert">History integrity: {visibleHistory.errors.join(', ')}. Missing or unverifiable data is not reconstructed.</div>:null}
     {visibleHistory?.confirmedJson&&<div className="info" data-testid="external-confirmed-history"><strong>Confirmed JSON · read-only</strong><pre className="prompt" aria-label="Confirmed JSON history">{visibleHistory.confirmedJson}</pre></div>}{!native&&<div className="info">EMPTY — Create/open a project to freeze a real ChatGPT task. No sample prompt is available.</div>}{lastReview&&<div className="info"><strong>Saved {lastReview.operation}: {lastReview.reviewStatus??lastReview.status}</strong>{reviewFindings.length?reviewFindings.map(item=><div key={item.id}>{item.id} · {item.severity} · {item.status} · {item.target_ids.join(', ')} · {item.requirement}</div>):<div>{stage==='script'?'No reported findings; corrected Script activation still requires a clean Recheck.':'No reported findings; this does not approve the native film.'}</div>}</div>}</Card>
-    <Card><CardHeader title="Import JSON workspace" hint="Strict schema · diff · explicit confirmation"/><Textarea aria-label="Import JSON" value={json} onChange={event=>change(event.target.value)} placeholder="Paste the returned JSON here…"/><div className="actions"><input ref={jsonFilePicker} type="file" accept=".json,application/json" aria-label="Choose JSON file" hidden onChange={event=>{const file=event.currentTarget.files?.[0];event.currentTarget.value='';if(file)importJsonFile(file);}}/><Button disabled={!native} onClick={()=>jsonFilePicker.current?.click()}>Import .json</Button><Button disabled={!json} onClick={()=>change('')}>Clear</Button><Button variant="primary" disabled={!native||!json||!canImport} onClick={validate}>Validate import</Button></div>
+    <Card><CardHeader title="Import JSON workspace" hint="Strict schema · diff · explicit confirmation"/><Textarea aria-label="Import JSON" value={json} onChange={event=>change(event.target.value)} placeholder="Paste the returned JSON here…"/><div className="actions"><input ref={jsonFilePicker} type="file" accept=".json,application/json" aria-label="Choose JSON file" hidden onChange={event=>{const file=event.currentTarget.files?.[0];if(file)importJsonFile(file);}}/><Button disabled={!native} onClick={()=>jsonFilePicker.current?.click()}>Import .json</Button><Button disabled={!json} onClick={()=>change('')}>Clear</Button><Button variant="primary" disabled={!native||!json||!canImport} onClick={validate}>Validate import</Button></div>
       {result==='valid'&&<div className="info success">Schema valid. Review the staged diff before import.</div>}{result==='invalid'&&<div className="info error" role="alert">Invalid import. {error}</div>}
       {pending&&canImport&&<><div className="diff-grid"><pre className="prompt">BEFORE{`\n`}{JSON.stringify(pending.before,null,2)}</pre><pre className="prompt">AFTER{`\n`}{JSON.stringify(pending.after,null,2)}</pre></div>
         {stage==='native'&&<>{operation==='Author'||operation==='Correct'&&effectiveNativeTarget==='PUBLISHED'?
