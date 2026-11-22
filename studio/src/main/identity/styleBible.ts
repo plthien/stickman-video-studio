@@ -22,11 +22,10 @@ export function compileStyleBible(analysis:ScriptAnalysis,script:ApprovedScriptS
     // Merely naming a character is NOT a source-grounded appearance.
     // Require some visual/physical evidence before asking a generator to draw
     // an individual. Underspecified actors may instead use a real owner image.
-    const visualMarkers=char.identity_markers.filter(marker=>
-      marker.trim().toLocaleLowerCase('en')!==char.label.trim().toLocaleLowerCase('en'));
+    // Alias, name and generic presence are narrative identity, NOT appearance.
+    // Physical action constraints alone also cannot establish how someone looks.
     return{...inherited,source_definition_hash,
-      visual_readiness:char.explicit_visual_traits.length||
-        char.physical_constraints.length||visualMarkers.length?
+      visual_readiness:char.explicit_visual_traits.length?
         'READY_FOR_REFERENCE' as const:'NEEDS_OWNER_DEFINITION' as const};
   });
   const base={schema:'stickman-project-style-bible-v1' as const,
@@ -71,18 +70,19 @@ export function referencePromptForCharacter(bible:StyleBible,
   const lines=[
     'SOURCE-GROUNDED CANONICAL STYLE BIBLE REFERENCE',
     'Character ID: '+row.char_id,
-    'Owner-approved label: '+row.label,
-    'Grounded description: '+row.description,
-    'Approved stable traits: '+JSON.stringify(row.explicit_visual_traits),
-    'Approved identity markers: '+JSON.stringify(row.identity_markers),
+    'Owner-approved label (identity only, not visual evidence): '+row.label,
+    // The untrusted freeform Analysis description can contain appearance not
+    // present in narration. It is narrative metadata, never an image prompt.
+    'EXACT source-verified visual traits: '+JSON.stringify(row.explicit_visual_traits),
     ...(ownerDefinition?[
       'Explicit owner-approved visual definition SHA: '+ownerDefinition.definitionSha,
       'Owner-verified visual traits: '+JSON.stringify(ownerDefinition.traits),
       'Visual definition provenance: '+ownerDefinition.provenance,
       'This addendum is explicitly approved by owner; do NOT infer other traits.'
     ]:[]),
-    'Physical constraints: '+JSON.stringify(row.physical_constraints),
-    'Narrative role context (NOT appearance instructions): '+row.narrative_role,
+    // Physical/narrative metadata is not source-approved visual authority;
+    // it cannot be interpreted as clothing/face/shape instructions.
+    'Narrative role label (NOT appearance): '+row.narrative_role,
     'EXACT B'+pinned.id.slice(-1)+' VISUAL STYLE / SHA '+pinned.sha256,pinned.guidance,
     format,'No invented clothing, features, people, props or story actions.',
     'Do not include text anywhere in generated image.'
