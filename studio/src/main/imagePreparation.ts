@@ -252,6 +252,11 @@ function withUpstreamIdentity(appPath:string,root:string,item:ImageJobSpec,
   try{
     const resolver=preverified??createContinuityResolver(appPath,root);
     const binding=resolver.getBinding(item.targetKey);
+    // Re-verify the ACTUAL effective creative prompt after owner edits,
+    // before a billable G-Labs POST can be authorized. Never auto-add casts.
+    resolver.verifyPrompt(item.targetKey,item.prompt);
+    if(item.effectivePrompt!==item.prompt)
+      resolver.verifyPrompt(item.targetKey,item.effectivePrompt);
     const previous=resolver.resolve(item.targetKey);
     const canonical=binding.canonicalAnchors;
     const ownerRefs=[...item.references];
