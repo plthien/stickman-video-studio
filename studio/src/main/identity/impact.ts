@@ -19,7 +19,9 @@ export function previewReferenceSwitchImpact(root:string,selectedIds:string[]){
     candidate.candidate_id===id&&candidate.status==='APPROVED'&&
     candidate.style_bible_sha256===bible.style_bible_sha256));
   if(chosen.some(candidate=>!candidate))throw Error('REFERENCE_IMPACT_CANDIDATE_INVALID');
-  const before=journal.referenceApprovalSet?.entries??[];
+  const activeSet=journal.publishedAuthority?.referenceApprovalSet??
+    journal.referenceApprovalSet;
+  const before=activeSet?.entries??[];
   const changed=bible.characters.filter(char=>{
     const selected=chosen.find(candidate=>candidate?.anchor_id===char.char_id);
     const previous=before.find(entry=>entry.anchor_id===char.char_id);
@@ -66,7 +68,7 @@ export function previewReferenceSwitchImpact(root:string,selectedIds:string[]){
     }
   }
   const targetKeys=[...affected].sort();
-  const evidence={projectId:state.project.id,sourceSetSha:journal.referenceApprovalSet?.approval_set_sha256??null,
+  const evidence={projectId:state.project.id,sourceSetSha:activeSet?.approval_set_sha256??null,
     revision:journal.revision,selectedIds:[...selectedIds],changedCharacterIds:changed.sort(),
     affectedTargetKeys:targetKeys,
     publishedNativeAffected:Boolean(state.external.native&&changed.length)};
