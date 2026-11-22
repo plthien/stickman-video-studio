@@ -38,7 +38,7 @@ const owned=(root:string,suffix:string)=>{
   fs.writeFileSync(original,png());
   return importMediaFile(root,original,'image','Owner-created reference image; rights authorized');
 };
-function setup(continuity=false,additionalImages=0){
+function setup(continuity=false,additionalImages=0,includeBuiltIn=false){
   const {root}=fixture();
   const state=readState(root);state.identityPolicy='v1';writeState(root,state);
   const script=currentApprovedSource(root);
@@ -100,6 +100,13 @@ function setup(continuity=false,additionalImages=0){
         shot_id:'shot-1',layer_id:'image-1',relation:'match_subject'
       }}:{})}
   ];
+  if(includeBuiltIn){
+    // Core @b1/ image assets are legal in the original Studio path guard,
+    // but never require paid G-Labs jobs or F24 character asset-needs.
+    (raw.manifest.shots[0].layers as Array<Record<string,unknown>>).push({
+      id:'core-builtin',type:'image',path:'@b1/stickman'
+    });
+  }
   const layers=raw.manifest.shots[1].layers as Array<Record<string,unknown>>;
   for(let index=0;index<additionalImages;index++){
     const layerId='extra-image-'+String(index+1).padStart(3,'0');
@@ -345,6 +352,16 @@ describe('F24 Native canonical bytes, billing gate and final source receipt',()=
     expect(sha(Buffer.from(payload[1].data.split(',')[1],'base64')))
       .toBe(sha(secondPng));
     expect(posts()).toHaveLength(2);
+  });
+  it('A02-01/02/03/04 mixed Native Core image does not increase paid/gallery/identity targets',()=>{
+    const {root}=setup(false,0,true);
+    const gallery=getNativeImageGallery(appPath,root);
+    expect(gallery.targets).toHaveLength(2);
+    expect(gallery.targets.every(row=>row.managed)).toBe(true);
+    expect(gallery.targets.some(row=>row.layerId==='core-builtin')).toBe(false);
+    const prepared=prepareNativeImages(appPath,root).jobs;
+    expect(prepared).toHaveLength(2);
+    expect(prepared.every(job=>job.state==='READY')).toBe(true);
   });
   it('N08 direct manual paid POST without prepared exact Native identity cannot bypass F24',async()=>{
     const {root}=setup(),accountRoot=account(),{posts}=fakeProvider();
