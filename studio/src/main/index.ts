@@ -134,10 +134,16 @@ function registerIpc() {
     const root=rootFor(id);
     const job=await syncReferenceJob(app.getAppPath(),root,app.getPath('userData'),
       safeStorage,jobId,decodeGlabsImage);
-    if(job.status==='VALIDATED')
-      registerValidatedGeneratedReference(root,app.getAppPath(),{
-        expectedRevision:readIdentityWorkflow(root).revision,job
-      },decodeGlabsImage);
+    if(job.status==='VALIDATED'){
+      const working=readIdentityWorkflow(root);
+      // Frozen legacy jobs must never attach to an unrelated newer draft.
+      const sameDraft=working.draftSha256===job.analysisSha&&
+        working.bible?.style_bible_sha256===job.styleBibleSha;
+      if(job.referenceFormat!==undefined||sameDraft)
+        registerValidatedGeneratedReference(root,app.getAppPath(),{
+          expectedRevision:working.revision,job
+        },decodeGlabsImage);
+    }
     return job;
   });
 

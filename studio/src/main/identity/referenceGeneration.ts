@@ -79,7 +79,13 @@ function ready(root:string,appPath:string,anchorId:string,
     working.bible&&working.bibleTextApproved&&
     working.analysisApproved.sha256===contentHash(working.draftAnalysis)&&
     working.bibleTextApproved.sha256===working.bible.style_bible_sha256);
-  const journal=candidateReady?working:publishedIdentityView(working);
+  const published=publishedIdentityView(working);
+  // A frozen pre-removal paid job belongs to its original authority even
+  // when a newer draft has passed review but was never owner-published.
+  const historicalPublished=frozenHistoricalJob&&published.draftAnalysis&&
+    isFrozenLegacyAnalysis(published.draftAnalysis);
+  const journal=historicalPublished?published:
+    candidateReady?working:published;
   const analysis=journal.draftAnalysis,approved=journal.analysisApproved;
   if(!analysis||!approved||approved.sha256!==contentHash(analysis)||
     !journal.independentReview||
@@ -152,8 +158,6 @@ export async function submitReferenceJob(appPath:string,root:string,userData:str
   const referenceFormat=input.referenceFormat??'four_view';
   if(!['four_view','group_overview'].includes(referenceFormat))
     throw Error('REFERENCE_OUTPUT_FORMAT_INVALID');
-  if(referenceFormat==='group_overview'&&input.referenceFormat!=='group_overview')
-    throw Error('REFERENCE_GROUP_OWNER_SELECTION_REQUIRED');
   const definition=ready(root,appPath,input.anchorId,referenceFormat);
   const older=listReferenceJobs(root).filter(row=>row.anchorId===input.anchorId);
   if(older.some(row=>['QUEUED','SUBMITTED','RUNNING'].includes(row.status)))
