@@ -559,6 +559,26 @@ export function publishNativeDraftCorrection(appPath:string,root:string,original
   assertTaskCurrent(appPath,root,'native',state);
   const pending=readPending(root);
   if(pending.token!==draft.token)throw new Error('NATIVE_DRAFT_TOKEN_CHANGED');
+  if(state.identityPolicy==='v1'){
+    const originalNeeds=(draft.artifact as unknown as{
+      asset_needs:unknown[]
+    }).asset_needs;
+    const originalRows=originalNeeds.filter(row=>row&&typeof row==='object'&&
+      !Array.isArray(row)) as Array<Record<string,unknown>>;
+    const currentRows=(normalized.assetNeeds as unknown[]).filter(row=>
+      row&&typeof row==='object'&&!Array.isArray(row)) as Array<Record<string,unknown>>;
+    for(const previous of originalRows){
+      if(previous.asset_kind!=='character'&&previous.asset_kind!=='pose')continue;
+      const updated=currentRows.find(row=>row.shot_id===previous.shot_id&&
+        row.layer_id===previous.layer_id&&
+        row.expected_path===previous.expected_path);
+      // An in-place correction cannot evade F24 by silently relabeling an
+      // existing character/pose layer "background" or "other". Such a change
+      // requires a new explicit Native Author + independent owner review.
+      if(updated&&updated.asset_kind!=='character'&&updated.asset_kind!=='pose')
+        throw Error('NATIVE_IDENTITY_CHARACTER_RECLASSIFICATION_BLOCKED');
+    }
+  }
   const kept=Object.fromEntries(Object.entries(pending.fulfillments).filter(([key,binding])=>{
     const previous=pending.references.find(ref=>ref.key===key);
     const next=normalized.missing.find(ref=>ref.key===key);
