@@ -73,6 +73,12 @@ describe('F24-C01 source-grounded cast consistency and ambiguous alias gates',()
     expect(()=>check(need('Fox steps forward.'),bible([a,b])))
       .toThrow('NATIVE_IDENTITY_ALIAS_REVIEW_REQUIRED');
   });
+  it('C01-09b ambiguous lowercase source mention is never silently treated as scenery',()=>{
+    const person=character('char_001','Camp Woman');
+    person.occurrences=[{section_id:'s1',quote:'woman',start:0,end:5}];
+    expect(()=>check(need('A woman steps forward into the scene.'),
+      bible([person]))).toThrow('NATIVE_IDENTITY_ALIAS_REVIEW_REQUIRED');
+  });
   it('C01-10 candidate Mara cannot become current actor without Publish',()=>{
     const published=bible([kip]);
     expect(check(need('Mara looks into the lens.'),published).status)
