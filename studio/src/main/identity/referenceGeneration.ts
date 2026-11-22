@@ -8,7 +8,7 @@ import {glabsProbe,glabsReferenceSettings,glabsReferenceSubmit,
 import {atomicJson,readState,resolveProjectFile,strictJson,sha} from '../services.js';
 import {contentHash,type StyleBible} from './contracts.js';
 import {compileStyleBible,referencePromptForCharacter} from './styleBible.js';
-import {currentApprovedSource,readIdentityWorkflow,identityPolicy} from './identityWorkflow.js';
+import {currentApprovedSource,readIdentityWorkflow,publishedIdentityView,identityPolicy} from './identityWorkflow.js';
 import {verifyIndependentReview} from './scriptAnalysis.js';
 import {validateOwnerVisualDefinition} from './visualDefinitions.js';
 import {loadImageStyleProfile} from '../imagePreparation.js';
@@ -62,7 +62,15 @@ function ready(root:string,appPath:string,anchorId:string):{
 }{
   const state=readState(root);
   if(identityPolicy(state)!=='v1')throw Error('REFERENCE_IDENTITY_POLICY_REQUIRED');
-  const journal=readIdentityWorkflow(root),source=currentApprovedSource(root);
+  const working=readIdentityWorkflow(root),source=currentApprovedSource(root);
+  // Generate a new candidate's master only after its own independent approval
+  // and Style Bible text review. During an unapproved Author/Correct, the
+  // old published canonical remains usable and cannot be replaced implicitly.
+  const candidateReady=Boolean(working.draftAnalysis&&working.analysisApproved&&
+    working.bible&&working.bibleTextApproved&&
+    working.analysisApproved.sha256===contentHash(working.draftAnalysis)&&
+    working.bibleTextApproved.sha256===working.bible.style_bible_sha256);
+  const journal=candidateReady?working:publishedIdentityView(working);
   const analysis=journal.draftAnalysis,approved=journal.analysisApproved;
   if(!analysis||!approved||approved.sha256!==contentHash(analysis)||
     !journal.independentReview||
