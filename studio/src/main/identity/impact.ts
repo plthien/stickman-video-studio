@@ -22,13 +22,18 @@ export function previewReferenceSwitchImpact(root:string,selectedIds:string[]){
   const activeSet=journal.publishedAuthority?.referenceApprovalSet??
     journal.referenceApprovalSet;
   const before=activeSet?.entries??[];
-  const changed=bible.characters.filter(char=>{
-    const selected=chosen.find(candidate=>candidate?.anchor_id===char.char_id);
-    const previous=before.find(entry=>entry.anchor_id===char.char_id);
-    return!selected||!previous||previous.candidate_id!==selected.candidate_id||
-      previous.media_sha256!==selected.media_sha256||
-      previous.source_definition_hash!==selected.source_definition_hash;
-  }).map(char=>char.char_id);
+  const changed=[...new Set<string>([
+    ...bible.characters.filter(char=>{
+      const selected=chosen.find(candidate=>candidate?.anchor_id===char.char_id);
+      const previous=before.find(entry=>entry.anchor_id===char.char_id);
+      return!selected||!previous||previous.candidate_id!==selected.candidate_id||
+        previous.media_sha256!==selected.media_sha256||
+        previous.source_definition_hash!==selected.source_definition_hash;
+    }).map(char=>char.char_id),
+    // Removed actors also invalidate old Native targets that still mention them.
+    ...before.filter(entry=>!bible.characters.some(char=>
+      char.char_id===entry.anchor_id)).map(entry=>entry.anchor_id)
+  ])];
   const changedIds=new Set<string>(changed),affected=new Set<string>();
   let sourceTargets:Array<{targetKey:string;shotId:string;layerId:string;
     characters:string[];source:{shot_id:string;layer_id:string}|null}>=[];
@@ -39,7 +44,11 @@ export function previewReferenceSwitchImpact(root:string,selectedIds:string[]){
         manifest:Record<string,unknown>;asset_needs:unknown[]
       };
       const targets=nativeImageTargetsFromManifest(artifact.manifest);
-      const validated=validateNativeIdentityNeeds(artifact.asset_needs,targets,bible,'v1');
+      // An existing Native draft is bound to the previously published
+      // character catalog, not the unapproved candidate's newly edited cast.
+      const previousBible=journal.publishedAuthority?.bible??bible;
+      const validated=validateNativeIdentityNeeds(artifact.asset_needs,targets,
+        previousBible,'v1');
       sourceTargets=targets.map((t,index)=>({
         targetKey:t.key,shotId:t.shotId,layerId:t.layerId,
         characters:validated.rows[index].character_ids,
