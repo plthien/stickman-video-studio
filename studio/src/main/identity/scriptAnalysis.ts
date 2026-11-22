@@ -299,11 +299,18 @@ export function validateAnalysisEnvelope(raw:unknown,task:AnalysisTask,script:Ap
   return validateScriptAnalysis(row.payload,script);
 }
 export function verifyIndependentReview(review:AnalysisReview,analysis:ScriptAnalysis){
+  if(!review||typeof review!=='object'||Array.isArray(review)||
+    Object.keys(review).sort().join('|')!==
+      ['schema','project_id','analysis_sha256','independent_review',
+        'findings','approved'].sort().join('|'))
+    throw Error('SCRIPT_ANALYSIS_REVIEW_INVALID');
   if(review?.schema!=='stickman-analysis-review-v1'||
     review.project_id!==analysis.project_id||
     review.analysis_sha256!==contentHash(analysis)||review.independent_review!==true||
     !Array.isArray(review.findings)||
     review.findings.some(f=>!f||typeof f!=='object'||
+      Object.keys(f).sort().join('|')!==
+        ['finding_id','severity','location','issue','evidence'].sort().join('|')||
       typeof f.finding_id!=='string'||
       !/^[A-Za-z0-9_-]{1,80}$/.test(f.finding_id)||
       !['P0','P1','P2'].includes(f.severity)||
