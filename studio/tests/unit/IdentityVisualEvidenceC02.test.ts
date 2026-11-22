@@ -16,7 +16,7 @@ const fixture=(text:string,trait:string,relation?:VisualTraitRelationship,
   const offset=text.indexOf(actorName);
   const actor:ScriptCharacter={
     char_id:'char_001',label:actorName,description:'Role only',
-    narrative_role:'Story actor',entity_kind:'human_character',
+    narrative_role:'Story actor',
     explicit_visual_traits:trait?[trait]:[],identity_markers:[],
     physical_constraints:[],continuity_notes:[],
     occurrences:[{section_id:'opening',quote:actorName,

@@ -48,7 +48,7 @@ function setup(continuity=false,additionalImages=0,includeBuiltIn=false,
     source_script_sha256:script.sha256,source_authoring_sha256:contentHash(script.authoring),
     continuity_catalog:{characters:[{
       char_id:'char_001' as const,label:'One',description:'Narrative subject One',
-      entity_kind:'human_character' as const,narrative_role:'Named character',
+      narrative_role:'Named character',
       explicit_visual_traits:[],identity_markers:['One'],continuity_notes:[],
       physical_constraints:[],
       occurrences:[{section_id:'opening',quote:'One',start:0,end:3}],

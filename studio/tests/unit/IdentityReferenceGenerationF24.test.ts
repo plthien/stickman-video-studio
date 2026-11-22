@@ -37,7 +37,7 @@ function setup(underdescribed=false,fromAuthor=false){
     source_authoring_sha256:contentHash(script.authoring),
     continuity_catalog:{characters:[{
       char_id:'char_001' as const,label:'One',description:'One',
-      entity_kind:'human_character' as const,narrative_role:'Story character One',
+      narrative_role:'Story character One',
       explicit_visual_traits:underdescribed?[]:['scar'],
       visual_trait_evidence:underdescribed?[]:[{trait:'scar',
         relationship:'intrinsic_appearance' as const,

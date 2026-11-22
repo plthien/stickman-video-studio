@@ -4,7 +4,6 @@ import fs from 'node:fs';
 import {createHash} from 'node:crypto';
 
 export type CharacterId = `char_${string}`;
-export type EntityKind = 'human_character'|'human_group';
 export type IdentityReviewOperation = 'author'|'review'|'correct'|'recheck';
 export type ImageRelation = 'same_setup'|'match_subject'|'match_location'|
   'match_composition'|'graphic_sequence';
@@ -16,7 +15,7 @@ export interface VisualTraitEvidence {
   trait:string;source:Span;relationship:VisualTraitRelationship;
 }
 export interface ScriptCharacter {
-  char_id:CharacterId;label:string;description:string;entity_kind:EntityKind;
+  char_id:CharacterId;label:string;description:string;
   narrative_role:string;explicit_visual_traits:string[];
   /** Optional only to read older F24 candidates. Missing evidence is NEVER
    * approved to enter canonical reference prompts. */

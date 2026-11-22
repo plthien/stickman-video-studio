@@ -13,7 +13,7 @@ const makeSnapshot=(projectId:string)=>({
     revision:7,bible:{schema:'stickman-project-style-bible-v1',
       style_bible_sha256:'current-bible',characters:[{
         char_id:'char_001',label:'Kip',description:'Narrative identity',
-        entity_kind:'human_character',narrative_role:'Named actor',
+        narrative_role:'Named actor',
         source_definition_hash:'fixed-definition',occurrences:[],
         identity_markers:[],visual_readiness:'NEEDS_OWNER_DEFINITION'
       }]},

@@ -5,7 +5,7 @@ import {validateNativeIdentityNeeds,
   detectPublishedCharacterMentions} from '../../src/main/identity/nativeNeeds';
 
 const character=(id:`char_${string}`,label:string,aliases:string[]=[]):BibleCharacter=>({
-  char_id:id,label,entity_kind:'human_character',description:'',
+  char_id:id,label,description:'',
   narrative_role:'Source-grounded actor',explicit_visual_traits:[],
   identity_markers:aliases,continuity_notes:[],physical_constraints:[],
   visual_readiness:'NEEDS_OWNER_DEFINITION',

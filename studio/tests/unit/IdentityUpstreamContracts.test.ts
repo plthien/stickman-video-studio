@@ -19,7 +19,7 @@ const sections=[{id:'sec_001',text:'Kip has a scar and enters the camp.'},
 const script={projectId,sha256:hash(text),authoring,revision:1,sections};
 const second=text.lastIndexOf('Kip');
 const entry=():ScriptCharacter=>({char_id:'char_001',label:'Kip',description:'',
-  entity_kind:'human_character' as const,narrative_role:'Character in approved narration',
+  narrative_role:'Character in approved narration',
   explicit_visual_traits:['scar'],
   visual_trait_evidence:[{trait:'scar',relationship:'intrinsic_appearance',
     source:{section_id:'sec_001',quote:'Kip has a scar',start:0,end:14}}],
@@ -128,12 +128,9 @@ describe('F24 upstream source-grounded contract gates',()=>{
     const prompt=referencePromptForCharacter(bible,'char_001',style);
     expect(prompt.aspect_ratio).toBe('1:1');
     expect(prompt.prompt).toMatch(/Upper-left: front close-up/);
-    expect(prompt.prompt).toMatch(/Lower-right: back full body/);
-    const group={...analysis(),continuity_catalog:{characters:[
-      {...entry(),entity_kind:'human_group' as const}
-    ]}};
-    const sheet=compileStyleBible(group,script,style);
-    const groupPrompt=referencePromptForCharacter(sheet,'char_001',style);
+    expect(prompt.prompt).toMatch(/Lower-right: back view/);
+    const groupPrompt=referencePromptForCharacter(bible,'char_001',style,
+      undefined,'group_overview');
     expect(groupPrompt.prompt).toContain('ONE GROUP OVERVIEW');
     expect(groupPrompt.prompt).not.toContain('Upper-left:');
   });

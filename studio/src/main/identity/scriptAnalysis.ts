@@ -113,8 +113,9 @@ export function verifiedVisualTraits(char:ScriptCharacter):string[]{
     char.visual_trait_evidence?.some(record=>record.trait===trait&&
       ['intrinsic_appearance','stable_wardrobe'].includes(record.relationship)));
 }
-export function validateScriptAnalysis(raw:unknown,script:ApprovedScriptSnapshot):ScriptAnalysis{
-  const analysis=validateWithSchema<ScriptAnalysis>(loadSchema('analysis'),raw);
+export function validateScriptAnalysis(raw:unknown,script:ApprovedScriptSnapshot,
+  schema=loadSchema('analysis')):ScriptAnalysis{
+  const analysis=validateWithSchema<ScriptAnalysis>(schema,raw);
   const lineage=analysisLineage(script);
   if(analysis.project_id!==lineage.projectId||
     analysis.source_script_sha256!==lineage.scriptSha||
@@ -219,7 +220,7 @@ export function analysisAuthorContract(task:AnalysisTask){
     '## EXACT stickman-script-analysis-v1 JSON Schema (payload must conform)',
     JSON.stringify(loadSchema('analysis'),null,2),
     'Each char_id must match ^char_[0-9]{3}$ (e.g. char_001).',
-    'Character objects require ALL: char_id, label, description, entity_kind,',
+    'Character objects require ALL: char_id, label, description,',
     'narrative_role, explicit_visual_traits, identity_markers, continuity_notes,',
     'physical_constraints, occurrences, presence_ranges.',
     'Each occurrence has {section_id,quote,start,end}; ranges have {start,end}.',

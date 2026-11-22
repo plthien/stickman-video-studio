@@ -33,6 +33,7 @@ export function StyleBibleWorkspace(){
   const [snapshot,setSnapshot]=useState<Snapshot|null>(null);
   const [snapshotProjectId,setSnapshotProjectId]=useState<string|null>(null);
   const [jobs,setJobs]=useState<ReferenceJob[]>([]);
+  const [referenceFormats,setReferenceFormats]=useState<Record<string,'four_view'|'group_overview'>>({});
   const [error,setError]=useState(''),[busy,setBusy]=useState(false);
   const [paths,setPaths]=useState<Record<string,string>>({});
   const [sources,setSources]=useState<Record<string,string>>({});
@@ -47,7 +48,7 @@ export function StyleBibleWorkspace(){
   useEffect(()=>{
     const current=++epoch.current;setSnapshot(null);
     setSnapshotProjectId(null);setJobs([]);
-    setLoaded(new Set());setChosen({});setImpact(null);setError('');
+    setLoaded(new Set());setChosen({});setReferenceFormats({});setImpact(null);setError('');
     if(!projectId||!window.studio?.identitySnapshot)return;
     void Promise.all([window.studio.identitySnapshot(projectId),
       window.studio.identityReferenceJobs(projectId)]).then(([value,nextJobs])=>{
@@ -156,7 +157,7 @@ export function StyleBibleWorkspace(){
           .includes(job.status));
         return <article className="identity-bible-character" key={character.char_id}>
           <h4>{character.char_id} · {character.label}</h4>
-          <p>{character.entity_kind} · {character.narrative_role}</p>
+          <p>{character.narrative_role}</p>
           <p>{character.description}</p>
           <p>Source occurrences: {character.occurrences.length} ·
             stable markers: {character.identity_markers.join(', ')||'not source-established'}</p>
@@ -203,11 +204,21 @@ export function StyleBibleWorkspace(){
           {approved&&<div className="identity-reference-generation" data-testid="identity-reference-generation">
             <div className="info">Reference generation is 1:1 and potentially paid.
               Shot image settings remain unchanged; only an explicit owner click sends POST.</div>
+            <label>Reference output for this paid request
+              <select className="input" aria-label={'Reference output '+character.char_id}
+                value={referenceFormats[character.char_id]??'four_view'}
+                onChange={event=>setReferenceFormats(old=>({...old,
+                  [character.char_id]:event.target.value as 'four_view'|'group_overview'}))}>
+                <option value="four_view">Individual four views (2×2, square)</option>
+                <option value="group_overview">Owner-requested group overview (one square image)</option>
+              </select>
+            </label>
             <button className="button" type="button"
               disabled={busy||unresolved||
                 (character.visual_readiness!=='READY_FOR_REFERENCE'&&!visualDefinition)}
               onClick={()=>action(id=>window.studio!.identityGenerateReference(id,{
                 anchorId:character.char_id,authorized:true,
+                referenceFormat:referenceFormats[character.char_id]??'four_view',
                 ...(referenceJobs.length?{regenerate:true}:{})
               }))}>
               {referenceJobs.length?'Regenerate Reference (Paid)':'Generate Reference (Paid)'}
@@ -223,6 +234,7 @@ export function StyleBibleWorkspace(){
                 disabled={busy||active}
                 onClick={()=>action(id=>window.studio!.identityGenerateReference(id,{
                   anchorId:character.char_id,authorized:true,
+                  referenceFormat:referenceFormats[character.char_id]??'four_view',
                   regenerate:true,acknowledgeUnknown:true
                 }))}>
                 I acknowledge possible previous charge — Generate again (Paid)

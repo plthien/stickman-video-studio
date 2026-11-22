@@ -126,7 +126,8 @@ function registerIpc() {
   ipcMain.handle('identity:referenceJobs',(_event,id:string)=>
     listReferenceJobs(rootFor(id)));
   ipcMain.handle('identity:generateReference',(_event,id:string,input:{
-    anchorId:string;authorized:true;regenerate?:boolean;acknowledgeUnknown?:boolean
+    anchorId:string;authorized:true;regenerate?:boolean;acknowledgeUnknown?:boolean;
+    referenceFormat?:'four_view'|'group_overview'
   })=>submitReferenceJob(app.getAppPath(),rootFor(id),app.getPath('userData'),
     safeStorage,input));
   ipcMain.handle('identity:syncReference',async(_event,id:string,jobId:string)=>{

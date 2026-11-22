@@ -3,6 +3,7 @@ import {canonical,contentHash,hash,loadSchema,validateWithSchema,
   type StyleBible,type ScriptAnalysis,type BibleCharacter} from './contracts.js';
 import {validateScriptAnalysis,verifiedVisualTraits,type ApprovedScriptSnapshot} from './scriptAnalysis.js';
 import type {OwnerVisualDefinition} from './visualDefinitions.js';
+export type ReferenceOutputFormat='four_view'|'group_overview';
 export interface PinnedStyle {
   id:'B1'|'B2'|'B3'|'B4';guidance:string;sha256:string;
 }
@@ -50,7 +51,10 @@ export function validateStyleBibleCurrent(bible:StyleBible,
 }
 /** Print view labels only in prompt instructions; generated pixels must have NO text. */
 export function referencePromptForCharacter(bible:StyleBible,
-  charId:string,pinned:PinnedStyle,ownerDefinition?:OwnerVisualDefinition){
+  charId:string,pinned:PinnedStyle,ownerDefinition?:OwnerVisualDefinition,
+  outputFormat:ReferenceOutputFormat='four_view'){
+  if(!['four_view','group_overview'].includes(outputFormat))
+    throw Error('REFERENCE_OUTPUT_FORMAT_INVALID');
   if(bible.style_profile_sha256!==pinned.sha256||bible.style_profile_id!==pinned.id)
     throw Error('STYLE_BIBLE_STYLE_STALE');
   const row=bible.characters.find(c=>c.char_id===charId);
@@ -61,16 +65,17 @@ export function referencePromptForCharacter(bible:StyleBible,
     throw Error('STYLE_BIBLE_OWNER_DEFINITION_STALE');
   if(row.visual_readiness!=='READY_FOR_REFERENCE'&&!ownerDefinition)
     throw Error('STYLE_BIBLE_NEEDS_OWNER_DEFINITION');
-  const format=row.entity_kind==='human_group'?[
+  const format=outputFormat==='group_overview'?[
     'ONE GROUP OVERVIEW. One coherent approved group in a single image.',
     'Do not render four copies or invent new group members. No printed labels.'
   ].join('\n'):[
     'ONE SQUARE 1:1 IMAGE. Exactly FOUR edge-to-edge panels in a 2×2 sheet:',
-    'Upper-left: front close-up face and shoulders.',
-    'Upper-right: front full body, head to feet.',
-    'Lower-left: left profile full body, head to feet.',
-    'Lower-right: back full body, head to feet.',
-    'Same ONE identity and proportions in all panels. NO gutters, frames, captions,',
+    'Upper-left: front close-up/detail of the actual subject.',
+    'Upper-right: front full view of the entire subject.',
+    'Lower-left: side view of the entire subject.',
+    'Lower-right: back view of the entire subject.',
+    'Same ONE identity and proportions in all panels. No assumed human anatomy.',
+    'NO gutters, frames, captions,',
     'letters, labels, numbers, logos, watermark, cropping or extra people.'
   ].join('\n');
   const lines=[

@@ -7,7 +7,8 @@ import {glabsProbe,glabsReferenceSettings,glabsReferenceSubmit,
   glabsReferenceStatus,glabsReferenceResult,glabsReferenceDownload} from '../glabs.js';
 import {atomicJson,readState,resolveProjectFile,strictJson,sha} from '../services.js';
 import {contentHash,type StyleBible} from './contracts.js';
-import {compileStyleBible,referencePromptForCharacter} from './styleBible.js';
+import {compileStyleBible,referencePromptForCharacter,
+  type ReferenceOutputFormat} from './styleBible.js';
 import {currentApprovedSource,readIdentityWorkflow,publishedIdentityView,identityPolicy} from './identityWorkflow.js';
 import {verifyIndependentReview} from './scriptAnalysis.js';
 import {validateOwnerVisualDefinition} from './visualDefinitions.js';
@@ -21,6 +22,8 @@ export interface ReferenceJob{
   id:string;projectId:string;anchorId:string;sourceDefinitionHash:string;
   styleBibleSha:string;styleProfileSha:string;analysisSha:string;
   approvedScriptSha:string;prompt:string;promptSha:string;
+  /** Request-scoped format. Absent only on historical frozen jobs. */
+  referenceFormat?:ReferenceOutputFormat;
   ownerVisualDefinitionSha?:string;
   model:string;aspectRatio:'1:1';status:ReferenceJobStatus;
   providerTaskId?:string;providerCompletedAt?:string;
@@ -55,7 +58,8 @@ export function listReferenceJobs(root:string):ReferenceJob[]{
     .map(name=>readReferenceJob(root,name.slice(0,-5)))
     .sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
 }
-function ready(root:string,appPath:string,anchorId:string):{
+function ready(root:string,appPath:string,anchorId:string,
+  referenceFormat:ReferenceOutputFormat='four_view'):{
   bible:StyleBible;sourceDefinitionHash:string;prompt:string;promptSha:string;
   styleSha:string;analysisSha:string;scriptSha:string;
   ownerVisualDefinitionSha?:string
@@ -92,7 +96,7 @@ function ready(root:string,appPath:string,anchorId:string):{
   if(owner)validateOwnerVisualDefinition(owner,source,bible);
   if(row.visual_readiness!=='READY_FOR_REFERENCE'&&!owner)
     throw Error('REFERENCE_CHARACTER_NOT_READY');
-  const prompt=referencePromptForCharacter(bible,anchorId,pinned,owner);
+  const prompt=referencePromptForCharacter(bible,anchorId,pinned,owner,referenceFormat);
   return{bible,sourceDefinitionHash:row.source_definition_hash,
     prompt:prompt.prompt,promptSha:prompt.prompt_sha256,styleSha:style.sha256,
     analysisSha:bible.analysis_sha256,scriptSha:bible.source_script_sha256,
@@ -100,7 +104,7 @@ function ready(root:string,appPath:string,anchorId:string):{
 }
 function isCurrent(root:string,appPath:string,job:ReferenceJob){
   try{
-    const snapshot=ready(root,appPath,job.anchorId);
+    const snapshot=ready(root,appPath,job.anchorId,job.referenceFormat??'four_view');
     return job.projectId===readState(root).project.id&&
       job.styleBibleSha===snapshot.bible.style_bible_sha256&&
       job.sourceDefinitionHash===snapshot.sourceDefinitionHash&&
@@ -131,9 +135,14 @@ function markStale(root:string,job:ReferenceJob){
 }
 export async function submitReferenceJob(appPath:string,root:string,userData:string,
   cipher:CredentialCipher,input:{anchorId:string;authorized:true;regenerate?:boolean;
-    acknowledgeUnknown?:boolean}):Promise<ReferenceJob>{
+    acknowledgeUnknown?:boolean;referenceFormat?:ReferenceOutputFormat}):Promise<ReferenceJob>{
   if(input?.authorized!==true)throw Error('REFERENCE_PAID_POST_OWNER_AUTH_REQUIRED');
-  const definition=ready(root,appPath,input.anchorId);
+  const referenceFormat=input.referenceFormat??'four_view';
+  if(!['four_view','group_overview'].includes(referenceFormat))
+    throw Error('REFERENCE_OUTPUT_FORMAT_INVALID');
+  if(referenceFormat==='group_overview'&&input.referenceFormat!=='group_overview')
+    throw Error('REFERENCE_GROUP_OWNER_SELECTION_REQUIRED');
+  const definition=ready(root,appPath,input.anchorId,referenceFormat);
   const older=listReferenceJobs(root).filter(row=>row.anchorId===input.anchorId);
   if(older.some(row=>['QUEUED','SUBMITTED','RUNNING'].includes(row.status)))
     throw Error('REFERENCE_ACTIVE_ATTEMPT_EXISTS');
@@ -159,7 +168,7 @@ export async function submitReferenceJob(appPath:string,root:string,userData:str
       styleBibleSha:definition.bible.style_bible_sha256,
       styleProfileSha:definition.styleSha,analysisSha:definition.analysisSha,
       approvedScriptSha:definition.scriptSha,prompt:definition.prompt,
-      promptSha:definition.promptSha,
+      promptSha:definition.promptSha,referenceFormat,
       ...(definition.ownerVisualDefinitionSha?{
         ownerVisualDefinitionSha:definition.ownerVisualDefinitionSha}:{}),
       model:config.model,aspectRatio:'1:1',
@@ -176,7 +185,7 @@ export async function submitReferenceJob(appPath:string,root:string,userData:str
       anchorId:input.anchorId,sourceDefinitionHash:definition.sourceDefinitionHash,
       styleBibleSha:definition.bible.style_bible_sha256,styleProfileSha:definition.styleSha,
       analysisSha:definition.analysisSha,approvedScriptSha:definition.scriptSha,
-      prompt:definition.prompt,promptSha:definition.promptSha,
+      prompt:definition.prompt,promptSha:definition.promptSha,referenceFormat,
       ...(definition.ownerVisualDefinitionSha?{
         ownerVisualDefinitionSha:definition.ownerVisualDefinitionSha}:{}),
       model:config.model,aspectRatio:'1:1',status:'QUEUED',createdAt:created,updatedAt:created};

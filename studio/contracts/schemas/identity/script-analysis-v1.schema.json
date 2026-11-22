@@ -101,7 +101,6 @@
         "char_id",
         "label",
         "description",
-        "entity_kind",
         "narrative_role",
         "explicit_visual_traits",
         "identity_markers",
@@ -123,12 +122,6 @@
         "description": {
           "type": "string",
           "maxLength": 2000
-        },
-        "entity_kind": {
-          "enum": [
-            "human_character",
-            "human_group"
-          ]
         },
         "narrative_role": {
           "type": "string",
