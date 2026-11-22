@@ -6,6 +6,7 @@ import {listGlabsJobs} from '../glabs.js';
 import {readState} from '../services.js';
 import {verifyReferenceFile} from './referencePublication.js';
 import {validateNativeBindingPayload} from './nativeBinding.js';
+import {assertNativeCastConsistency} from './nativeNeeds.js';
 import {contentHash} from './contracts.js';
 
 export interface ContinuityImage{
@@ -83,6 +84,14 @@ export function createContinuityResolver(appPath:string,root:string){
       return value;
     },
     resolve,
+    verifyPrompt:(key:string,text:string)=>{
+      const target=byKey.get(key);
+      if(!target)throw Error('IDENTITY_NATIVE_TARGET_NOT_CURRENT');
+      // The underlying approved catalog is the published identity snapshot.
+      // Check owner edits as well as the exact authoritative Native content.
+      return assertNativeCastConsistency(snapshot.rows[target.index],
+        {characters:snapshot.identity.characters},text);
+    },
     targetCount:snapshot.plans.length
   };
 }
