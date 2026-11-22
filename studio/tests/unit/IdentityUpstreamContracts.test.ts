@@ -136,9 +136,9 @@ describe('F24 upstream source-grounded contract gates',()=>{
     const targets=[{shotId:'s1',layerId:'l1',path:'assets/images/a.png'},
       {shotId:'s2',layerId:'l2',path:'assets/images/b.png'}];
     const first={shot_id:'s1',layer_id:'l1',expected_path:targets[0].path,
-      content:'Real character action',character_ids:['char_001']};
+      content:'Real character action',asset_kind:'character',character_ids:['char_001']};
     const second={shot_id:'s2',layer_id:'l2',expected_path:targets[1].path,
-      content:'Real empty-cast action',character_ids:[],continuity_source:{
+      content:'Real empty-cast action',asset_kind:'background',character_ids:[],continuity_source:{
         shot_id:'s1',layer_id:'l1',relation:'same_setup'}};
     expect(validateNativeIdentityNeeds([first,second],targets,bible,'v1').status).toBe('READY');
     expect(()=>validateNativeIdentityNeeds([{...first,character_ids:['char_999']},second],
