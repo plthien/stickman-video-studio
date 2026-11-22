@@ -90,6 +90,16 @@ export interface NativeBindingPlan{
   canonicalAnchors:ApprovedAnchor[];continuitySource:NativeImageNeedV2['continuity_source']|null;
   upstreamSnapshotSha:string;targetBindingSha:string;
 }
+/** Target-scoped reference identity; never includes global approval revisions. */
+export function exactNativeTargetBindingHash(input:{
+  targetKey:string;shotId:string;layerId:string;path:string;
+  assetKind:NativeImageNeedV2['asset_kind'];characterIds:string[];
+  canonicalAnchors:ApprovedAnchor[];
+  continuitySource:NativeImageNeedV2['continuity_source']|null;
+  styleProfileSha:string;
+}):string{
+  return contentHash(input);
+}
 export function validateNativeBindingPayload(root:string,appPath:string,
   manifest:Record<string,unknown>,assetNeeds:unknown[]){
   const identity=readApprovedNativeIdentity(root,appPath);
@@ -113,7 +123,7 @@ export function validateNativeBindingPayload(root:string,appPath:string,
     // The published SET hash is global; using it for every target would
     // invalidate unrelated images whenever any other actor is replaced.
     // Pin only this layer's cast, canonical bytes/rights and installed style.
-    const targetBindingSha=contentHash({
+    const targetBindingSha=exactNativeTargetBindingHash({
       targetKey:key,shotId:target.shotId,layerId:target.layerId,
       path:target.path,assetKind:row.asset_kind,
       characterIds:base.characterIds,canonicalAnchors:anchors,
