@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "stickman-native-asset-need-v2",
   "type": "object", "additionalProperties": false,
-  "required": ["shot_id", "layer_id", "expected_path", "content", "character_ids"],
+  "required": ["shot_id", "layer_id", "expected_path", "content", "asset_kind", "character_ids"],
   "properties": {
     "shot_id": {"type": "string", "minLength": 1, "maxLength": 100},
     "layer_id": {"type": "string", "minLength": 1, "maxLength": 100},
