@@ -301,9 +301,15 @@ export function verifyIndependentReview(review:AnalysisReview,analysis:ScriptAna
   if(review?.schema!=='stickman-analysis-review-v1'||
     review.project_id!==analysis.project_id||
     review.analysis_sha256!==contentHash(analysis)||review.independent_review!==true||
-    !Array.isArray(review.findings)||new Set(review.findings.map(f=>f.finding_id)).size!==review.findings.length||
-    review.findings.some(f=>!/^[A-Za-z0-9_-]{1,80}$/.test(f.finding_id)||
-      !['P0','P1','P2'].includes(f.severity)||!f.issue||!f.evidence)||
+    !Array.isArray(review.findings)||
+    review.findings.some(f=>!f||typeof f!=='object'||
+      typeof f.finding_id!=='string'||
+      !/^[A-Za-z0-9_-]{1,80}$/.test(f.finding_id)||
+      !['P0','P1','P2'].includes(f.severity)||
+      typeof f.location!=='string'||!f.location.trim()||
+      typeof f.issue!=='string'||!f.issue.trim()||
+      typeof f.evidence!=='string'||!f.evidence.trim())||
+    new Set(review.findings.map(f=>f.finding_id)).size!==review.findings.length||
     typeof review.approved!=='boolean'||
     // A negative verdict without actionable findings strands Correct.
     // Any finding on an approved review is contradictory; P2 findings
