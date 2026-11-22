@@ -31,6 +31,7 @@ function VerifiedReferenceImage({projectId,candidate,onLoaded}:{
 export function StyleBibleWorkspace(){
   const {native}=useAppState(),projectId=native?.project.id;
   const [snapshot,setSnapshot]=useState<Snapshot|null>(null);
+  const [snapshotProjectId,setSnapshotProjectId]=useState<string|null>(null);
   const [jobs,setJobs]=useState<ReferenceJob[]>([]);
   const [error,setError]=useState(''),[busy,setBusy]=useState(false);
   const [paths,setPaths]=useState<Record<string,string>>({});
@@ -44,17 +45,20 @@ export function StyleBibleWorkspace(){
     NonNullable<Window['studio']>['identityPreviewReferenceImpact']>>|null>(null);
   const epoch=useRef(0);
   useEffect(()=>{
-    const current=++epoch.current;setSnapshot(null);setJobs([]);
+    const current=++epoch.current;setSnapshot(null);
+    setSnapshotProjectId(null);setJobs([]);
     setLoaded(new Set());setChosen({});setImpact(null);setError('');
     if(!projectId||!window.studio?.identitySnapshot)return;
     void Promise.all([window.studio.identitySnapshot(projectId),
       window.studio.identityReferenceJobs(projectId)]).then(([value,nextJobs])=>{
-      if(current===epoch.current){setSnapshot(value);setJobs(nextJobs);}
+      if(current===epoch.current){setSnapshot(value);
+        setSnapshotProjectId(projectId);setJobs(nextJobs);}
     }).catch(e=>{if(current===epoch.current)setError(errorText(e));});
     return()=>{epoch.current++;};
   },[projectId]);
   const action=(fn:(id:string,revision:number)=>Promise<unknown>)=>{
-    if(!projectId||!snapshot||busy||!window.studio)return;
+    if(!projectId||!snapshot||snapshotProjectId!==projectId||
+      busy||!window.studio)return;
     const nonce=epoch.current;setBusy(true);setError('');
     void fn(projectId,snapshot.journal.revision).then(()=>Promise.all([
       window.studio!.identitySnapshot(projectId),
@@ -67,7 +71,8 @@ export function StyleBibleWorkspace(){
   };
   if(!projectId)return <div className="info">Open a project before using Style Bible.</div>;
   if(!window.studio?.identitySnapshot)return null;
-  if(!snapshot)return <div className="info">{error||'Reading project Style Bible…'}</div>;
+  if(!snapshot||snapshotProjectId!==projectId)
+    return <div className="info">{error||'Reading project Style Bible…'}</div>;
   if(snapshot.policy==='legacy')return <div className="info">
     Existing projects remain LEGACY. Open External ChatGPT → Script Analysis
     to preview and explicitly opt into the new identity workflow.</div>;
