@@ -1,6 +1,6 @@
 /** F24 upstream-to-Native authority. Never changes project.json or renderer Core. */
 import {readState,sha} from '../services.js';
-import {readIdentityWorkflow,currentApprovedSource} from './identityWorkflow.js';
+import {readIdentityWorkflow,publishedIdentityView,currentApprovedSource} from './identityWorkflow.js';
 import {verifyIndependentReview} from './scriptAnalysis.js';
 import {compileStyleBible} from './styleBible.js';
 import {loadImageStyleProfile} from '../imagePreparation.js';
@@ -24,7 +24,8 @@ export interface ApprovedNativeIdentity{
 export function readApprovedNativeIdentity(root:string,appPath:string):ApprovedNativeIdentity{
   const state=readState(root);
   if(state.identityPolicy!=='v1')throw Error('IDENTITY_NATIVE_V1_POLICY_REQUIRED');
-  const script=currentApprovedSource(root),store=readIdentityWorkflow(root);
+  const script=currentApprovedSource(root),
+    store=publishedIdentityView(readIdentityWorkflow(root));
   if(!store.draftAnalysis||!store.analysisApproved||
     store.analysisApproved.sha256!==contentHash(store.draftAnalysis)||
     !store.independentReview||
@@ -93,7 +94,7 @@ export function validateNativeBindingPayload(root:string,appPath:string,
   manifest:Record<string,unknown>,assetNeeds:unknown[]){
   const identity=readApprovedNativeIdentity(root,appPath);
   const targets=nativeImageTargetsFromManifest(manifest);
-  const bible=readIdentityWorkflow(root).bible;
+  const bible=publishedIdentityView(readIdentityWorkflow(root)).bible;
   if(!bible||bible.style_bible_sha256!==identity.styleBibleSha)
     throw Error('IDENTITY_NATIVE_STYLE_BIBLE_STALE');
   const validated=validateNativeIdentityNeeds(assetNeeds,targets,bible,'v1');
