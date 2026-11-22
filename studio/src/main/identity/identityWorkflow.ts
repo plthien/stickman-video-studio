@@ -253,7 +253,12 @@ export function freezeIdentityTask(root:string,operation:IdentityReviewOperation
   const hasDraft=Boolean(prior.draftAnalysis);
   if(operation!=='author'&&!hasDraft)throw Error('SCRIPT_ANALYSIS_DRAFT_REQUIRED');
   if(operation==='correct'&&(!prior.independentReview||
-      !prior.independentReview.findings.some(f=>f.severity==='P0'||f.severity==='P1')))
+      prior.independentReview.approved!==false||
+      !prior.independentReview.findings.length||
+      !prior.draftAnalysis||
+      prior.independentReview.analysis_sha256!==contentHash(prior.draftAnalysis)||
+      !['review','recheck'].includes(prior.currentTask?.task.operation??'')||
+      prior.currentTask?.status!=='IMPORTED'))
     throw Error('SCRIPT_ANALYSIS_CORRECT_REVIEW_REQUIRED');
   if(operation==='recheck'&&(!prior.currentTask||
       prior.currentTask.task.operation!=='correct'||prior.currentTask.status!=='IMPORTED'))
@@ -273,7 +278,7 @@ export function freezeIdentityTask(root:string,operation:IdentityReviewOperation
   }else if(operation==='correct'){
     task.prompt=[
       '# SCOPED SCRIPT ANALYSIS CORRECTION',
-      'Correct ONLY P0/P1 findings without modifying narration or inventing traits.',
+      'Correct EXACT unresolved P0/P1/P2 finding IDs without modifying narration or inventing traits.',
       'A second independent Recheck is mandatory.',
       'Exact approved script sections '+JSON.stringify(script.sections),
       'Current analysis '+JSON.stringify(prior.draftAnalysis),
