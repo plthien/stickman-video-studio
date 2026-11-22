@@ -312,12 +312,25 @@ export function importIdentityResult(root:string,text:string,expectedRevision:nu
   if(!entry||entry.status!=='FROZEN')throw Error('IDENTITY_FROZEN_TASK_REQUIRED');
   if(entry.frozenArtifactSha!==prior.draftSha256)
     throw Error('SCRIPT_ANALYSIS_FROZEN_CANDIDATE_STALE');
-  if(entry.task.operation==='correct'&&
-    (!prior.independentReview||
+  if(entry.task.operation==='correct'){
+    const review=prior.independentReview;
+    if(!review||review.approved!==false||
       (entry.task.review_sha256!==undefined&&
-       contentHash(prior.independentReview)!==entry.task.review_sha256)||
-      prior.independentReview.analysis_sha256!==prior.draftSha256))
-    throw Error('SCRIPT_ANALYSIS_CORRECTION_REVIEW_STALE');
+       contentHash(review)!==entry.task.review_sha256)||
+      review.analysis_sha256!==prior.draftSha256)
+      throw Error('SCRIPT_ANALYSIS_CORRECTION_REVIEW_STALE');
+    // Also authenticate pre-C03 frozen Correct tasks that have no explicit
+    // finding_ids field. Their original input SHA already commits to the
+    // candidate digest, approved Script lineage, and exact Review findings.
+    const expectedInput=contentHash({
+      lineage:analysisLineage(script),operation:'correct',
+      revision:entry.task.revision,
+      promptInputs:{sourceAnalysisSha:prior.draftSha256,
+        unresolvedFindings:review.findings}
+    });
+    if(entry.task.input_sha256!==expectedInput)
+      throw Error('SCRIPT_ANALYSIS_CORRECTION_FINDINGS_STALE');
+  }
   if(text.length>4*1024*1024)throw Error('IDENTITY_RESULT_OVERSIZE');
   const raw=strictJson(text) as Record<string,unknown>,task=entry.task;
   if(raw.schema!=='mode-b-identity-external-result-v1'||raw.stage!=='script_analysis'||
