@@ -70,9 +70,8 @@ export function referencePromptForCharacter(bible:StyleBible,
   const lines=[
     'SOURCE-GROUNDED CANONICAL STYLE BIBLE REFERENCE',
     'Character ID: '+row.char_id,
-    'Owner-approved label (identity only, not visual evidence): '+row.label,
-    // The untrusted freeform Analysis description can contain appearance not
-    // present in narration. It is narrative metadata, never an image prompt.
+    // Freeform label, description and narrative role are never visual input:
+    // they can carry unreviewed appearance despite being useful to authors.
     'EXACT source-verified visual traits: '+JSON.stringify(row.explicit_visual_traits),
     ...(ownerDefinition?[
       'Explicit owner-approved visual definition SHA: '+ownerDefinition.definitionSha,
@@ -80,9 +79,8 @@ export function referencePromptForCharacter(bible:StyleBible,
       'Visual definition provenance: '+ownerDefinition.provenance,
       'This addendum is explicitly approved by owner; do NOT infer other traits.'
     ]:[]),
-    // Physical/narrative metadata is not source-approved visual authority;
-    // it cannot be interpreted as clothing/face/shape instructions.
-    'Narrative role label (NOT appearance): '+row.narrative_role,
+    // Physical/narrative metadata is not source-approved visual authority.
+    // Never send unchecked narrative text to the image generator.
     'EXACT B'+pinned.id.slice(-1)+' VISUAL STYLE / SHA '+pinned.sha256,pinned.guidance,
     format,'No invented clothing, features, people, props or story actions.',
     'Do not include text anywhere in generated image.'
