@@ -55,6 +55,12 @@ describe('F24-C01 source-grounded cast consistency and ambiguous alias gates',()
     expect(check(need('Wind moves through a mountain canyon with no people.'))
       .rows[0].character_ids).toEqual([]);
   });
+  it('C01-06b an unidentified on-screen human requires owner review, never guessed ID',()=>{
+    expect(()=>check(need('A man stands in the foreground.')))
+      .toThrow('NATIVE_IDENTITY_CAST_REVIEW_REQUIRED');
+    expect(check(need('An empty village without people or characters.')).status)
+      .toBe('READY');
+  });
   it('C01-07 Ann does not match anniversary or banner',()=>{
     expect(check(need('Anniversary banner hangs above the empty street.'))
       .status).toBe('READY');
