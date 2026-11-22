@@ -91,9 +91,9 @@ function setup(continuity=false,additionalImages=0){
   const raw=nativePayload(root,{image:'both'});
   const needs=[
     {shot_id:'shot-1',layer_id:'image-1',expected_path:'assets/images/missing.png',
-      content:'Source-grounded first frame',character_ids:['char_001']},
+      content:'Source-grounded first frame',asset_kind:'character',character_ids:['char_001']},
     {shot_id:'shot-2',layer_id:'image-2',expected_path:'assets/images/late.png',
-      content:'Source-grounded second frame',character_ids:['char_001'],
+      content:'Source-grounded second frame',asset_kind:'character',character_ids:['char_001'],
       ...(continuity?{continuity_source:{
         shot_id:'shot-1',layer_id:'image-1',relation:'match_subject'
       }}:{})}
@@ -104,7 +104,7 @@ function setup(continuity=false,additionalImages=0){
     const imagePath='assets/images/extra-'+String(index+1).padStart(3,'0')+'.png';
     layers.push({id:layerId,type:'image',path:imagePath});
     needs.push({shot_id:'shot-2',layer_id:layerId,expected_path:imagePath,
-      content:'Extra source-grounded character image',character_ids:['char_001']});
+      content:'Extra source-grounded character image',asset_kind:'character',character_ids:['char_001']});
   }
   const source={...raw,asset_needs:needs};
   stageNative(root,source);
