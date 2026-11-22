@@ -1,7 +1,7 @@
 /** F24 final publish/render gate. Never edits Native Core project.json. */
 import fs from 'node:fs';
 import {atomicJson,readState,resolveProjectFile,sha,strictJson} from '../services.js';
-import {getNativeImageGallery,readNativeDraft,isManagedNativeImagePath} from '../externalTasks.js';
+import {getNativeImageGallery,readNativeDraft,nativeImageTargetsFromManifest} from '../externalTasks.js';
 import {listGlabsJobs,readGlabsJob} from '../glabs.js';
 import {readApprovedNativeIdentity,validateNativeBindingPayload} from './nativeBinding.js';
 import {createContinuityResolver} from './continuityGraph.js';
@@ -138,26 +138,11 @@ export function readNativeIdentityReceipt(root:string):NativeIdentityReceipt|nul
   if(contentHash(content)!==receiptSha)throw Error('IDENTITY_NATIVE_RECEIPT_TAMPERED');
   return value;
 }
+/** Exactly the same managed Native inventory as Gallery/Binding.
+ * Core built-ins remain in project.json but are not paid image targets. */
 function actualPublishedImages(manifest:Record<string,unknown>){
-  const shots=Array.isArray(manifest.shots)?manifest.shots as Array<Record<string,unknown>>:[];
-  const out=new Map<string,string>();
-  shots.forEach((shot,index)=>{
-    const walk=(layers:unknown[])=>{
-      for(const value of layers){
-        if(!value||typeof value!=='object'||Array.isArray(value))continue;
-        const layer=value as Record<string,unknown>;
-        if(layer.type==='image'&&typeof layer.id==='string'&&isManagedNativeImagePath(layer.path))
-          {
-            const key='image:'+index+':'+layer.id;
-            if(out.has(key))throw Error('NATIVE_PUBLISHED_DUPLICATE_IMAGE_TARGET');
-            out.set(key,layer.path);
-          }
-        if(Array.isArray(layer.children))walk(layer.children);
-      }
-    };
-    walk(Array.isArray(shot.layers)?shot.layers:[]);
-  });
-  return out;
+  return new Map(nativeImageTargetsFromManifest(manifest)
+    .map(item=>[item.key,item.path] as const));
 }
 /** Call before and AFTER each Native CLI/preview reuse. Immutable last-good
  * project.json is never treated as an F24 certification by itself. */
