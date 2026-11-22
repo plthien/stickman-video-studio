@@ -16,8 +16,11 @@ are NOT exempt from actor attribution.
 - Unicode NFKC/lowercase and Unicode letter/number/mark boundaries; `Ann`
   never matches `anniversary`; punctuation and multiword names supported
 - Two different approved actors with the same name/alias, overlapping aliases,
-  negated presence, or possessive object-only reference trigger
-  `NATIVE_IDENTITY_*_REVIEW_REQUIRED`, not a guessed binding
+  negated presence, source-only uncertain aliases or possessive object-only
+  references trigger `NATIVE_IDENTITY_*_REVIEW_REQUIRED`, not a guessed binding
+- Anonymous on-screen humans (e.g., "a man stands") without an approved cast
+  require review. Explicitly people-free scenery ("no people") is eligible
+  for the empty cast. This is a conservative cue, not entity classification
 - Explicitly depicted approved actors absent from `character_ids` trigger
   `NATIVE_IDENTITY_CHARACTER_CAST_MISSING`; false `asset_kind` triggers
   `NATIVE_IDENTITY_ASSET_KIND_CONFLICT`
