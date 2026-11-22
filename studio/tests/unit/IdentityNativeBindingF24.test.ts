@@ -6,7 +6,7 @@ import {afterEach,describe,expect,it,vi} from 'vitest';
 import {appPath,cleanup,fixture,nativePayload,stageNative,png} from './SixIssueFixtures';
 import {importMediaFile,confirmImport,getNativeImageGallery,
   readNativeDraft,publishNativeDraftCorrection} from '../../src/main/externalTasks';
-import {prepareNativeImages} from '../../src/main/imagePreparation';
+import {prepareNativeImages,saveNativeImagePrompt} from '../../src/main/imagePreparation';
 import {saveGlabsKey,submitGlabsImage,
   pollGlabsImage,approveGlabsImage} from '../../src/main/glabs';
 import {readState,writeState,atomicJson,sha} from '../../src/main/services';
@@ -38,7 +38,8 @@ const owned=(root:string,suffix:string)=>{
   fs.writeFileSync(original,png());
   return importMediaFile(root,original,'image','Owner-created reference image; rights authorized');
 };
-function setup(continuity=false,additionalImages=0,includeBuiltIn=false){
+function setup(continuity=false,additionalImages=0,includeBuiltIn=false,
+  emptyCastSecond=false){
   const {root}=fixture();
   const state=readState(root);state.identityPolicy='v1';writeState(root,state);
   const script=currentApprovedSource(root);
@@ -95,7 +96,9 @@ function setup(continuity=false,additionalImages=0,includeBuiltIn=false){
     {shot_id:'shot-1',layer_id:'image-1',expected_path:'assets/images/missing.png',
       content:'Source-grounded first frame',asset_kind:'character',character_ids:['char_001']},
     {shot_id:'shot-2',layer_id:'image-2',expected_path:'assets/images/late.png',
-      content:'Source-grounded second frame',asset_kind:'character',character_ids:['char_001'],
+      content:emptyCastSecond?'Empty canyon and clouds':'Source-grounded second frame',
+      asset_kind:emptyCastSecond?'background':'character',
+      character_ids:emptyCastSecond?[]:['char_001'],
       ...(continuity?{continuity_source:{
         shot_id:'shot-1',layer_id:'image-1',relation:'match_subject'
       }}:{})}
@@ -503,6 +506,29 @@ describe('F24 Native canonical bytes, billing gate and final source receipt',()=
     const prepared=prepareNativeImages(appPath,root).jobs;
     expect(prepared).toHaveLength(2);
     expect(prepared.every(job=>job.state==='READY')).toBe(true);
+  });
+  it('C01-11/12 owner-edited prompt introduces known actor into empty-cast background: zero paid POST',async()=>{
+    const {root}=setup(false,0,false,true);
+    const initial=prepareNativeImages(appPath,root).jobs.find(job=>job.layerId==='image-2')!;
+    expect(initial.state).toBe('READY');
+    const auth=account(),mock=fakeProvider();
+    const updated=saveNativeImagePrompt(appPath,root,{
+      targetKey:initial.targetKey,
+      fingerprint:initial.draftIdentity.creativeFingerprint,
+      styleSha256:initial.styleProfileRef.sha256,
+      prompt:'One stands in the foreground facing camera.',references:[]
+    });
+    const edited=updated.jobs.find(job=>job.layerId==='image-2')!;
+    expect(edited.state).toBe('BLOCKED');
+    expect(edited.reason).toContain('NATIVE_IDENTITY_CHARACTER_CAST_MISSING');
+    await expect(submitGlabsImage(appPath,root,auth,cipher,{
+      targetKey:edited.targetKey,prompt:edited.prompt,
+      model:'nano_banana_2',aspectRatio:'9:16',references:edited.references,
+      authorized:true,preparedFingerprint:edited.draftIdentity.creativeFingerprint
+    },decode)).rejects.toThrow('NATIVE_IDENTITY_CHARACTER_CAST_MISSING');
+    expect(mock.posts()).toHaveLength(0);
+    expect(getNativeImageGallery(appPath,root).targets.filter(row=>row.fulfilled))
+      .toHaveLength(0);
   });
   it('N08 direct manual paid POST without prepared exact Native identity cannot bypass F24',async()=>{
     const {root}=setup(),accountRoot=account(),{posts}=fakeProvider();
