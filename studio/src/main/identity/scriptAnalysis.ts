@@ -1,7 +1,8 @@
 /** Script Analysis is frozen against one approved Script, never Stage='native'. */
 import {randomUUID} from 'node:crypto';
 import {contentHash,loadSchema,validateWithSchema,
-  type ScriptAnalysis,type IdentityReviewOperation} from './contracts.js';
+  type ScriptAnalysis,type ScriptCharacter,type VisualTraitEvidence,
+  type IdentityReviewOperation} from './contracts.js';
 export interface ApprovedScriptSnapshot {
   projectId:string;sha256:string;revision:number;
   sections:Array<{id:string;text:string}>;
@@ -45,6 +46,63 @@ export function analysisLineage(script:ApprovedScriptSnapshot){
   assertApprovedScript(script);
   return{projectId:script.projectId,scriptSha:script.sha256,
     authoringSha:contentHash(script.authoring),revision:script.revision};
+}
+/** An exact quote/span proves narration bytes, NOT whether a temporary
+ * action is permanent appearance. Only narrow grammatically explicit
+ * appearance or recurring wardrobe claims are eligible automatically.
+ * All other relationships require explicit owner visual-definition approval. */
+const visualWords=(v:string)=>v.normalize('NFKC').toLocaleLowerCase('en')
+  .match(/[\p{L}\p{M}\p{N}]+/gu)??[];
+const quoteContainsTrait=(quote:string,trait:string)=>{
+  const source=visualWords(quote),parts=visualWords(trait);
+  if(!parts.length)return false;
+  let offset=0;
+  for(const word of source)if(word===parts[offset])offset++;
+  return offset===parts.length;
+};
+function validateTraitEvidence(evidence:VisualTraitEvidence,
+  char:ScriptCharacter,sections:Map<string,string>,
+  beginnings:Map<string,number>,mentions:Array<{charId:string;start:number;end:number}>){
+  const hit=evidence.source,source=sections.get(hit.section_id);
+  const offset=beginnings.get(hit.section_id);
+  if(source===undefined||offset===undefined||
+    hit.start>=hit.end||hit.start<offset||hit.end>offset+source.length||
+    source.slice(hit.start-offset,hit.end-offset)!==hit.quote)
+    throw Error('SCRIPT_ANALYSIS_VISUAL_EVIDENCE_SPAN_INVALID: '+char.char_id);
+  if(!mentions.some(v=>v.charId===char.char_id&&v.start>=hit.start&&
+    v.end<=hit.end))
+    throw Error('SCRIPT_ANALYSIS_VISUAL_EVIDENCE_OWNER_INVALID: '+char.char_id);
+  if(!quoteContainsTrait(hit.quote,evidence.trait))
+    throw Error('SCRIPT_ANALYSIS_VISUAL_EVIDENCE_TRAIT_INVALID: '+char.char_id);
+  const quote=hit.quote.normalize('NFKC').toLocaleLowerCase('en');
+  const owners=char.occurrences.filter(v=>v.start>=hit.start&&v.end<=hit.end)
+    .map(v=>v.quote.normalize('NFKC').toLocaleLowerCase('en'));
+  const explicit=owners.some(owner=>{
+    const index=quote.indexOf(owner);
+    if(index<0)return false;
+    const tail=quote.slice(index+owner.length);
+    const forbidden=/\b(?:picks?\s+up|holds?|grabs?|carries?|sees?|looks?\s+at|touches?|runs?|running|throws?|watches?|borrows?)\b/u;
+    if(forbidden.test(tail))return false;
+    if(evidence.relationship==='intrinsic_appearance'){
+      return /^\s*(?:['’]s\s+[\p{L}\p{M}\p{N} ]+\s+(?:is|are)|(?:has|have|is|was|looks?|seems?|has\s+got)\b)/u.test(tail);
+    }
+    if(evidence.relationship==='stable_wardrobe'){
+      return /^\s*(?:wears?|dresses?\s+in)\b/u.test(tail)&&
+        /\b(?:every\s+day|daily|always|usually|habitually|signature|never\s+removes?)\b/u.test(tail);
+    }
+    return false;
+  });
+  if(['transient_object','transient_action','scene_state'].includes(evidence.relationship))
+    throw Error('SCRIPT_ANALYSIS_TRANSIENT_NOT_CANONICAL: '+char.char_id);
+  if(evidence.relationship==='requires_owner_review')return;
+  if(!explicit)throw Error('SCRIPT_ANALYSIS_VISUAL_RELATION_REVIEW_REQUIRED: '+char.char_id);
+}
+/** Safe compiler projection; legacy F24 traits without evidence stay
+ * inspectable in Analysis but NEVER become drawable Style Bible appearance. */
+export function verifiedVisualTraits(char:ScriptCharacter):string[]{
+  return char.explicit_visual_traits.filter(trait=>
+    char.visual_trait_evidence?.some(record=>record.trait===trait&&
+      ['intrinsic_appearance','stable_wardrobe'].includes(record.relationship)));
 }
 export function validateScriptAnalysis(raw:unknown,script:ApprovedScriptSnapshot):ScriptAnalysis{
   const analysis=validateWithSchema<ScriptAnalysis>(loadSchema('analysis'),raw);
@@ -113,6 +171,15 @@ export function validateScriptAnalysis(raw:unknown,script:ApprovedScriptSnapshot
         !attributedTo(char.char_id,trait))
         throw Error('SCRIPT_ANALYSIS_UNSUPPORTED_VISUAL_TRAIT: '+char.char_id);
     }
+    const supplied=char.visual_trait_evidence??[];
+    for(const evidence of supplied){
+      if(!char.explicit_visual_traits.includes(evidence.trait))
+        throw Error('SCRIPT_ANALYSIS_VISUAL_EVIDENCE_UNDECLARED_TRAIT: '+char.char_id);
+      validateTraitEvidence(evidence,char,sections,beginnings,mentions);
+    }
+    // The absence of evidence in an old F24 record is NOT evidence of a
+    // stable trait: Style Bible will keep it as NEEDS_OWNER_DEFINITION.
+
   }
   return analysis;
 }
@@ -140,8 +207,13 @@ export function analysisAuthorContract(task:AnalysisTask){
     'Each occurrence has {section_id,quote,start,end}; ranges have {start,end}.',
     'Indices are 0-based UTF-16 offsets in EXACT joined Script, between',
     'sections separated by two LF characters. End is exclusive.',
-    'No approximate quotes. Traits must have literal Script evidence;',
-    'otherwise use [] and do not fabricate appearance.',
+    'No approximate quotes. Traits require per-trait visual_trait_evidence',
+    '{trait,source:{section_id,quote,start,end},relationship}.',
+    'Only intrinsic_appearance or stable_wardrobe from explicit stable wording',
+    'can be canonical. Picked-up/held objects, running poses and momentary',
+    'scene states are NOT appearance. Mark requires_owner_review for ambiguity.',
+    'Without verifiable evidence, leave explicit_visual_traits empty.',
+    'Never infer permanent clothes/body details from actor mention proximity.',
     analysisResultContract(task,{
       schema:'stickman-script-analysis-v1',project_id:task.project_id,
       source_script_sha256:task.source_script_sha256,
