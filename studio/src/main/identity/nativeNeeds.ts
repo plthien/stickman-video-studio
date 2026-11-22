@@ -111,6 +111,18 @@ export function assertNativeCastConsistency(row:NativeImageNeedV2,
   }
   if(mentions.length&&['background','object','prop','other'].includes(row.asset_kind))
     throw Error('NATIVE_IDENTITY_ASSET_KIND_CONFLICT');
+  if(!mentions.length&&!declared.size){
+    // Generic on-screen humans are NOT names or approved IDs. Never invent a
+    // binding from "a man" or "a crowd"; require Native owner review instead.
+    // Explicit "no people"/"without people" keeps true empty-cast scenery.
+    const words=normalizeMention(text);
+    const generic=/\b(?:person|people|woman|man|boy|girl|caveman|human|humans|stickman|stickmen|actor|crowd)\b/gu;
+    for(const found of words.matchAll(generic)){
+      const earlier=words.slice(Math.max(0,found.index-24),found.index);
+      if(!/\b(?:no|without|excluding|not)\s+(?:any\s+)?$/u.test(earlier))
+        throw Error('NATIVE_IDENTITY_CAST_REVIEW_REQUIRED: unidentified human');
+    }
+  }
   return mentions.map(mention=>mention.charId);
 }
 
