@@ -7,7 +7,8 @@ import {appPath,cleanup,fixture,png} from './SixIssueFixtures';
 import {readState,writeState,atomicJson,sha} from '../../src/main/services';
 import {loadImageStyleProfile} from '../../src/main/imagePreparation';
 import {compileStyleBible} from '../../src/main/identity/styleBible';
-import {contentHash} from '../../src/main/identity/contracts';
+import {frozenLegacyReferencePrompt} from '../../src/main/identity/legacyStorage';
+import {contentHash,hash} from '../../src/main/identity/contracts';
 import {readIdentityWorkflow,registerValidatedGeneratedReference,
   approveOwnerReference,currentApprovedSource,
   approveOwnerVisualDefinition} from '../../src/main/identity/identityWorkflow';
@@ -180,6 +181,62 @@ describe('F24 isolated 1:1 reference generation with explicit billing/approval b
     expect(job.ownerVisualDefinitionSha).toBe(
       approved.ownerVisualDefinitions?.[0].definitionSha);
     expect(mock.posts()).toHaveLength(1);
+  });
+  it('EK-12 frozen historical group UNKNOWN job keeps original prompt and reconciles GET-only',async()=>{
+    const {root,dir}=setup(),original=readIdentityWorkflow(root);
+    const source=currentApprovedSource(root);
+    const profile=loadImageStyleProfile(appPath,'B1');
+    const pinned={id:'B1' as const,guidance:profile.guidance,sha256:profile.sha256};
+    const oldAnalysis={...original.draftAnalysis!,
+      continuity_catalog:{characters:original.draftAnalysis!.continuity_catalog.characters
+        .map(char=>({...char,entity_kind:'human_group' as const}))}};
+    const inherited=structuredClone(oldAnalysis.continuity_catalog.characters[0]);
+    const definitionSha=contentHash({inherited,styleId:pinned.id,styleSha:pinned.sha256});
+    const oldCharacter={...inherited,source_definition_hash:definitionSha,
+      visual_readiness:'READY_FOR_REFERENCE' as const};
+    const bibleBase={schema:'stickman-project-style-bible-v1' as const,
+      project_id:source.projectId,source_script_sha256:source.sha256,
+      source_authoring_sha256:contentHash(source.authoring),
+      analysis_sha256:contentHash(oldAnalysis),
+      style_profile_id:pinned.id,style_profile_sha256:pinned.sha256,
+      style_guidance_sha256:hash(pinned.guidance),characters:[oldCharacter]};
+    const bible={...bibleBase,style_bible_sha256:contentHash(bibleBase)};
+    const reviewed={...original.independentReview!,
+      analysis_sha256:contentHash(oldAnalysis)};
+    const approved={...original.analysisApproved!,
+      sha256:contentHash(oldAnalysis),reviewSha256:contentHash(reviewed)};
+    const filename=path.join(root,'.studio/identity/workflow-v1.json');
+    atomicJson(filename,{...original,draftAnalysis:oldAnalysis,
+      draftSha256:contentHash(oldAnalysis),independentReview:reviewed,
+      analysisApproved:approved,bible,bibleTextApproved:{
+        ...original.bibleTextApproved!,sha256:bible.style_bible_sha256
+      }});
+    const workflowBytes=fs.readFileSync(filename);
+    const oldPrompt=frozenLegacyReferencePrompt(bible,'char_001',pinned);
+    const id='12345678-1234-1234-1234-123456789012';
+    const persisted={
+      schema:'stickman-reference-generate-job-v1',id,
+      projectId:source.projectId,anchorId:'char_001',
+      sourceDefinitionHash:definitionSha,styleBibleSha:bible.style_bible_sha256,
+      styleProfileSha:pinned.sha256,analysisSha:bible.analysis_sha256,
+      approvedScriptSha:source.sha256,
+      prompt:oldPrompt.prompt,promptSha:oldPrompt.prompt_sha256,
+      model:'nano_banana_2',aspectRatio:'1:1',
+      status:'UNKNOWN',providerTaskId:'ab12cd34',
+      createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()
+    };
+    fs.mkdirSync(path.join(root,'.studio/identity/reference-jobs'),{recursive:true});
+    atomicJson(path.join(root,'.studio/identity/reference-jobs',id+'.json'),persisted);
+    const mock=provider();
+    const result=await syncReferenceJob(appPath,root,dir,cipher,id,decode);
+    expect(result.status).toBe('VALIDATED');
+    expect(result.prompt).toBe(persisted.prompt);
+    expect(result.promptSha).toBe(persisted.promptSha);
+    expect(result).not.toHaveProperty('referenceFormat');
+    expect(result.staged?.width).toBe(result.staged?.height);
+    expect(mock.posts()).toHaveLength(0);
+    expect(readIdentityWorkflow(root).referenceCandidates).toHaveLength(0);
+    expect(fs.readFileSync(filename).equals(workflowBytes)).toBe(true);
   });
   it('R06 uncertain paid POST stays UNKNOWN and does not retry without explicit billing acknowledgment',async()=>{
     const {root,dir}=setup(),mock=provider(true);
