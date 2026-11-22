@@ -388,6 +388,19 @@ const mockOriginalNativeCli=async(_exe:string,args:string[])=>{
   return{code:0,stdout:JSON.stringify({valid:true,fingerprint:sha(candidate),
     checked_seconds:30}),stderr:''};
 };
+  it('A04-07/08 cannot reclassify a reviewed character target into an empty-cast background via Correct',()=>{
+    const {root}=setup();
+    const draft=readNativeDraft(root)!;
+    const corrected=structuredClone(draft.artifact) as Record<string,unknown>;
+    const needs=corrected.asset_needs as Array<Record<string,unknown>>;
+    needs[0].asset_kind='background';
+    needs[0].character_ids=[];
+    expect(()=>publishNativeDraftCorrection(appPath,root,draft.sha256,corrected,{
+      correctTaskId:'test-downgrade',reviewTaskId:'test-owner-scoped-review',
+      editableIds:['shot-1'],editablePaths:['asset_needs[0]'],
+      findingIds:['F24-A04']
+    })).toThrow('NATIVE_IDENTITY_CHARACTER_RECLASSIFICATION_BLOCKED');
+  });
   it('F24-AUD-05 Native Correct keeps unchanged Layer reference snapshot SHA and invalidates only edited Layer',()=>{
     const {root}=setup();
     const before=prepareNativeImages(appPath,root).jobs;
