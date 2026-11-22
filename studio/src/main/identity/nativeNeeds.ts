@@ -118,7 +118,8 @@ export function assertNativeCastConsistency(row:NativeImageNeedV2,
     const words=normalizeMention(text);
     const generic=/\b(?:person|people|woman|man|boy|girl|caveman|human|humans|stickman|stickmen|actor|crowd)\b/gu;
     for(const found of words.matchAll(generic)){
-      const earlier=words.slice(Math.max(0,found.index-24),found.index);
+      const at=found.index??0;
+      const earlier=words.slice(Math.max(0,at-24),at);
       if(!/\b(?:no|without|excluding|not)\s+(?:any\s+)?$/u.test(earlier))
         throw Error('NATIVE_IDENTITY_CAST_REVIEW_REQUIRED: unidentified human');
     }
