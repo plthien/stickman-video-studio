@@ -196,6 +196,23 @@ describe('F24 isolated 1:1 reference generation with explicit billing/approval b
     expect(mock.posts()).toHaveLength(1);
     expect(readReferenceJob(root,job.id).status).toBe('UNKNOWN');
   });
+  it('EK-07 requires explicit request-scoped group selection and one square paid job',async()=>{
+    const {root,dir}=setup(),mock=provider();
+    await expect(submitReferenceJob(appPath,root,dir,cipher,{
+      anchorId:'char_001',authorized:true,
+      referenceFormat:'animal' as 'four_view'
+    })).rejects.toThrow('REFERENCE_OUTPUT_FORMAT_INVALID');
+    expect(mock.posts()).toHaveLength(0);
+    const job=await submitReferenceJob(appPath,root,dir,cipher,{
+      anchorId:'char_001',authorized:true,referenceFormat:'group_overview'
+    });
+    expect(job.referenceFormat).toBe('group_overview');
+    expect(job.aspectRatio).toBe('1:1');
+    expect(job.prompt).toContain('ONE GROUP OVERVIEW');
+    expect(job.prompt).not.toContain('Upper-left:');
+    expect(readReferenceJob(root,job.id).promptSha).toBe(job.promptSha);
+    expect(mock.posts()).toHaveLength(1);
+  });
   it('R07 missing owner authorization always blocks before POST',async()=>{
     const {root,dir}=setup(),mock=provider();
     await expect(submitReferenceJob(appPath,root,dir,cipher,{

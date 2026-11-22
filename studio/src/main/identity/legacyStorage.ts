@@ -74,7 +74,7 @@ export function frozenLegacyReferencePrompt(bible:StyleBible,charId:string,
   const format=kind==='human_group'?[
     'ONE GROUP OVERVIEW. One coherent approved group in a single image.',
     'Do not render four copies or invent new group members. No printed labels.'
-  ].join('\\n'):[
+  ].join('\n'):[
     'ONE SQUARE 1:1 IMAGE. Exactly FOUR edge-to-edge panels in a 2×2 sheet:',
     'Upper-left: front close-up face and shoulders.',
     'Upper-right: front full body, head to feet.',
@@ -82,7 +82,7 @@ export function frozenLegacyReferencePrompt(bible:StyleBible,charId:string,
     'Lower-right: back full body, head to feet.',
     'Same ONE identity and proportions in all panels. NO gutters, frames, captions,',
     'letters, labels, numbers, logos, watermark, cropping or extra people.'
-  ].join('\\n');
+  ].join('\n');
   const lines=[
     'SOURCE-GROUNDED CANONICAL STYLE BIBLE REFERENCE',
     'Character ID: '+row.char_id,
@@ -97,7 +97,7 @@ export function frozenLegacyReferencePrompt(bible:StyleBible,charId:string,
     format,'No invented clothing, features, people, props or story actions.',
     'Do not include text anywhere in generated image.'
   ];
-  const prompt=lines.join('\\n\\n');
+  const prompt=lines.join('\n\n');
   return{anchor_type:'character' as const,anchor_id:row.char_id,
     source_definition_hash:row.source_definition_hash,
     aspect_ratio:'1:1' as const,prompt,prompt_sha256:hash(prompt)};
