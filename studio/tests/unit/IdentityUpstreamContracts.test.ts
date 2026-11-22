@@ -9,6 +9,7 @@ import {compileStyleBible,referencePromptForCharacter,
 import {validateNativeIdentityNeeds} from '../../src/main/identity/nativeNeeds';
 import {identityPolicy} from '../../src/main/identity/identityWorkflow';
 import {nativeImageTargetsFromManifest,isManagedNativeImagePath} from '../../src/main/externalTasks';
+import {exactNativeTargetBindingHash,type ApprovedAnchor} from '../../src/main/identity/nativeBinding';
 import type {StudioState} from '../../src/main/services';
 const projectId='a'.repeat(24);
 const text='Kip has a scar and enters the camp.\n\nBrog follows Kip.';
@@ -213,6 +214,32 @@ describe('F24 upstream source-grounded contract gates',()=>{
       path:'assets/images/duplicate.png'} as typeof duplicated.shots[0].layers[number]);
     expect(()=>nativeImageTargetsFromManifest(duplicated))
       .toThrow('NATIVE_DUPLICATE_IMAGE_LAYER_ID');
+  });
+  it('A01-06/B01-02/B01-04 changes only matching actor and explicit continuity descendants, not unrelated cast',()=>{
+    const anchor=(id:string,image:string):ApprovedAnchor=>({
+      charId:id,sourceDefinitionHash:hash(id+'-definition'),
+      path:'assets/images/'+image+'.png',sha256:hash(image),
+      mime:'image/png',rightsSha256:hash('owner-rights-'+id),
+      candidateId:id+'-owner-approved',approvalEventId:id+'-approval'
+    });
+    const one=anchor('char_001','one'),two=anchor('char_002','two');
+    const input=(characterIds:string[],anchors:ApprovedAnchor[],layerId:string)=>({
+      targetKey:'image:0:'+layerId,shotId:'shot-0',layerId,
+      path:'assets/images/'+layerId+'.png',
+      assetKind:'character' as const,
+      characterIds,canonicalAnchors:anchors,continuitySource:null,
+      styleProfileSha:style.sha256
+    });
+    const left=input(['char_001'],[one],'first');
+    const right=input(['char_002'],[two],'second');
+    const leftSha=exactNativeTargetBindingHash(left);
+    const rightSha=exactNativeTargetBindingHash(right);
+    const changedOne=anchor('char_001','one-new');
+    expect(exactNativeTargetBindingHash({...left,canonicalAnchors:[changedOne]}))
+      .not.toBe(leftSha);
+    expect(exactNativeTargetBindingHash(right)).toBe(rightSha);
+    expect(exactNativeTargetBindingHash({...right,
+      canonicalAnchors:[anchor('char_002','two-new')]})).not.toBe(rightSha);
   });
   it('U12 defaults missing identityPolicy to LEGACY and honors v1 opt-in',()=>{
     expect(identityPolicy({} as StudioState)).toBe('legacy');
