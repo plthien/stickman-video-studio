@@ -314,7 +314,8 @@ export function importIdentityResult(root:string,text:string,expectedRevision:nu
     throw Error('SCRIPT_ANALYSIS_FROZEN_CANDIDATE_STALE');
   if(entry.task.operation==='correct'&&
     (!prior.independentReview||
-      contentHash(prior.independentReview)!==entry.task.review_sha256||
+      (entry.task.review_sha256!==undefined&&
+       contentHash(prior.independentReview)!==entry.task.review_sha256)||
       prior.independentReview.analysis_sha256!==prior.draftSha256))
     throw Error('SCRIPT_ANALYSIS_CORRECTION_REVIEW_STALE');
   if(text.length>4*1024*1024)throw Error('IDENTITY_RESULT_OVERSIZE');
