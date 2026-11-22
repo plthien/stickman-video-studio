@@ -575,14 +575,15 @@ export function publishStyleBibleReferences(root:string,appPath:string,
     c.candidate_id===id&&c.status==='APPROVED'));
   if(selected.some(x=>!x))throw Error('REFERENCE_APPROVAL_SET_MISSING_CANDIDATE');
   const impact=previewReferenceSwitchImpact(root,selectedIds);
-  if(prior.referenceApprovalSet&&impact.changedCharacterIds.length){
+  const oldActiveSet=publishedSnapshot(prior)?.referenceApprovalSet;
+  if(oldActiveSet&&impact.changedCharacterIds.length){
     if(reviewedImpactSha256!==impact.impactSha256)
       throw Error('REFERENCE_CANONICAL_IMPACT_REVIEW_REQUIRED');
     assertNoIdentityBusyJobs(root,impact.affectedTargetKeys);
   }
   // Re-publishing the very same approved source must be idempotent; a synthetic
   // revision bump would incorrectly stale every already-generated image.
-  if(prior.referenceApprovalSet&&!impact.changedCharacterIds.length)
+  if(oldActiveSet&&!impact.changedCharacterIds.length)
     return prior;
   const oldPublished=publishedSnapshot(prior);
   const approvalSet=publishApprovalSet(root,bible,selected as ReferenceCandidate[],
