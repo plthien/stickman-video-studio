@@ -29,6 +29,7 @@ beforeEach(()=>{
   });
   harness.freezeTask.mockReset().mockResolvedValue(task('author-1',{}));
   harness.stageImport.mockReset();harness.stageLifecycle.mockReset();
+  harness.messages.mockReset();
   Object.defineProperty(window,'studio',{configurable:true,value:{
     readFrozen:harness.readFrozen,freezeLifecycle:harness.freezeLifecycle,freezeTask:harness.freezeTask,
     stageImport:harness.stageImport,stageLifecycle:harness.stageLifecycle
