@@ -207,7 +207,8 @@ export function analysisResultContract(task:AnalysisTask,payload:unknown){
       stage:'script_analysis',project_id:task.project_id,
       task_id:task.task_id,revision:task.revision,
       input_sha256:task.input_sha256,
-      ...(task.operation==='correct'?{resolved_finding_ids:task.finding_ids??[]}:{}),
+      ...(task.operation==='correct'&&task.finding_ids?{
+        resolved_finding_ids:task.finding_ids}:{}),
       payload},null,2),
     'Keep ALL six envelope identity fields byte-for-value; only replace payload.',
     'No additional envelope keys, no comments, no invented source spans.'
@@ -284,13 +285,13 @@ export function validateAnalysisEnvelope(raw:unknown,task:AnalysisTask,script:Ap
   if(!row||Array.isArray(row)||typeof row!=='object'||
     Object.keys(row).sort().join('|')!==[
       'input_sha256','payload','project_id','revision','schema','stage','task_id',
-      ...(task.operation==='correct'?['resolved_finding_ids']:[])
+      ...(task.operation==='correct'&&task.finding_ids?['resolved_finding_ids']:[])
     ].sort().join('|')||
     row.schema!=='mode-b-identity-external-result-v1'||row.stage!=='script_analysis'||
     row.task_id!==task.task_id||row.input_sha256!==task.input_sha256||
     row.project_id!==task.project_id||row.revision!==task.revision)
     throw Error('SCRIPT_ANALYSIS_ENVELOPE_INVALID');
-  if(task.operation==='correct'&&
+  if(task.operation==='correct'&&task.finding_ids&&
     (!Array.isArray(row.resolved_finding_ids)||
       JSON.stringify([...row.resolved_finding_ids].sort())!==
         JSON.stringify([...(task.finding_ids??[])].sort())))
