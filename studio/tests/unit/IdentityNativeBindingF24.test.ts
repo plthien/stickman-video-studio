@@ -18,6 +18,8 @@ import {loadImageStyleProfile} from '../../src/main/imagePreparation';
 import {assertPublishedIdentityCurrent,readNativeIdentityReceipt} from '../../src/main/identity/finalGate';
 import {readApprovedNativeIdentity} from '../../src/main/identity/nativeBinding';
 import {readIdentityWorkflow,publishStyleBibleReferences,
+  freezeIdentityTask,importIdentityResult,approveScriptAnalysis,
+  prepareProjectStyleBible,approveProjectStyleBible,identityWorkflowSnapshot,
   registerOwnerReference,approveOwnerReference,
   approveOwnerVisualDefinition} from '../../src/main/identity/identityWorkflow';
 import {previewReferenceSwitchImpact} from '../../src/main/identity/impact';
@@ -180,6 +182,94 @@ describe('F24 Native canonical bytes, billing gate and final source receipt',()=
       .toThrow('IDENTITY_NATIVE_ANALYSIS_STALE');
     expect(()=>prepareNativeImages(appPath,root))
       .toThrow('IDENTITY_NATIVE_ANALYSIS_STALE');
+  });
+  const importAnalysis=(root:string,operation:'author'|'correct',
+    update:(draft:NonNullable<ReturnType<typeof readIdentityWorkflow>['draftAnalysis']>)=>void)=>{
+    const prior=readIdentityWorkflow(root),frozen=freezeIdentityTask(root,operation,prior.revision);
+    const candidate=structuredClone(prior.draftAnalysis)!;
+    update(candidate);
+    const task=frozen.currentTask!.task;
+    const envelope={schema:'mode-b-identity-external-result-v1',
+      stage:'script_analysis',project_id:task.project_id,task_id:task.task_id,
+      revision:task.revision,input_sha256:task.input_sha256,payload:candidate};
+    return importIdentityResult(root,JSON.stringify(envelope),frozen.revision);
+  };
+  const importReview=(root:string,operation:'review'|'recheck',approved:boolean)=>{
+    const prior=readIdentityWorkflow(root),frozen=freezeIdentityTask(root,operation,prior.revision);
+    const task=frozen.currentTask!.task;
+    const findings=approved?[]:[{finding_id:'F01',severity:'P1',
+      location:'char_001',issue:'Needs source review',evidence:'Candidate has uncertain descriptions'}];
+    return importIdentityResult(root,JSON.stringify({
+      schema:'mode-b-identity-external-result-v1',stage:'script_analysis',
+      project_id:task.project_id,task_id:task.task_id,
+      revision:task.revision,input_sha256:task.input_sha256,
+      payload:{schema:'stickman-analysis-review-v1',project_id:task.project_id,
+        analysis_sha256:contentHash(prior.draftAnalysis),independent_review:true,
+        findings,approved}
+    }),frozen.revision);
+  };
+  it('A01-01/02/03/04/07/09 candidate Author, negative Review, Correct and failed Recheck preserve published A after restart',()=>{
+    const {root,set}=setup();
+    const initial=readApprovedNativeIdentity(root,appPath).snapshotSha;
+    const candidate=importAnalysis(root,'author',draft=>{
+      draft.continuity_catalog.characters[0].description='New unapproved candidate B';
+    });
+    expect(candidate.referenceApprovalSet).toBeNull();
+    expect(candidate.publishedAuthority?.referenceApprovalSet.approval_set_sha256)
+      .toBe(set.approval_set_sha256);
+    expect(readApprovedNativeIdentity(root,appPath).snapshotSha).toBe(initial);
+    expect(identityWorkflowSnapshot(root,appPath).readiness).toBe('REFERENCES_PUBLISHED');
+    importReview(root,'review',false);
+    expect(readApprovedNativeIdentity(root,appPath).snapshotSha).toBe(initial);
+    importAnalysis(root,'correct',draft=>{
+      draft.continuity_catalog.characters[0].description='Corrected but not accepted B';
+    });
+    importReview(root,'recheck',false);
+    expect(readApprovedNativeIdentity(root,appPath).snapshotSha).toBe(initial);
+    expect(readIdentityWorkflow(root).publishedAuthority?.referenceApprovalSet
+      .approval_set_sha256).toBe(set.approval_set_sha256);
+    expect(prepareNativeImages(appPath,root).jobs.every(job=>job.state==='READY'))
+      .toBe(true);
+  });
+  it('A01-05/08/10 owner activation of reviewed B is atomic, old published A survives until Publish and tamper fails closed',()=>{
+    const {root,ref,set}=setup();
+    const baseline=readApprovedNativeIdentity(root,appPath);
+    importAnalysis(root,'author',draft=>{
+      draft.continuity_catalog.characters[0].description='Candidate B different narrative';
+    });
+    importReview(root,'review',true);
+    const accepted=approveScriptAnalysis(root,readIdentityWorkflow(root).revision);
+    expect(accepted.analysisApproved).not.toBeNull();
+    const prepared=prepareProjectStyleBible(root,appPath,accepted.revision);
+    const approved=approveProjectStyleBible(root,appPath,prepared.revision,true);
+    expect(readApprovedNativeIdentity(root,appPath).snapshotSha).toBe(baseline.snapshotSha);
+    const imported=registerOwnerReference(root,appPath,{
+      expectedRevision:approved.revision,anchorId:'char_001',
+      relativePath:ref.path,ownerSource:'Explicit owner image for newly approved B'
+    },decode);
+    const fresh=imported.referenceCandidates.at(-1)!;
+    const reviewed=approveOwnerReference(root,appPath,{
+      expectedRevision:imported.revision,candidateId:fresh.candidate_id,
+      ownerInspected:true
+    },decode);
+    const impact=previewReferenceSwitchImpact(root,[fresh.candidate_id]);
+    expect(impact.changedCharacterIds).toEqual(['char_001']);
+    expect(readApprovedNativeIdentity(root,appPath).approvalSetSha)
+      .toBe(set.approval_set_sha256);
+    const published=publishStyleBibleReferences(root,appPath,
+      reviewed.revision,[fresh.candidate_id],decode,impact.impactSha256);
+    expect(published.publishedAuthority?.referenceApprovalSet.approval_set_sha256)
+      .not.toBe(set.approval_set_sha256);
+    expect(published.referenceApprovalHistory?.some(row=>
+      row.approval_set_sha256===set.approval_set_sha256)).toBe(true);
+    expect(readApprovedNativeIdentity(root,appPath).snapshotSha)
+      .not.toBe(baseline.snapshotSha);
+    const file=path.join(root,'.studio/identity/workflow-v1.json');
+    const corrupt=readIdentityWorkflow(root);
+    corrupt.publishedAuthority!.snapshotSha='0'.repeat(64);
+    atomicJson(file,corrupt);
+    expect(()=>readIdentityWorkflow(root))
+      .toThrow('IDENTITY_PUBLISHED_AUTHORITY_TAMPERED');
   });
   it('F24-AUD-01 keeps published canonical during candidate import/approval and fences UNKNOWN on replacement',()=>{
     const {root,ref,set}=setup();
