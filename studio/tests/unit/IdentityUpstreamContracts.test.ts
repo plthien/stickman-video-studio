@@ -179,9 +179,10 @@ describe('F24 upstream source-grounded contract gates',()=>{
     impostor.continuity_catalog.characters[0].presence_ranges=[
       {start:text.indexOf('Brog'),end:text.indexOf('Brog')+4}
     ];
-    // The literal "scar" exists, but was attributed to Kip in sec_001.
+    // The phrase exists in sec_001 but is not attributable to the
+    // impostor's unrelated Brog occurrence in sec_002.
     expect(()=>validateScriptAnalysis(impostor,script))
-      .toThrow('SCRIPT_ANALYSIS_UNSUPPORTED_VISUAL_TRAIT');
+      .toThrow('SCRIPT_ANALYSIS_VISUAL_EVIDENCE_OWNER_INVALID');
   });
   it('A04-01/02/03/04/07 requires v1 asset_kind and canonical cast for character/pose',()=>{
     const bible=compileStyleBible(analysis(),script,style);
