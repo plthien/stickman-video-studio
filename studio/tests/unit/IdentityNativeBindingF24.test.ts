@@ -205,7 +205,10 @@ describe('F24 Native canonical bytes, billing gate and final source receipt',()=
     const oldBible={...legacyBase,style_bible_sha256:contentHash(legacyBase)};
     const candidate={...prior.referenceCandidates[0],
       source_definition_hash:legacyDefinitionSha,
-      style_bible_sha256:oldBible.style_bible_sha256};
+      style_bible_sha256:oldBible.style_bible_sha256,
+      prompt_sha256:contentHash({kind:'owner-reference-bytes-v1',
+        projectId:script.projectId,styleBibleSha:oldBible.style_bible_sha256,
+        anchorId:'char_001',mediaSha:ref.sha256})};
     const oldSet=publishApprovalSet(root,oldBible,[candidate],1,decode);
     const reviewed={...prior.independentReview!,
       analysis_sha256:contentHash(historicalAnalysis)};

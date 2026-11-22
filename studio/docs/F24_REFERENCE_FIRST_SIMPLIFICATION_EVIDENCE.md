@@ -23,7 +23,7 @@ Scope: STICKMAN_PR4_REFERENCE_FIRST_SIMPLIFICATION_REPAIR_PLAN.md
 |---|---|---|
 | EK-01/02/03/04 | IdentityReferenceFirstEK, strict new schemas, source scan | NOT VERIFIED |
 | EK-05/07/19 | IdentityReferenceFirstEK, IdentityReferenceGenerationF24, four-view/group frozen prompt | NOT VERIFIED |
-| EK-06/10/11/12 | legacyStorage and published Native authority; real archived project/restart fixtures still needed | NOT VERIFIED |
+| EK-06/10/11/12 | legacyStorage plus synthetic historical published group Native regression; real on-disk archival receipt comparisons still needed | NOT VERIFIED |
 | EK-08/09 | Existing owner import, exact SHA, rights, square decoder gates | NOT VERIFIED |
 | EK-13/14/15 | IdentityNativeBindingF24, IdentityCastConsistencyC01, IdentityVisualEvidenceC02 | NOT VERIFIED |
 | EK-16/18 | Existing Author and frozen Review/Correct/Recheck lineage | NOT VERIFIED |

@@ -63,6 +63,22 @@ describe('EK reference-first new schema and read-only historical boundary',()=>{
     expect(prompt.prompt).not.toContain('face and shoulders');
     expect(prompt.prompt).not.toContain('ONE GROUP OVERVIEW');
   });
+  it('EK-05 labels human/animal/robot/fictional do not drive image anatomy or format',()=>{
+    const prompts:string[]=[];
+    for(const label of ['Human A','Animal A','Robot A','Imaginary A']){
+      const candidate=analysis();
+      candidate.continuity_catalog.characters[0].label=label;
+      const bible=compileStyleBible(candidate,script,pinned);
+      const rendered=referencePromptForCharacter(bible,'char_001',pinned);
+      expect(rendered.aspect_ratio).toBe('1:1');
+      expect(rendered.prompt).toContain('Exactly FOUR');
+      expect(rendered.prompt).toContain('No assumed human anatomy');
+      expect(rendered.prompt).not.toContain(label);
+      expect(bible.characters[0]).not.toHaveProperty('entity_kind');
+      prompts.push(rendered.prompt);
+    }
+    expect(new Set(prompts).size).toBe(1);
+  });
   it('EK-07 owner-requested group overview is only a per-request output format',()=>{
     const bible=compileStyleBible(analysis(),script,pinned);
     const group=referencePromptForCharacter(bible,'char_001',pinned,
