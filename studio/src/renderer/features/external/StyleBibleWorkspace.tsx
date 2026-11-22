@@ -52,7 +52,7 @@ export function StyleBibleWorkspace(){
     void Promise.all([window.studio.identitySnapshot(projectId),
       window.studio.identityReferenceJobs(projectId)]).then(([value,nextJobs])=>{
       if(current===epoch.current){setSnapshot(value);
-        setSnapshotProjectId(projectId);setJobs(nextJobs);}
+        setSnapshotProjectId(projectId??null);setJobs(nextJobs);}
     }).catch(e=>{if(current===epoch.current)setError(errorText(e));});
     return()=>{epoch.current++;};
   },[projectId]);
