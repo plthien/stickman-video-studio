@@ -186,9 +186,9 @@ describe('F24 Native canonical bytes, billing gate and final source receipt',()=
     altered.analysisApproved!.reviewSha256='0'.repeat(64);
     atomicJson(path.join(root,'.studio/identity/workflow-v1.json'),altered);
     expect(()=>readApprovedNativeIdentity(root,appPath))
-      .toThrow('IDENTITY_NATIVE_ANALYSIS_STALE');
+      .toThrow('IDENTITY_PUBLISHED_AUTHORITY_STALE');
     expect(()=>prepareNativeImages(appPath,root))
-      .toThrow('IDENTITY_NATIVE_ANALYSIS_STALE');
+      .toThrow('IDENTITY_PUBLISHED_AUTHORITY_STALE');
   });
   const importAnalysis=(root:string,operation:'author'|'correct',
     update:(draft:NonNullable<ReturnType<typeof readIdentityWorkflow>['draftAnalysis']>)=>void)=>{
