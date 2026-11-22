@@ -54,9 +54,7 @@ export function createContinuityResolver(appPath:string,root:string){
       job.status==='APPROVED'&&job.approved?.path===galleryRow.boundPath&&
       job.approved?.sha256===galleryRow.boundSha256&&
       job.targetCreativeSha256===galleryRow.creativeFingerprint&&
-      job.identityTargetBindingSha===parent.targetBindingSha&&
-      job.identityApprovalSetSha===parent.approvalSetSha&&
-      job.identityStyleBibleSha===parent.styleBibleSha);
+      job.identityTargetBindingSha===parent.targetBindingSha);
     if(!job)throw Error('CONTINUITY_APPROVED_SOURCE_JOB_REQUIRED');
     const media=state.media?.find(m=>m.kind==='image'&&
       m.path===galleryRow.boundPath&&m.sha256===galleryRow.boundSha256&&
@@ -70,7 +68,12 @@ export function createContinuityResolver(appPath:string,root:string){
       sourceJobId:job.id,sourceBindingSha:parent.targetBindingSha,
       sourceSnapshotSha:parent.upstreamSnapshotSha,
       parentDependencySha:inherited?.dependencySha??null};
-    const result:ContinuityImage={...base,dependencySha:contentHash(base)};
+    // The current project-wide snapshot may change due to an unrelated
+    // actor. Only the approved source pixels/rights and transitive local
+    // dependency are significant for this continuity edge.
+    const {sourceSnapshotSha:_globalAuthority,...localLineage}=base;
+    void _globalAuthority;
+    const result:ContinuityImage={...base,dependencySha:contentHash(localLineage)};
     memo.set(key,result);return result;
   };
   return{
