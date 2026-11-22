@@ -76,6 +76,14 @@ function validateTraitEvidence(evidence:VisualTraitEvidence,
   if(!quoteContainsTrait(hit.quote,evidence.trait))
     throw Error('SCRIPT_ANALYSIS_VISUAL_EVIDENCE_TRAIT_INVALID: '+char.char_id);
   const quote=hit.quote.normalize('NFKC').toLocaleLowerCase('en');
+  // A typed relation plus exact span still cannot turn "has a hat" into
+  // anatomy. This narrow *allowlist* admits verifiable physical identity
+  // language; other traits remain owner-review-only, not automatically false.
+  const bodyCues=new Set(['scar','hair','eye','eyes','skin','face','beard',
+    'moustache','mustache','freckle','freckles','tattoo','birthmark','nose',
+    'cheek','cheeks','ears','ear','height','body','arm','arms','leg','legs',
+    'tall','short','thin','skinny','slim','bald','muscular','heavyset']);
+  const intrinsicCue=visualWords(evidence.trait).some(token=>bodyCues.has(token));
   const owners=char.occurrences.filter(v=>v.start>=hit.start&&v.end<=hit.end)
     .map(v=>v.quote.normalize('NFKC').toLocaleLowerCase('en'));
   const explicit=owners.some(owner=>{
@@ -85,7 +93,7 @@ function validateTraitEvidence(evidence:VisualTraitEvidence,
     const forbidden=/\b(?:picks?\s+up|holds?|grabs?|carries?|sees?|looks?\s+at|touches?|runs?|running|throws?|watches?|borrows?)\b/u;
     if(forbidden.test(tail))return false;
     if(evidence.relationship==='intrinsic_appearance'){
-      return /^\s*(?:['’]s\s+[\p{L}\p{M}\p{N} ]+\s+(?:is|are)|(?:has|have|is|was|looks?|seems?|has\s+got)\b)/u.test(tail);
+      return intrinsicCue&&/^\s*(?:['’]s\s+[\p{L}\p{M}\p{N} ]+\s+(?:is|are)|(?:has|have|is|was|looks?|seems?|has\s+got)\b)/u.test(tail);
     }
     if(evidence.relationship==='stable_wardrobe'){
       return /^\s*(?:wears?|dresses?\s+in)\b/u.test(tail)&&
