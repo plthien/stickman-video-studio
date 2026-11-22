@@ -279,10 +279,12 @@ function withUpstreamIdentity(appPath:string,root:string,item:ImageJobSpec,
     const {revision:_draftContainerRevision,...stableDraftIdentity}=item.draftIdentity;
     void _draftContainerRevision;
     const frozen={targetKey:item.targetKey,
-      draftIdentity:stableDraftIdentity,upstreamSnapshotSha:binding.upstreamSnapshotSha,
+      draftIdentity:stableDraftIdentity,
+      // The global Bible/Approval Set SHA stays in job history, not this
+      // target's reference digest. Unrelated actor replacements must not
+      // invalidate otherwise byte-identical canonical reference inputs.
       targetBindingSha:binding.targetBindingSha,
-      characterIds:binding.characterIds,approvalSetSha:binding.approvalSetSha,
-      styleBibleSha:binding.styleBibleSha,
+      characterIds:binding.characterIds,
       canonical:canonical.map(anchor=>({
         charId:anchor.charId,definitionSha:anchor.sourceDefinitionHash,
         mediaSha:anchor.sha256,rightsSha:anchor.rightsSha256,path:anchor.path
