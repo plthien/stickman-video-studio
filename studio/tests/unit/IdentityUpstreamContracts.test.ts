@@ -8,6 +8,7 @@ import {compileStyleBible,referencePromptForCharacter,
   validateStyleBibleCurrent} from '../../src/main/identity/styleBible';
 import {validateNativeIdentityNeeds} from '../../src/main/identity/nativeNeeds';
 import {identityPolicy} from '../../src/main/identity/identityWorkflow';
+import {nativeImageTargetsFromManifest,isManagedNativeImagePath} from '../../src/main/externalTasks';
 import type {StudioState} from '../../src/main/services';
 const projectId='a'.repeat(24);
 const text='Kip has a scar and enters the camp.\n\nBrog follows Kip.';
@@ -145,6 +146,73 @@ describe('F24 upstream source-grounded contract gates',()=>{
       targets,bible,'v1')).toThrow('NATIVE_IDENTITY_UNKNOWN_CHARACTER');
     expect(()=>validateNativeIdentityNeeds([first],targets,bible,'v1'))
       .toThrow('NATIVE_IDENTITY_DECLARATION_MISSING');
+  });
+  it('A03-01/02/03 unverified description and name/alias never become visual prompt authority',()=>{
+    const polluted=analysis();
+    polluted.continuity_catalog.characters[0].description=
+      'A boy wearing a red jacket and black glasses (unverified)';
+    const bible=compileStyleBible(polluted,script,style);
+    const prompt=referencePromptForCharacter(bible,'char_001',style).prompt;
+    expect(prompt).not.toContain('red jacket');
+    expect(prompt).not.toContain('black glasses');
+    const named=analysis();
+    named.continuity_catalog.characters[0].explicit_visual_traits=[];
+    named.continuity_catalog.characters[0].identity_markers=['Kip'];
+    const withoutAppearance=compileStyleBible(named,script,style);
+    expect(withoutAppearance.characters[0].visual_readiness).toBe('NEEDS_OWNER_DEFINITION');
+    expect(()=>referencePromptForCharacter(withoutAppearance,'char_001',style))
+      .toThrow('STYLE_BIBLE_NEEDS_OWNER_DEFINITION');
+  });
+  it('A03-04/05 accepts an attributed trait and rejects a trait belonging to another actor',()=>{
+    expect(()=>validateScriptAnalysis(analysis(),script)).not.toThrow();
+    const impostor=analysis();
+    impostor.continuity_catalog.characters[0].occurrences=[
+      {section_id:'sec_002',quote:'Brog',start:text.indexOf('Brog'),
+        end:text.indexOf('Brog')+4}
+    ];
+    impostor.continuity_catalog.characters[0].presence_ranges=[
+      {start:text.indexOf('Brog'),end:text.indexOf('Brog')+4}
+    ];
+    // The literal "scar" exists, but was attributed to Kip in sec_001.
+    expect(()=>validateScriptAnalysis(impostor,script))
+      .toThrow('SCRIPT_ANALYSIS_UNSUPPORTED_VISUAL_TRAIT');
+  });
+  it('A04-01/02/03/04/07 requires v1 asset_kind and canonical cast for character/pose',()=>{
+    const bible=compileStyleBible(analysis(),script,style);
+    const targets=[{shotId:'s1',layerId:'l1',path:'assets/images/a.png'}];
+    const base={shot_id:'s1',layer_id:'l1',expected_path:targets[0].path,
+      content:'Frozen verified image layer',character_ids:[] as Array<`char_${string}`>};
+    expect(()=>validateNativeIdentityNeeds([{...base,asset_kind:'character'}],
+      targets,bible,'v1')).toThrow('NATIVE_IDENTITY_CHARACTER_CAST_REQUIRED');
+    expect(()=>validateNativeIdentityNeeds([{...base,asset_kind:'pose'}],
+      targets,bible,'v1')).toThrow('NATIVE_IDENTITY_CHARACTER_CAST_REQUIRED');
+    expect(()=>validateNativeIdentityNeeds([{...base,asset_kind:'character',
+      character_ids:['char_001']}],targets,bible,'v1')).not.toThrow();
+    expect(()=>validateNativeIdentityNeeds([{...base,asset_kind:'background'}],
+      targets,bible,'v1')).not.toThrow();
+    expect(()=>validateNativeIdentityNeeds([base],targets,bible,'v1'))
+      .toThrow('IDENTITY_SCHEMA_REQUIRED');
+  });
+  it('A02-01/03/07/08 one managed inventory excludes Core built-ins even when nested',()=>{
+    const manifest={shots:[{id:'shot_one',start:0,layers:[
+      {id:'built',type:'image',path:'@b1/some-core-asset'},
+      {id:'managed1',type:'image',path:'assets/images/one.png'},
+      {id:'group',type:'group',children:[
+        {id:'nested_builtin',type:'image',path:'@b1/nested-core'},
+        {id:'managed2',type:'image',path:'assets/images/two.png'}
+      ]}
+    ]}]};
+    expect(isManagedNativeImagePath('@b1/native-shape')).toBe(false);
+    const targets=nativeImageTargetsFromManifest(manifest);
+    expect(targets.map(t=>t.layerId)).toEqual(['managed1','managed2']);
+    expect(targets.map(t=>t.key)).toEqual([
+      'image:0:managed1','image:0:managed2'
+    ]);
+    const duplicated=structuredClone(manifest);
+    duplicated.shots[0].layers.push({id:'managed1',type:'image',
+      path:'assets/images/duplicate.png'} as typeof duplicated.shots[0].layers[number]);
+    expect(()=>nativeImageTargetsFromManifest(duplicated))
+      .toThrow('Native shot/layer IDs must be unique');
   });
   it('U12 defaults missing identityPolicy to LEGACY and honors v1 opt-in',()=>{
     expect(identityPolicy({} as StudioState)).toBe('legacy');
