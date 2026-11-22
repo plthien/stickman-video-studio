@@ -27,11 +27,13 @@ export function detectPublishedCharacterMentions(text:string,
   bible:Pick<StyleBible,'characters'>):CharacterMention[]{
   const source=normalizeMention(text);
   const names=new Map<string,Set<string>>();
+  const reviewOnly=new Set<string>();
   for(const actor of bible.characters){
     const candidates=[actor.char_id];
     const approvedQuotes=actor.occurrences.map(hit=>hit.quote);
     if(approvedQuotes.some(quote=>occurrenceOf(quote,actor.label)))
       candidates.push(actor.label);
+    else reviewOnly.add(normalizeMention(actor.label));
     // An alias is allowed only if the source occurrence itself is that exact
     // name/marker. Arbitrary identity_markers like a scar are NOT aliases.
     for(const quote of approvedQuotes){
@@ -43,6 +45,10 @@ export function detectPublishedCharacterMentions(text:string,
          actor.identity_markers.some(marker=>
            normalizeMention(marker)===normalizeMention(alias))))
         candidates.push(alias);
+      else if(alias.length<=64&&
+        /^[\p{L}\p{M}\p{N}'’\- ]+$/u.test(alias)&&
+        alias.split(/\s+/u).length<=4)
+        reviewOnly.add(normalizeMention(alias));
     }
     for(const raw of candidates){
       const key=normalizeMention(raw.trim());
@@ -72,6 +78,20 @@ export function detectPublishedCharacterMentions(text:string,
     if(collisions.some(previous=>previous.charId!==match.charId))
       throw Error('NATIVE_IDENTITY_ALIAS_REVIEW_REQUIRED: overlapping names');
     if(!collisions.length)winners.push(match);
+  }
+  // A source occurrence that is not a demonstrably unique proper name is
+  // still possible character evidence. Never silently treat it as scenery.
+  for(const name of reviewOnly){
+    if(!name||names.has(name))continue;
+    let pos=source.indexOf(name);
+    while(pos>=0){
+      const end=pos+name.length;
+      if((pos===0||!wordChar.test(source[pos-1]))&&
+        (end===source.length||!wordChar.test(source[end]))&&
+        !winners.some(actor=>actor.start>=pos&&actor.end<=end))
+        throw Error('NATIVE_IDENTITY_ALIAS_REVIEW_REQUIRED: '+name);
+      pos=source.indexOf(name,pos+1);
+    }
   }
   return winners;
 }
