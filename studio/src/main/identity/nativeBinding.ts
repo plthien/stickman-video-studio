@@ -5,6 +5,7 @@ import {readIdentityWorkflow,publishedIdentityView,currentApprovedSource,
 import {verifyIndependentReview} from './scriptAnalysis.js';
 import {loadImageStyleProfile} from '../imagePreparation.js';
 import {contentHash,type NativeImageNeedV2,type StyleBible} from './contracts.js';
+import {activeNativeCharacters} from './legacyStorage.js';
 import {validateNativeIdentityNeeds} from './nativeNeeds.js';
 import {verifyReferenceFile} from './referencePublication.js';
 import {nativeImageTargetsFromManifest,readNativeDraft} from '../externalTasks.js';
@@ -81,7 +82,9 @@ export function readApprovedNativeIdentity(root:string,appPath:string):ApprovedN
     styleBibleSha:bible.style_bible_sha256,styleProfileSha:style.sha256,
     approvalSetSha:stored,approvalRevision:set.revision,
     characters:bible.characters,anchors};
-  return{...core,snapshotSha:contentHash(core)};
+  const publishedSnapshotSha=contentHash(core);
+  return{...core,characters:activeNativeCharacters(bible.characters),
+    snapshotSha:publishedSnapshotSha};
 }
 export interface NativeBindingPlan{
   targetKey:string;shotId:string;layerId:string;path:string;characterIds:string[];

@@ -102,3 +102,14 @@ export function frozenLegacyReferencePrompt(bible:StyleBible,charId:string,
     source_definition_hash:row.source_definition_hash,
     aspect_ratio:'1:1' as const,prompt,prompt_sha256:hash(prompt)};
 }
+
+/** Strip retired storage-only metadata from Native's active projection.
+ * The caller hashes ORIGINAL stored authority before this projection, so
+ * historical published SHA and canonical media bindings remain unchanged. */
+export function activeNativeCharacters(rows:BibleCharacter[]):BibleCharacter[]{
+  return rows.map(row=>{
+    const output=structuredClone(row) as BibleCharacter&{entity_kind?:unknown};
+    delete output.entity_kind;
+    return output;
+  });
+}

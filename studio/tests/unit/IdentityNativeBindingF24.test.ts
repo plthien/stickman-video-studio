@@ -226,13 +226,14 @@ describe('F24 Native canonical bytes, billing gate and final source receipt',()=
     const baseline=readApprovedNativeIdentity(root,appPath);
     expect(baseline.anchors[0].sha256).toBe(ref.sha256);
     expect(baseline.styleBibleSha).toBe(oldBible.style_bible_sha256);
+    expect(baseline.characters[0]).not.toHaveProperty('entity_kind');
     expect(identityWorkflowSnapshot(root,appPath).readiness).toBe('REFERENCES_PUBLISHED');
     expect(fs.readFileSync(filename).equals(savedBytes)).toBe(true);
     // An Author result cannot carry the retired property, but importing it
     // cannot republish or revoke previously approved Native authority.
     const freeze=freezeIdentityTask(root,'author',prior.revision);
     const newAnalysis=structuredClone(historicalAnalysis);
-    delete (newAnalysis.continuity_catalog.characters[0] as Record<string,unknown>).entity_kind;
+    delete (newAnalysis.continuity_catalog.characters[0] as {entity_kind?:string}).entity_kind;
     const task=freeze.currentTask!.task;
     importIdentityResult(root,JSON.stringify({
       schema:'mode-b-identity-external-result-v1',stage:'script_analysis',
@@ -241,6 +242,7 @@ describe('F24 Native canonical bytes, billing gate and final source receipt',()=
     }),freeze.revision);
     const live=readApprovedNativeIdentity(root,appPath);
     expect(live.snapshotSha).toBe(baseline.snapshotSha);
+    expect(live.characters[0]).not.toHaveProperty('entity_kind');
     expect(live.anchors[0].sha256).toBe(ref.sha256);
     expect(readIdentityWorkflow(root).publishedAuthority?.snapshotSha)
       .toBe(contentHash(frozenAuthority));
