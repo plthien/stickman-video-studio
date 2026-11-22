@@ -91,8 +91,10 @@ function nativePromptProjection(context:ReturnType<typeof projectContext>,root:s
         // Analysis.description, name aliases and narrative role are not
         // validated appearance. Do not promote that text to Native Author.
         characters:approvedIdentity.characters.map(character=>({
-          char_id:character.char_id,label:character.label,
-          entity_kind:character.entity_kind,
+          char_id:character.char_id,entity_kind:character.entity_kind,
+          source_mentions:character.occurrences.map(hit=>({
+            section_id:hit.section_id,quote:hit.quote
+          })),
           source_definition_hash:character.source_definition_hash,
           explicit_visual_traits:character.explicit_visual_traits,
           visual_readiness:character.visual_readiness
