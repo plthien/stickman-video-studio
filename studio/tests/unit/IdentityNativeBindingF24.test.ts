@@ -10,7 +10,7 @@ import {prepareNativeImages,saveNativeImagePrompt} from '../../src/main/imagePre
 import {saveGlabsKey,submitGlabsImage,
   pollGlabsImage,approveGlabsImage} from '../../src/main/glabs';
 import {readState,writeState,atomicJson,sha} from '../../src/main/services';
-import {contentHash} from '../../src/main/identity/contracts';
+import {contentHash,hash} from '../../src/main/identity/contracts';
 import {compileStyleBible} from '../../src/main/identity/styleBible';
 import {approveCandidate,publishApprovalSet} from '../../src/main/identity/referencePublication';
 import {currentApprovedSource} from '../../src/main/identity/identityWorkflow';
@@ -180,6 +180,72 @@ describe('F24 Native canonical bytes, billing gate and final source receipt',()=
       Array<{data:string}>)[0].data.split(',')[1]);
     expect(encoded[0]).toBe(encoded[1]);
     expect(sha(Buffer.from(encoded[0],'base64'))).toBe(ref.sha256);
+  });
+  it('EK-06/10/11 historical group authority stays byte-exact and Native survives a new unapproved draft',()=>{
+    const {root,ref}=setup();
+    const filename=path.join(root,'.studio/identity/workflow-v1.json');
+    const prior=readIdentityWorkflow(root),script=currentApprovedSource(root);
+    const profile=loadImageStyleProfile(appPath,'B1');
+    const pinned={id:'B1' as const,guidance:profile.guidance,sha256:profile.sha256};
+    // Model the exact original F24 published v1 shape: only the archival
+    // payload has the retired kind. New author payloads below MUST not.
+    const historicalAnalysis={...prior.draftAnalysis!,
+      continuity_catalog:{characters:prior.draftAnalysis!.continuity_catalog.characters
+        .map(char=>({...char,entity_kind:'human_group' as const}))}};
+    const inherited=structuredClone(historicalAnalysis.continuity_catalog.characters[0]);
+    const legacyDefinitionSha=contentHash({inherited,styleId:pinned.id,styleSha:pinned.sha256});
+    const legacyCharacter={...inherited,source_definition_hash:legacyDefinitionSha,
+      visual_trait_evidence:[],visual_readiness:'NEEDS_OWNER_DEFINITION' as const};
+    const legacyBase={schema:'stickman-project-style-bible-v1' as const,
+      project_id:script.projectId,source_script_sha256:script.sha256,
+      source_authoring_sha256:contentHash(script.authoring),
+      analysis_sha256:contentHash(historicalAnalysis),
+      style_profile_id:pinned.id,style_profile_sha256:pinned.sha256,
+      style_guidance_sha256:hash(pinned.guidance),characters:[legacyCharacter]};
+    const oldBible={...legacyBase,style_bible_sha256:contentHash(legacyBase)};
+    const candidate={...prior.referenceCandidates[0],
+      source_definition_hash:legacyDefinitionSha,
+      style_bible_sha256:oldBible.style_bible_sha256};
+    const oldSet=publishApprovalSet(root,oldBible,[candidate],1,decode);
+    const reviewed={...prior.independentReview!,
+      analysis_sha256:contentHash(historicalAnalysis)};
+    const approved={...prior.analysisApproved!,sha256:contentHash(historicalAnalysis),
+      reviewSha256:contentHash(reviewed)};
+    const bibleApproval={...prior.bibleTextApproved!,
+      sha256:oldBible.style_bible_sha256};
+    const frozenAuthority={analysis:historicalAnalysis,analysisApproved:approved,
+      independentReview:reviewed,bible:oldBible,bibleTextApproved:bibleApproval,
+      referenceApprovalSet:oldSet};
+    atomicJson(filename,{...prior,draftAnalysis:historicalAnalysis,
+      draftSha256:contentHash(historicalAnalysis),
+      independentReview:reviewed,analysisApproved:approved,
+      bible:oldBible,bibleTextApproved:bibleApproval,
+      referenceCandidates:[candidate],referenceApprovalSet:oldSet,
+      publishedAuthority:{...frozenAuthority,snapshotSha:contentHash(frozenAuthority)}});
+    const savedBytes=fs.readFileSync(filename);
+    const baseline=readApprovedNativeIdentity(root,appPath);
+    expect(baseline.anchors[0].sha256).toBe(ref.sha256);
+    expect(baseline.styleBibleSha).toBe(oldBible.style_bible_sha256);
+    expect(identityWorkflowSnapshot(root,appPath).readiness).toBe('REFERENCES_PUBLISHED');
+    expect(fs.readFileSync(filename).equals(savedBytes)).toBe(true);
+    // An Author result cannot carry the retired property, but importing it
+    // cannot republish or revoke previously approved Native authority.
+    const freeze=freezeIdentityTask(root,'author',prior.revision);
+    const newAnalysis=structuredClone(historicalAnalysis);
+    delete (newAnalysis.continuity_catalog.characters[0] as Record<string,unknown>).entity_kind;
+    const task=freeze.currentTask!.task;
+    importIdentityResult(root,JSON.stringify({
+      schema:'mode-b-identity-external-result-v1',stage:'script_analysis',
+      project_id:task.project_id,task_id:task.task_id,
+      revision:task.revision,input_sha256:task.input_sha256,payload:newAnalysis
+    }),freeze.revision);
+    const live=readApprovedNativeIdentity(root,appPath);
+    expect(live.snapshotSha).toBe(baseline.snapshotSha);
+    expect(live.anchors[0].sha256).toBe(ref.sha256);
+    expect(readIdentityWorkflow(root).publishedAuthority?.snapshotSha)
+      .toBe(contentHash(frozenAuthority));
+    expect(readIdentityWorkflow(root).publishedAuthority?.referenceApprovalSet
+      .approval_set_sha256).toBe(oldSet.approval_set_sha256);
   });
   it('U06/N08 tampered independent Analysis review digest cannot authorize Native image references',()=>{
     const {root}=setup();
