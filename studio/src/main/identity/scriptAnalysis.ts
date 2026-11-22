@@ -252,7 +252,7 @@ export function analysisReviewContract(task:AnalysisTask,analysisSha:string){
     analysisResultContract(task,{
       schema:'stickman-analysis-review-v1',project_id:task.project_id,
       analysis_sha256:analysisSha,independent_review:true,
-      findings:[],approved:false
+      findings:[],approved:true
     })
   ].join('\n\n');
 }
