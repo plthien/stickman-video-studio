@@ -57,6 +57,26 @@ export function validateScriptAnalysis(raw:unknown,script:ApprovedScriptSnapshot
   const beginnings=new Map<string,number>();let cursor=0;
   for(const section of script.sections){beginnings.set(section.id,cursor);
     cursor+=section.text.length+2;}
+  const sourceText=script.sections.map(section=>section.text).join('\n\n');
+  const folded=sourceText.toLocaleLowerCase('en');
+  const mentions=analysis.continuity_catalog.characters.flatMap(character=>
+    character.occurrences.map(hit=>({charId:character.char_id,start:hit.start,end:hit.end})));
+  const attributedTo=(charId:string,phrase:string)=>{
+    const needle=phrase.trim().toLocaleLowerCase('en');
+    for(let pos=folded.indexOf(needle);pos!==-1;
+      pos=folded.indexOf(needle,pos+1)){
+      const boundary=Math.max(folded.lastIndexOf('.',pos-1),
+        folded.lastIndexOf('!',pos-1),folded.lastIndexOf('?',pos-1),
+        folded.lastIndexOf(';',pos-1),folded.lastIndexOf('\n',pos-1))+1;
+      const before=mentions.filter(hit=>hit.start>=boundary&&
+        hit.start<=pos&&pos-hit.start<240)
+        .sort((a,b)=>b.start-a.start);
+      if(before.length&&before[0].charId===charId&&
+        !before.some(hit=>hit.start===before[0].start&&hit.charId!==charId))
+        return true;
+    }
+    return false;
+  };
   for(const char of analysis.continuity_catalog.characters){
     const occurrences=[...char.occurrences].sort((a,b)=>a.start-b.start);
     let lastEnd=-1;
@@ -83,12 +103,14 @@ export function validateScriptAnalysis(raw:unknown,script:ApprovedScriptSnapshot
     // A character ID can be inferred from recurring narration mentions, but
     // appearance traits cannot. A literal source phrase is minimum evidence;
     // the independent owner review still checks its attribution to this actor.
-    const approvedText=script.sections.map(section=>section.text).join('\n\n')
-      .toLocaleLowerCase('en');
-    for(const trait of [...char.explicit_visual_traits,...char.identity_markers,
-      ...char.physical_constraints]){
+    for(const marker of char.identity_markers){
+      if(typeof marker!=='string'||!marker.trim()||
+        !folded.includes(marker.trim().toLocaleLowerCase('en')))
+        throw Error('SCRIPT_ANALYSIS_IDENTITY_MARKER_NOT_IN_SOURCE: '+char.char_id);
+    }
+    for(const trait of [...char.explicit_visual_traits,...char.physical_constraints]){
       if(typeof trait!=='string'||!trait.trim()||
-        !approvedText.includes(trait.trim().toLocaleLowerCase('en')))
+        !attributedTo(char.char_id,trait))
         throw Error('SCRIPT_ANALYSIS_UNSUPPORTED_VISUAL_TRAIT: '+char.char_id);
     }
   }
