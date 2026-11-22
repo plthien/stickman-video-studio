@@ -13,6 +13,7 @@ export interface AnalysisTask {
   operation:IdentityReviewOperation;project_id:string;task_id:string;
   revision:number;input_sha256:string;source_script_sha256:string;
   source_authoring_sha256:string;prompt:string;
+  finding_ids?:string[];review_findings?:ReviewFinding[];review_sha256?:string;
 }
 export interface ReviewFinding {
   finding_id:string;severity:'P0'|'P1'|'P2';
@@ -197,7 +198,9 @@ export function analysisResultContract(task:AnalysisTask,payload:unknown){
     JSON.stringify({schema:'mode-b-identity-external-result-v1',
       stage:'script_analysis',project_id:task.project_id,
       task_id:task.task_id,revision:task.revision,
-      input_sha256:task.input_sha256,payload},null,2),
+      input_sha256:task.input_sha256,
+      ...(task.operation==='correct'?{resolved_finding_ids:task.finding_ids??[]}:{}),
+      payload},null,2),
     'Keep ALL six envelope identity fields byte-for-value; only replace payload.',
     'No additional envelope keys, no comments, no invented source spans.'
   ].join('\n\n');
@@ -271,11 +274,19 @@ export function freezeAnalysisTask(script:ApprovedScriptSnapshot,operation:Ident
 export function validateAnalysisEnvelope(raw:unknown,task:AnalysisTask,script:ApprovedScriptSnapshot){
   const row=raw as Record<string,unknown>;
   if(!row||Array.isArray(row)||typeof row!=='object'||
-    Object.keys(row).sort().join('|')!==['input_sha256','payload','project_id','revision','schema','stage','task_id'].sort().join('|')||
+    Object.keys(row).sort().join('|')!==[
+      'input_sha256','payload','project_id','revision','schema','stage','task_id',
+      ...(task.operation==='correct'?['resolved_finding_ids']:[])
+    ].sort().join('|')||
     row.schema!=='mode-b-identity-external-result-v1'||row.stage!=='script_analysis'||
     row.task_id!==task.task_id||row.input_sha256!==task.input_sha256||
     row.project_id!==task.project_id||row.revision!==task.revision)
     throw Error('SCRIPT_ANALYSIS_ENVELOPE_INVALID');
+  if(task.operation==='correct'&&
+    (!Array.isArray(row.resolved_finding_ids)||
+      JSON.stringify([...row.resolved_finding_ids].sort())!==
+        JSON.stringify([...(task.finding_ids??[])].sort())))
+    throw Error('SCRIPT_ANALYSIS_CORRECTION_FINDINGS_INVALID');
   return validateScriptAnalysis(row.payload,script);
 }
 export function verifyIndependentReview(review:AnalysisReview,analysis:ScriptAnalysis){
