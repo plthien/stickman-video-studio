@@ -212,7 +212,7 @@ describe('F24 upstream source-grounded contract gates',()=>{
     duplicated.shots[0].layers.push({id:'managed1',type:'image',
       path:'assets/images/duplicate.png'} as typeof duplicated.shots[0].layers[number]);
     expect(()=>nativeImageTargetsFromManifest(duplicated))
-      .toThrow('Native shot/layer IDs must be unique');
+      .toThrow('NATIVE_DUPLICATE_IMAGE_LAYER_ID');
   });
   it('U12 defaults missing identityPolicy to LEGACY and honors v1 opt-in',()=>{
     expect(identityPolicy({} as StudioState)).toBe('legacy');
