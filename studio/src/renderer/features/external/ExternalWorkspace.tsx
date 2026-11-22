@@ -223,16 +223,20 @@ export function ExternalWorkspace(){
     // DOM/Electron bridges invalidate the pending blob read when selection
     // is reset synchronously in the change handler.
     const selectedPicker=jsonFilePicker.current;
-    let selectionCleared=false;
+    let accepted=false,selectionCleared=false;
+    const current=()=>sequence===requests.current.jsonFile&&
+      activeKey.current===sessionKey&&isCurrentProjectSession(session);
     const clearSelection=()=>{
       if(selectionCleared)return;
       selectionCleared=true;
-      if(selectedPicker&&selectedPicker===jsonFilePicker.current)
+      // A prior async read must never clear the new project's file selection,
+      // or a later selection in this same tab.
+      if(selectedPicker&&selectedPicker===jsonFilePicker.current&&
+        activeKey.current===sessionKey&&isCurrentProjectSession(session)&&
+        (requests.current.jsonFile===sequence||
+          (accepted&&requests.current.jsonFile===sequence+1)))
         selectedPicker.value='';
     };
-    let accepted=false;
-    const current=()=>sequence===requests.current.jsonFile&&
-      activeKey.current===sessionKey&&isCurrentProjectSession(session);
     const acceptRead=()=>{
       // FileReader normally emits both load and loadend. Some Electron test
       // bridges emit only one: one valid file selection is committed once.
