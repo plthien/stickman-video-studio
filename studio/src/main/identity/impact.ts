@@ -27,7 +27,7 @@ export function previewReferenceSwitchImpact(root:string,selectedIds:string[]){
       previous.media_sha256!==selected.media_sha256||
       previous.source_definition_hash!==selected.source_definition_hash;
   }).map(char=>char.char_id);
-  const changedIds=new Set(changed),affected=new Set<string>();
+  const changedIds=new Set<string>(changed),affected=new Set<string>();
   let sourceTargets:Array<{targetKey:string;shotId:string;layerId:string;
     characters:string[];source:{shot_id:string;layer_id:string}|null}>=[];
   try{
