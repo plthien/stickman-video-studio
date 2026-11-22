@@ -254,8 +254,9 @@ function assertJobTarget(appPath:string,root:string,job:GLabsJob){
     if(!prepared||prepared.state!=='READY'||
       !prepared.identityBindingSnapshotSha||
       job.identityBindingSnapshotSha!==prepared.identityBindingSnapshotSha||
-      job.identityApprovalSetSha!==prepared.identityApprovalSetSha||
-      job.identityStyleBibleSha!==prepared.identityStyleBibleSha||
+      job.identityTargetBindingSha!==prepared.identityTargetBindingSha||
+      // Global approval-set SHA is historical job provenance, not a
+      // per-target invalidation key; exact relevant anchors are in bindingSha.
       JSON.stringify(job.references.map(ref=>ref.path))!==
         JSON.stringify(prepared.references))
       throw new Error('IDENTITY_JOB_STALE_REFERENCE_BINDINGS');
