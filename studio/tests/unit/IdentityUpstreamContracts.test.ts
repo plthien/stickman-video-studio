@@ -20,7 +20,10 @@ const script={projectId,sha256:hash(text),authoring,revision:1,sections};
 const second=text.lastIndexOf('Kip');
 const entry=():ScriptCharacter=>({char_id:'char_001',label:'Kip',description:'',
   entity_kind:'human_character' as const,narrative_role:'Character in approved narration',
-  explicit_visual_traits:['scar'],identity_markers:['scar'],
+  explicit_visual_traits:['scar'],
+  visual_trait_evidence:[{trait:'scar',relationship:'intrinsic_appearance',
+    source:{section_id:'sec_001',quote:'Kip has a scar',start:0,end:14}}],
+  identity_markers:['scar'],
   continuity_notes:[],physical_constraints:[],
   occurrences:[{section_id:'sec_001',quote:'Kip',start:0,end:3},
     {section_id:'sec_002',quote:'Kip',start:second,end:second+3}],
@@ -106,6 +109,7 @@ describe('F24 upstream source-grounded contract gates',()=>{
     expect(validateStyleBibleCurrent(bible,unchanged,script,style)).toBe(true);
     const unknown=analysis();unknown.continuity_catalog.characters[0].identity_markers=[];
     unknown.continuity_catalog.characters[0].explicit_visual_traits=[];
+    unknown.continuity_catalog.characters[0].visual_trait_evidence=[];
     const incomplete=compileStyleBible(unknown,script,style);
     expect(incomplete.characters[0].visual_readiness).toBe('NEEDS_OWNER_DEFINITION');
     expect(()=>referencePromptForCharacter(incomplete,'char_001',style))
@@ -158,6 +162,7 @@ describe('F24 upstream source-grounded contract gates',()=>{
     expect(prompt).not.toContain('black glasses');
     const named=analysis();
     named.continuity_catalog.characters[0].explicit_visual_traits=[];
+    named.continuity_catalog.characters[0].visual_trait_evidence=[];
     named.continuity_catalog.characters[0].identity_markers=['Kip'];
     const withoutAppearance=compileStyleBible(named,script,style);
     expect(withoutAppearance.characters[0].visual_readiness).toBe('NEEDS_OWNER_DEFINITION');
