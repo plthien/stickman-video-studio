@@ -78,7 +78,7 @@ export function detectPublishedCharacterMentions(text:string,
 export function assertNativeCastConsistency(row:NativeImageNeedV2,
   bible:Pick<StyleBible,'characters'>,text:string=row.content){
   const mentions=detectPublishedCharacterMentions(text,bible);
-  const declared=new Set(row.character_ids);
+  const declared=new Set<string>(row.character_ids);
   for(const mention of mentions){
     const context=normalizeMention(text).slice(Math.max(0,mention.start-32),mention.end+12);
     if(/\b(?:no|without|exclude|excluding|not|rather than)\s+[\p{L}\p{M}\p{N}_'’ -]*$/u
