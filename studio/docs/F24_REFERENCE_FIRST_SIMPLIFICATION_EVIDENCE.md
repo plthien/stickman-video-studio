@@ -13,8 +13,8 @@ Scope: STICKMAN_PR4_REFERENCE_FIRST_SIMPLIFICATION_REPAIR_PLAN.md
 - Group overview remains a *single square 1:1 image* explicitly chosen per reference-generation request, not an actor taxonomy or persistent character property.
 - New jobs pin `referenceFormat`, frozen prompt and prompt SHA before the one owner-triggered paid POST. Invalid output format fails before provider interaction.
 - Historical v1 character kind is recognized ONLY by the read-only legacy storage adapter; archived Style Bible hashes and old 2×2/group prompt bytes are recomputed in memory for verification and never rewritten.
-- Published Native authority validates the original archived snapshots and preserves `char_id`, canonical media, rights, approval set, source hashes, and exact target-binding behavior.
-- A historical paid reference job can reconcile its original source even during newer candidate review. No implicit job replay, retroactive publication or paid retry.
+- Published Native authority validates the original archived snapshots and preserves `char_id`, canonical media, rights, approval set, source hashes, and exact target-binding behavior. Its active projection strips retired storage-only metadata while retaining the original historical authority snapshot SHA.
+- A historical paid reference job can reconcile its original source even during newer candidate review. A simulated frozen UNKNOWN group job checks GET-only sync and byte-exact prompt/SHA, without auto-approval. No implicit job replay, retroactive publication or paid retry.
 - Native `asset_kind`, continuous shot/target binding, source evidence and square owner-import/decoder gates are unchanged.
 
 ## EK regression matrix
@@ -23,7 +23,7 @@ Scope: STICKMAN_PR4_REFERENCE_FIRST_SIMPLIFICATION_REPAIR_PLAN.md
 |---|---|---|
 | EK-01/02/03/04 | IdentityReferenceFirstEK, strict new schemas, source scan | NOT VERIFIED |
 | EK-05/07/19 | IdentityReferenceFirstEK, IdentityReferenceGenerationF24, four-view/group frozen prompt | NOT VERIFIED |
-| EK-06/10/11/12 | legacyStorage plus synthetic historical published group Native regression; real on-disk archival receipt comparisons still needed | NOT VERIFIED |
+| EK-06/10/11/12 | legacyStorage, synthetic group published-Native/author-switch fixture, frozen UNKNOWN GET-only job; real historical on-disk receipt comparisons still needed | NOT VERIFIED |
 | EK-08/09 | Existing owner import, exact SHA, rights, square decoder gates | NOT VERIFIED |
 | EK-13/14/15 | IdentityNativeBindingF24, IdentityCastConsistencyC01, IdentityVisualEvidenceC02 | NOT VERIFIED |
 | EK-16/18 | Existing Author and frozen Review/Correct/Recheck lineage | NOT VERIFIED |
