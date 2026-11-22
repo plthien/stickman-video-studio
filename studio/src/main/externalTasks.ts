@@ -82,9 +82,22 @@ function nativePromptProjection(context:ReturnType<typeof projectContext>,root:s
   }
   const {assets:unusedAssets,media_ledger:unusedLedger,...common}=source;
   void unusedAssets;void unusedLedger;
+  const approvedIdentity=readState(root).identityPolicy==='v1'?
+    readApprovedNativeIdentity(root,appPath):null;
   return {...common,
-    ...(readState(root).identityPolicy==='v1'?{
-      upstream_character_authority:readApprovedNativeIdentity(root,appPath)
+    ...(approvedIdentity?{
+      upstream_character_authority:{
+        ...approvedIdentity,
+        // Analysis.description, name aliases and narrative role are not
+        // validated appearance. Do not promote that text to Native Author.
+        characters:approvedIdentity.characters.map(character=>({
+          char_id:character.char_id,label:character.label,
+          entity_kind:character.entity_kind,
+          source_definition_hash:character.source_definition_hash,
+          explicit_visual_traits:character.explicit_visual_traits,
+          visual_readiness:character.visual_readiness
+        }))
+      }
     }:{}),
     prompt_projection_version:'native-author-word-only-v1',
     alignment:{
