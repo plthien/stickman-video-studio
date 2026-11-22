@@ -9,6 +9,8 @@ import {atomicJson,readState,resolveProjectFile,strictJson,sha} from '../service
 import {contentHash,type StyleBible} from './contracts.js';
 import {compileStyleBible,referencePromptForCharacter,
   type ReferenceOutputFormat} from './styleBible.js';
+import {isFrozenLegacyAnalysis,validateHistoricalPublishedBible,
+  frozenLegacyReferencePrompt} from './legacyStorage.js';
 import {currentApprovedSource,readIdentityWorkflow,publishedIdentityView,identityPolicy} from './identityWorkflow.js';
 import {verifyIndependentReview} from './scriptAnalysis.js';
 import {validateOwnerVisualDefinition} from './visualDefinitions.js';
@@ -43,7 +45,10 @@ export function readReferenceJob(root:string,id:string):ReferenceJob{
   const value=strictJson(fs.readFileSync(file(root,id),'utf8')) as unknown as ReferenceJob;
   if(value.schema!=='stickman-reference-generate-job-v1'||
     value.id!==id||value.projectId!==readState(root).project.id||
-    !idPattern.test(value.id)||!['QUEUED','SUBMITTED','RUNNING','UNKNOWN',
+    !idPattern.test(value.id)||
+    (value.referenceFormat!==undefined&&
+      !['four_view','group_overview'].includes(value.referenceFormat))||
+    !['QUEUED','SUBMITTED','RUNNING','UNKNOWN',
       'VALIDATED','FAILED','STALE','CANCELLED'].includes(value.status))
     throw Error('REFERENCE_JOB_JOURNAL_INVALID');
   return value;
@@ -59,7 +64,7 @@ export function listReferenceJobs(root:string):ReferenceJob[]{
     .sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
 }
 function ready(root:string,appPath:string,anchorId:string,
-  referenceFormat:ReferenceOutputFormat='four_view'):{
+  referenceFormat:ReferenceOutputFormat='four_view',frozenHistoricalJob=false):{
   bible:StyleBible;sourceDefinitionHash:string;prompt:string;promptSha:string;
   styleSha:string;analysisSha:string;scriptSha:string;
   ownerVisualDefinitionSha?:string
@@ -85,7 +90,11 @@ function ready(root:string,appPath:string,anchorId:string,
     throw Error('REFERENCE_SCRIPT_ANALYSIS_NOT_CURRENT');
   const style=loadImageStyleProfile(appPath,state.project.style as 'B1'|'B2'|'B3'|'B4');
   const pinned={id:style.id,guidance:style.guidance,sha256:style.sha256};
-  const bible=compileStyleBible(analysis,source,pinned);
+  if(isFrozenLegacyAnalysis(analysis)&&!frozenHistoricalJob)
+    throw Error('REFERENCE_LEGACY_NEW_GENERATION_REQUIRES_NEW_ANALYSIS');
+  const bible=frozenHistoricalJob?
+    validateHistoricalPublishedBible(analysis,source,pinned,journal.bible!):
+    compileStyleBible(analysis,source,pinned);
   if(journal.bibleTextApproved?.sha256!==bible.style_bible_sha256||
     !journal.bible||contentHash(journal.bible)!==contentHash(bible)||
     journal.bible.style_bible_sha256!==bible.style_bible_sha256)
@@ -96,7 +105,9 @@ function ready(root:string,appPath:string,anchorId:string,
   if(owner)validateOwnerVisualDefinition(owner,source,bible);
   if(row.visual_readiness!=='READY_FOR_REFERENCE'&&!owner)
     throw Error('REFERENCE_CHARACTER_NOT_READY');
-  const prompt=referencePromptForCharacter(bible,anchorId,pinned,owner,referenceFormat);
+  const prompt=frozenHistoricalJob?
+    frozenLegacyReferencePrompt(bible,anchorId,pinned,owner):
+    referencePromptForCharacter(bible,anchorId,pinned,owner,referenceFormat);
   return{bible,sourceDefinitionHash:row.source_definition_hash,
     prompt:prompt.prompt,promptSha:prompt.prompt_sha256,styleSha:style.sha256,
     analysisSha:bible.analysis_sha256,scriptSha:bible.source_script_sha256,
@@ -104,7 +115,8 @@ function ready(root:string,appPath:string,anchorId:string,
 }
 function isCurrent(root:string,appPath:string,job:ReferenceJob){
   try{
-    const snapshot=ready(root,appPath,job.anchorId,job.referenceFormat??'four_view');
+    const snapshot=ready(root,appPath,job.anchorId,
+      job.referenceFormat??'four_view',job.referenceFormat===undefined);
     return job.projectId===readState(root).project.id&&
       job.styleBibleSha===snapshot.bible.style_bible_sha256&&
       job.sourceDefinitionHash===snapshot.sourceDefinitionHash&&

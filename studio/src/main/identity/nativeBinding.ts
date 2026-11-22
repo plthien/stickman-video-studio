@@ -1,8 +1,8 @@
 /** F24 upstream-to-Native authority. Never changes project.json or renderer Core. */
 import {readState,sha} from '../services.js';
-import {readIdentityWorkflow,publishedIdentityView,currentApprovedSource} from './identityWorkflow.js';
+import {readIdentityWorkflow,publishedIdentityView,currentApprovedSource,
+  validatedPublishedBible} from './identityWorkflow.js';
 import {verifyIndependentReview} from './scriptAnalysis.js';
-import {compileStyleBible} from './styleBible.js';
 import {loadImageStyleProfile} from '../imagePreparation.js';
 import {contentHash,type NativeImageNeedV2,type StyleBible} from './contracts.js';
 import {validateNativeIdentityNeeds} from './nativeNeeds.js';
@@ -35,9 +35,7 @@ export function readApprovedNativeIdentity(root:string,appPath:string):ApprovedN
     store.draftAnalysis.source_authoring_sha256!==contentHash(script.authoring))
     throw Error('IDENTITY_NATIVE_ANALYSIS_STALE');
   const style=loadImageStyleProfile(appPath,state.project.style as 'B1'|'B2'|'B3'|'B4');
-  const bible=compileStyleBible(store.draftAnalysis,script,{
-    id:style.id,guidance:style.guidance,sha256:style.sha256
-  });
+  const bible=validatedPublishedBible(root,appPath);
   if(!store.bible||contentHash(store.bible)!==contentHash(bible)||
     store.bible.style_bible_sha256!==bible.style_bible_sha256||
     store.bibleTextApproved?.sha256!==bible.style_bible_sha256)

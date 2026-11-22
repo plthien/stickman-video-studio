@@ -10,6 +10,9 @@ import {analysisLineage,freezeAnalysisTask,validateAnalysisEnvelope,
   validateScriptAnalysis,verifyIndependentReview,type ApprovedScriptSnapshot,
   type AnalysisTask,type AnalysisReview} from './scriptAnalysis.js';
 import {compileStyleBible,type PinnedStyle} from './styleBible.js';
+import {isFrozenLegacyAnalysis,validateHistoricalPublishedBible,
+  frozenLegacyReferencePrompt} from './legacyStorage.js';
+import {canonical} from './contracts.js';
 import {approveCandidate,publishApprovalSet,validatePublishedSet,verifyReferenceFile,
   type ReferenceCandidate,type ReferenceApprovalSet,type IdentityDecoder} from './referencePublication.js';
 import {referencePromptForCharacter} from './styleBible.js';
@@ -139,6 +142,19 @@ export function publishedIdentityView(journal:IdentityWorkflowStore):IdentityWor
     bible:pub.bible,bibleTextApproved:pub.bibleTextApproved,
     referenceApprovalSet:pub.referenceApprovalSet};
 }
+/** Validate archived published source against its original in-memory v1
+ * derivation without changing stored artifact hashes or media authority. */
+export function validatedPublishedBible(root:string,appPath:string):StyleBible{
+  const publication=publishedSnapshot(readIdentityWorkflow(root));
+  if(!publication)throw Error('IDENTITY_UPSTREAM_NOT_PUBLISHED');
+  const script=currentApprovedSource(root),style=pinned(appPath,root);
+  if(isFrozenLegacyAnalysis(publication.analysis))
+    return validateHistoricalPublishedBible(publication.analysis,script,style,publication.bible);
+  const current=compileStyleBible(publication.analysis,script,style);
+  if(canonical(current)!==canonical(publication.bible))
+    throw Error('IDENTITY_PUBLISHED_STYLE_BIBLE_STALE');
+  return publication.bible;
+}
 /** Preserve prior immutable canonical authority when upstream lineage changes. */
 function archiveReferenceSet(next:IdentityWorkflowStore){
   const current=next.referenceApprovalSet;
@@ -182,10 +198,15 @@ export function identityWorkflowSnapshot(root:string,appPath:string){
   let readiness='LEGACY';
   if(policy==='v1'){
     try{
-      const {script,analysis}=validApproved(root,published);
+      const archived=publishedSnapshot(record);
+      const oldPublished=archived&&isFrozenLegacyAnalysis(archived.analysis);
+      const {script,analysis}=oldPublished?
+        {script:currentApprovedSource(root),analysis:archived.analysis}:
+        validApproved(root,published);
       readiness='ANALYSIS_APPROVED';
       if(published.bible){
-        const current=compileStyleBible(analysis,script,pinned(appPath,root));
+        const current=oldPublished?validatedPublishedBible(root,appPath):
+          compileStyleBible(analysis,script,pinned(appPath,root));
         if(published.bible.style_bible_sha256!==current.style_bible_sha256||
           contentHash(published.bible)!==contentHash(current))
           readiness='STYLE_BIBLE_STALE';
@@ -510,8 +531,19 @@ export function registerValidatedGeneratedReference(root:string,appPath:string,
     persisted.staged?.path!==job.staged.path||
     persisted.staged?.sha256!==job.staged.sha256)
     throw Error('REFERENCE_GENERATED_JOB_PROVENANCE_INVALID');
-  const {script,analysis}=validApproved(root,prior);
-  const bible=compileStyleBible(analysis,script,pinned(appPath,root));
+  const historical=job.referenceFormat===undefined;
+  const {script,analysis}=historical?(()=>{
+    const script=active(root),analysis=prior.draftAnalysis;
+    if(!analysis||!isFrozenLegacyAnalysis(analysis)||!prior.bible||
+      !prior.independentReview||!verifyIndependentReview(prior.independentReview,analysis)||
+      prior.analysisApproved?.sha256!==contentHash(analysis))
+      throw Error('REFERENCE_HISTORICAL_APPROVAL_REQUIRED');
+    return{script,analysis};
+  })():validApproved(root,prior);
+  const pinnedStyle=pinned(appPath,root);
+  const bible=historical?
+    validateHistoricalPublishedBible(analysis,script,pinnedStyle,prior.bible!):
+    compileStyleBible(analysis,script,pinnedStyle);
   if(prior.bibleTextApproved?.sha256!==bible.style_bible_sha256||
     job.styleBibleSha!==bible.style_bible_sha256||
     job.styleProfileSha!==bible.style_profile_sha256||
@@ -537,8 +569,9 @@ export function registerValidatedGeneratedReference(root:string,appPath:string,
   if(owner)validateOwnerVisualDefinition(owner,script,bible);
   if(owner?.definitionSha!==job.ownerVisualDefinitionSha)
     throw Error('REFERENCE_GENERATION_VISUAL_DEFINITION_STALE');
-  const prompt=referencePromptForCharacter(bible,job.anchorId,pinned(appPath,root),
-    owner);
+  const prompt=historical?
+    frozenLegacyReferencePrompt(bible,job.anchorId,pinnedStyle,owner):
+    referencePromptForCharacter(bible,job.anchorId,pinnedStyle,owner,job.referenceFormat);
   if(prompt.prompt_sha256!==job.promptSha)
     throw Error('REFERENCE_GENERATION_PROMPT_STALE');
   const candidate:ReferenceCandidate={
@@ -652,8 +685,7 @@ export function assertIdentityUpstreamCurrent(root:string,appPath:string,
   const state=readState(root);
   if(identityPolicy(state)==='legacy')return null;
   const journal=publishedIdentityView(readIdentityWorkflow(root));
-  const {script,analysis}=validApproved(root,journal);
-  const bible=compileStyleBible(analysis,script,pinned(appPath,root));
+  const bible=validatedPublishedBible(root,appPath);
   if(journal.bibleTextApproved?.sha256!==bible.style_bible_sha256||
     !journal.referenceApprovalSet)
     throw Error('IDENTITY_UPSTREAM_NOT_PUBLISHED');
