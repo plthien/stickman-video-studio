@@ -198,7 +198,9 @@ describe('F24 Native canonical bytes, billing gate and final source receipt',()=
     const task=frozen.currentTask!.task;
     const envelope={schema:'mode-b-identity-external-result-v1',
       stage:'script_analysis',project_id:task.project_id,task_id:task.task_id,
-      revision:task.revision,input_sha256:task.input_sha256,payload:candidate};
+      revision:task.revision,input_sha256:task.input_sha256,
+      ...(operation==='correct'?{resolved_finding_ids:task.finding_ids}:{}),
+      payload:candidate};
     return importIdentityResult(root,JSON.stringify(envelope),frozen.revision);
   };
   const importReview=(root:string,operation:'review'|'recheck',approved:boolean)=>{
