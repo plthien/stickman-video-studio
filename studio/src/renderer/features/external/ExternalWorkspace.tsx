@@ -223,7 +223,10 @@ export function ExternalWorkspace(){
     // DOM/Electron bridges invalidate the pending blob read when selection
     // is reset synchronously in the change handler.
     const selectedPicker=jsonFilePicker.current;
+    let selectionCleared=false;
     const clearSelection=()=>{
+      if(selectionCleared)return;
+      selectionCleared=true;
       if(selectedPicker&&selectedPicker===jsonFilePicker.current)
         selectedPicker.value='';
     };
