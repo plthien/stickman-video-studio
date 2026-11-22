@@ -24,6 +24,12 @@ interface TaskEntry{task:AnalysisTask;status:TaskState;frozenArtifactSha:string|
 interface JournalEvent{
   eventId:string;at:string;action:string;sha256:string;sourceRevision:number
 }
+export interface PublishedIdentityAuthority{
+  analysis:ScriptAnalysis;analysisApproved:NonNullable<IdentityWorkflowStore['analysisApproved']>;
+  independentReview:AnalysisReview;bible:StyleBible;
+  bibleTextApproved:NonNullable<IdentityWorkflowStore['bibleTextApproved']>;
+  referenceApprovalSet:ReferenceApprovalSet;snapshotSha:string;
+}
 export interface IdentityWorkflowStore{
   schema:'stickman-identity-workflow-v1';projectId:string;revision:number;
   currentTask:TaskEntry|null;draftAnalysis:ScriptAnalysis|null;
@@ -33,6 +39,7 @@ export interface IdentityWorkflowStore{
   referenceCandidates:ReferenceCandidate[];
   referenceApprovalSet:ReferenceApprovalSet|null;
   referenceApprovalHistory?:ReferenceApprovalSet[];
+  publishedAuthority?:PublishedIdentityAuthority|null;
   ownerVisualDefinitions?:OwnerVisualDefinition[];
   events:JournalEvent[];
 }
@@ -43,7 +50,7 @@ function empty(projectId:string):IdentityWorkflowStore{
     currentTask:null,draftAnalysis:null,draftSha256:null,
     independentReview:null,analysisApproved:null,bible:null,bibleTextApproved:null,
     referenceCandidates:[],referenceApprovalSet:null,referenceApprovalHistory:[],
-    ownerVisualDefinitions:[],events:[]};
+    publishedAuthority:null,ownerVisualDefinitions:[],events:[]};
 }
 export const identityPolicy=(state:StudioState):'legacy'|'v1'=>state.identityPolicy??'legacy';
 export function currentApprovedSource(root:string):ApprovedScriptSnapshot{
@@ -85,7 +92,48 @@ export function readIdentityWorkflow(root:string):IdentityWorkflowStore{
     const {approval_set_sha256:stored,...base}=priorSet;
     if(contentHash(base)!==stored)throw Error('IDENTITY_REFERENCE_HISTORY_CORRUPT');
   }
+  publishedSnapshot(data);
   return data;
+}
+/** Migration reads only complete, independently reviewed prior authority. */
+function publishedSnapshot(journal:IdentityWorkflowStore):PublishedIdentityAuthority|null{
+  if(journal.publishedAuthority){
+    const {snapshotSha,...record}=journal.publishedAuthority;
+    if(contentHash(record)!==snapshotSha)
+      throw Error('IDENTITY_PUBLISHED_AUTHORITY_TAMPERED');
+    if(record.analysisApproved.sha256!==contentHash(record.analysis)||
+      record.analysisApproved.reviewSha256!==contentHash(record.independentReview)||
+      !verifyIndependentReview(record.independentReview,record.analysis)||
+      record.bible.analysis_sha256!==contentHash(record.analysis)||
+      record.bibleTextApproved.sha256!==record.bible.style_bible_sha256||
+      record.referenceApprovalSet.style_bible_sha256!==record.bible.style_bible_sha256)
+      throw Error('IDENTITY_PUBLISHED_AUTHORITY_STALE');
+    const {approval_set_sha256,...setBody}=record.referenceApprovalSet;
+    if(contentHash(setBody)!==approval_set_sha256)
+      throw Error('IDENTITY_PUBLISHED_REFERENCE_SET_TAMPERED');
+    return journal.publishedAuthority;
+  }
+  if(!journal.referenceApprovalSet)return null;
+  const {draftAnalysis:analysis,analysisApproved,independentReview,bible,
+    bibleTextApproved,referenceApprovalSet}=journal;
+  if(!analysis||!analysisApproved||!independentReview||!bible||
+    !bibleTextApproved||!referenceApprovalSet)
+    throw Error('IDENTITY_LEGACY_PUBLISHED_AUTHORITY_INCOMPLETE');
+  const record={analysis:clone(analysis),analysisApproved:clone(analysisApproved),
+    independentReview:clone(independentReview),bible:clone(bible),
+    bibleTextApproved:clone(bibleTextApproved),
+    referenceApprovalSet:clone(referenceApprovalSet)};
+  return publishedSnapshot({...journal,publishedAuthority:{
+    ...record,snapshotSha:contentHash(record)}});
+}
+/** Native and G-Labs use last published authority during candidate review. */
+export function publishedIdentityView(journal:IdentityWorkflowStore):IdentityWorkflowStore{
+  const pub=publishedSnapshot(journal);
+  if(!pub)return journal;
+  return {...journal,draftAnalysis:pub.analysis,draftSha256:contentHash(pub.analysis),
+    independentReview:pub.independentReview,analysisApproved:pub.analysisApproved,
+    bible:pub.bible,bibleTextApproved:pub.bibleTextApproved,
+    referenceApprovalSet:pub.referenceApprovalSet};
 }
 /** Preserve prior immutable canonical authority when upstream lineage changes. */
 function archiveReferenceSet(next:IdentityWorkflowStore){
@@ -125,21 +173,22 @@ function validApproved(root:string,journal:IdentityWorkflowStore){
   return{script,analysis:draft};
 }
 export function identityWorkflowSnapshot(root:string,appPath:string){
-  const record=readIdentityWorkflow(root),policy=identityPolicy(readState(root));
+  const record=readIdentityWorkflow(root),published=publishedIdentityView(record),
+    policy=identityPolicy(readState(root));
   let readiness='LEGACY';
   if(policy==='v1'){
     try{
-      const {script,analysis}=validApproved(root,record);
+      const {script,analysis}=validApproved(root,published);
       readiness='ANALYSIS_APPROVED';
-      if(record.bible){
+      if(published.bible){
         const current=compileStyleBible(analysis,script,pinned(appPath,root));
-        if(record.bible.style_bible_sha256!==current.style_bible_sha256||
-          contentHash(record.bible)!==contentHash(current))
+        if(published.bible.style_bible_sha256!==current.style_bible_sha256||
+          contentHash(published.bible)!==contentHash(current))
           readiness='STYLE_BIBLE_STALE';
-        else if(record.bibleTextApproved?.sha256!==current.style_bible_sha256)
+        else if(published.bibleTextApproved?.sha256!==current.style_bible_sha256)
           readiness='STYLE_BIBLE_TEXT_REVIEW_REQUIRED';
         else{
-          readiness=record.referenceApprovalSet?.style_bible_sha256===
+          readiness=published.referenceApprovalSet?.style_bible_sha256===
             current.style_bible_sha256?'REFERENCES_PUBLISHED':'STYLE_BIBLE_APPROVED';
         }
       }
@@ -256,6 +305,7 @@ export function importIdentityResult(root:string,text:string,expectedRevision:nu
     const payload=validateAnalysisEnvelope(raw,task,script);
     next.draftAnalysis=payload;next.draftSha256=contentHash(payload);
     next.independentReview=null;next.analysisApproved=null;
+    next.publishedAuthority=publishedSnapshot(prior);
     archiveReferenceSet(next);
     next.bible=null;next.bibleTextApproved=null;next.referenceApprovalSet=null;
   }
@@ -534,18 +584,29 @@ export function publishStyleBibleReferences(root:string,appPath:string,
   // revision bump would incorrectly stale every already-generated image.
   if(prior.referenceApprovalSet&&!impact.changedCharacterIds.length)
     return prior;
+  const oldPublished=publishedSnapshot(prior);
   const approvalSet=publishApprovalSet(root,bible,selected as ReferenceCandidate[],
-    (prior.referenceApprovalSet?.revision??0)+1,decode);
+    (oldPublished?.referenceApprovalSet.revision??0)+1,decode);
   const next=clone(prior);
   archiveReferenceSet(next);
+  if(oldPublished&&!next.referenceApprovalHistory?.some(entry=>
+    entry.approval_set_sha256===oldPublished.referenceApprovalSet.approval_set_sha256))
+    next.referenceApprovalHistory=[...(next.referenceApprovalHistory??[]),
+      oldPublished.referenceApprovalSet].slice(-100);
   next.referenceApprovalSet=approvalSet;
-  return save(root,prior,next,'publish:reference-set',approvalSet);
+  const candidate={analysis:clone(analysis),
+    analysisApproved:clone(prior.analysisApproved!),
+    independentReview:clone(prior.independentReview!),
+    bible:clone(bible),bibleTextApproved:clone(prior.bibleTextApproved!),
+    referenceApprovalSet:clone(approvalSet)};
+  next.publishedAuthority={...candidate,snapshotSha:contentHash(candidate)};
+  return save(root,prior,next,'publish:reference-set',next.publishedAuthority);
 }
 export function assertIdentityUpstreamCurrent(root:string,appPath:string,
   decode:IdentityDecoder){
   const state=readState(root);
   if(identityPolicy(state)==='legacy')return null;
-  const journal=readIdentityWorkflow(root);
+  const journal=publishedIdentityView(readIdentityWorkflow(root));
   const {script,analysis}=validApproved(root,journal);
   const bible=compileStyleBible(analysis,script,pinned(appPath,root));
   if(journal.bibleTextApproved?.sha256!==bible.style_bible_sha256||
