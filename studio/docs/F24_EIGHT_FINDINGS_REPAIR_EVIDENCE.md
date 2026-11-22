@@ -41,3 +41,33 @@ npm run build
 **Execution status:** NOT VERIFIED. Connector can inspect/commit GitHub files, but the session's local shell cannot resolve `github.com` to clone the full repository. No claim of TypeScript, Vitest, Vite, Electron or Native CLI success is made here.
 
 **Owner's previous baseline (before these patches):** 615 tests PASS, 1 FAIL in 56 files; build FAILED with 9 TypeScript errors. Those baseline results are not results for this HEAD. Keep PR Draft until fresh evidence covers all mandatory gates, including Windows Electron and sample/full Native.
+
+## Follow-up: Windows owner full-suite log, 2026-11-22
+
+Owner supplied the *pre-follow-up* execution transcript:
+- `npm test` / Vitest: **53 files passed / 4 failed** of 57; **625 tests passed / 4 failed** of 629; overall wall duration 189.61s
+- `R2ExternalTaskIdentity.test.tsx`: actual JSDOM FileReader import left `Import JSON` empty; the mocked `onloadend`-only and both-events test paths had passed
+- `ComprehensiveMainFlow.test.ts MF01-1`, `R3AutoCaptions.test.ts AC03`, and `VoicePlayback.test.ts PB-01/02`: **timeout at 15,000 ms** under the concurrent full suite; *individual functional failure NOT established*
+- `npm run build`: blocked before Vite/Electron build by **TS1005** at `IdentityUpstreamContracts.test.ts:214`, malformed indexed `typeof` expression
+
+Follow-up source changes on the same PR:
+- Corrected invalid `as typeof duplicated.shots[0].layers[number]` in test fixture without weakening the duplicate-ID assertion. Isolated equivalent source snippet compiled via global `tsc --strict --noEmit --target ES2022 --lib es2022,dom` with exit code 0; **this is not repository typecheck**.
+- R2 file picker no longer clears its selected input before FileReader consumes the File. Selection is cleared exactly once when read completes, guarded against project switch and later file selections. Tests now cover delayed read, onload/onloadend deduplication, malformed JSON, and stale project/session reads. No validation or staging on file selection.
+- Vitest 3 worker contention control: `minWorkers:1,maxWorkers:3`, `testTimeout` unchanged at 15,000 ms. This is a resource-concurrency mitigation, **not a claim that MF01/AC03/PB timeouts are fixed**. Repeat isolated tests and full suite to confirm.
+
+### Fresh Windows verification commands
+
+```powershell
+cd studio
+npm run typecheck
+npm run lint
+npx vitest run tests/unit/R2ExternalTaskIdentity.test.tsx --maxWorkers=1
+npx vitest run tests/unit/ComprehensiveMainFlow.test.ts tests/unit/R3AutoCaptions.test.ts tests/unit/VoicePlayback.test.ts --maxWorkers=1
+npx vitest run tests/unit/IdentityUpstreamContracts.test.ts --maxWorkers=1
+npm test
+npm run build
+```
+
+If a test fails in isolation, investigate the production path separately; if it fails only under full suite, collect timing, active worker count, event logs and I/O pressure. Avoid increasing timeouts blindly or weakening assertions.
+
+**Post-follow-up execution state: NOT VERIFIED. Do not mark PASS or merge based on the prior log.**
