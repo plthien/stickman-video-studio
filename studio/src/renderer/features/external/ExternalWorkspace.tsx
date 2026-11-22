@@ -218,21 +218,36 @@ export function ExternalWorkspace(){
     if(!native||!session){setError('Open a native project before importing JSON.');return;}
     if(!/\.json$/i.test(file.name)){setError('Choose a .json file.');return;}
     const reader=new FileReader();
+    let accepted=false;
+    const current=()=>sequence===requests.current.jsonFile&&
+      activeKey.current===sessionKey&&isCurrentProjectSession(session);
     const acceptRead=()=>{
-      if(sequence!==requests.current.jsonFile||activeKey.current!==sessionKey||!isCurrentProjectSession(session))return;
+      // FileReader normally emits both load and loadend. Some Electron test
+      // bridges emit only one: one valid file selection is committed once.
+      if(accepted||!current())return;
       const contents=reader.result;
-      if(typeof contents!=='string'){setError('Unable to read the selected JSON file.');return;}
-      try{JSON.parse(contents)}catch{setError('Selected file is not valid JSON.');return;}
-      // change() consumes this request's revision. A following loadend cannot
-      // apply the same bytes twice or resurrect a stale selected file.
-      change(contents);
+      if(typeof contents!=='string'){
+        // loadend may follow an error; never overwrite existing user JSON.
+        return;
+      }
+      try{JSON.parse(contents)}catch{
+        accepted=true;setError('Selected file is not valid JSON.');return;
+      }
+      accepted=true;
+      requests.current.jsonFile+=1;
+      // One atomic tab update prevents later async history/frozen callbacks
+      // from observing a partially cleared editor during FileReader events.
+      patch(sessionKey,{json:contents,result:'idle',pending:null,
+        nativeMediaStatus:null,draftConsent:false,error:''});
       showNotice('JSON loaded from '+file.name+'. Review the content, then select Validate import.');
     };
     reader.onload=acceptRead;
-    // Some FileReader bridges report completion using loadend; deduplicate
-    // against onload through the request revision above.
     reader.onloadend=acceptRead;
-    reader.onerror=()=>{if(sequence===requests.current.jsonFile&&activeKey.current===sessionKey&&isCurrentProjectSession(session))setError('Unable to read the selected JSON file.');};
+    reader.onerror=()=>{
+      if(!accepted&&current()){
+        accepted=true;setError('Unable to read the selected JSON file.');
+      }
+    };
     reader.readAsText(file);
   };
   const refreshPending=async()=>{if(!native||!window.studio||stage!=='native')return;const scope=captureProjectSession(),expectedStage=stage,expectedOperation=operation,sequence=++requests.current.pending;if(!scope)return;try{const value=await window.studio.pendingMedia(native.project.id);if(!isCurrentProjectSession(scope)||expectedStage!==stage||expectedOperation!==operation||sequence!==requests.current.pending||activeKey.current!==sessionKey)return;if(operation==='Author')setPending(value);else setNativeMediaStatus(value);setError('');}catch(reason){if(isCurrentProjectSession(scope)&&expectedStage===stage&&expectedOperation===operation&&sequence===requests.current.pending&&activeKey.current===sessionKey)setError(String(reason));}};
