@@ -157,7 +157,8 @@ export function analysisReviewContract(task:AnalysisTask,analysisSha:string){
     '{schema,project_id,analysis_sha256,independent_review,findings,approved}.',
     'independent_review must be true. Every finding contains',
     '{finding_id,severity,location,issue,evidence}.',
-    'severity is exactly P0, P1 or P2; approved=false if P0/P1 is unresolved.',
+    'severity is exactly P0, P1 or P2; every finding requires Correct then Recheck.',
+    'approved=true requires an EMPTY findings array. approved=false requires at least one finding.',
     'The independent reviewer must actually examine source quotes and spans.',
     analysisResultContract(task,{
       schema:'stickman-analysis-review-v1',project_id:task.project_id,
@@ -206,7 +207,11 @@ export function verifyIndependentReview(review:AnalysisReview,analysis:ScriptAna
     !Array.isArray(review.findings)||new Set(review.findings.map(f=>f.finding_id)).size!==review.findings.length||
     review.findings.some(f=>!/^[A-Za-z0-9_-]{1,80}$/.test(f.finding_id)||
       !['P0','P1','P2'].includes(f.severity)||!f.issue||!f.evidence)||
-    (review.approved&&review.findings.some(f=>['P0','P1'].includes(f.severity))))
+    typeof review.approved!=='boolean'||
+    // A negative verdict without actionable findings strands Correct.
+    // Any finding on an approved review is contradictory; P2 findings
+    // also require explicit Correct→independent Recheck.
+    (review.approved?review.findings.length!==0:review.findings.length===0))
     throw Error('SCRIPT_ANALYSIS_REVIEW_INVALID');
   return review.approved;
 }
