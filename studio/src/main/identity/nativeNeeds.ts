@@ -17,6 +17,12 @@ export function validateNativeIdentityNeeds(rows:unknown[],targets:NativeImageTa
       !row.expected_path.startsWith('assets/images/'))
       throw Error('NATIVE_IDENTITY_UNSAFE_PATH');
     if(!order.includes(key)||byKey.has(key))throw Error('NATIVE_IDENTITY_TARGET_MISMATCH');
+    // v1 has no untyped fallback: a missing asset_kind must never disguise
+    // a character or pose target as an empty-cast background.
+    if(!row.asset_kind)throw Error('NATIVE_IDENTITY_ASSET_KIND_REQUIRED');
+    if((row.asset_kind==='character'||row.asset_kind==='pose')&&
+      row.character_ids.length===0)
+      throw Error('NATIVE_IDENTITY_CHARACTER_CAST_REQUIRED');
     for(const char of row.character_ids){if(!knownIds.has(char))throw Error('NATIVE_IDENTITY_UNKNOWN_CHARACTER');}
     byKey.set(key,row);
   }
