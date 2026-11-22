@@ -1,7 +1,7 @@
 /** A deterministic derived Style Bible. It MUST NOT author characters itself. */
 import {canonical,contentHash,hash,loadSchema,validateWithSchema,
   type StyleBible,type ScriptAnalysis,type BibleCharacter} from './contracts.js';
-import {validateScriptAnalysis,type ApprovedScriptSnapshot} from './scriptAnalysis.js';
+import {validateScriptAnalysis,verifiedVisualTraits,type ApprovedScriptSnapshot} from './scriptAnalysis.js';
 import type {OwnerVisualDefinition} from './visualDefinitions.js';
 export interface PinnedStyle {
   id:'B1'|'B2'|'B3'|'B4';guidance:string;sha256:string;
@@ -18,14 +18,20 @@ export function compileStyleBible(analysis:ScriptAnalysis,script:ApprovedScriptS
     throw Error('STYLE_BIBLE_STYLE_PIN_INVALID');
   const characters:BibleCharacter[]=analysis.continuity_catalog.characters.map(char=>{
     const inherited=structuredClone(char);
+    // Keep original proposal/evidence in source_definition_hash for invalidation,
+    // but only verified stable traits enter drawable Style Bible authority.
     const source_definition_hash=contentHash({inherited,styleId:pinned.id,styleSha:pinned.sha256});
+    inherited.explicit_visual_traits=verifiedVisualTraits(char);
+    // Do not copy unverified or transient evidence as approved visual authority.
+    inherited.visual_trait_evidence=(char.visual_trait_evidence??[]).filter(row=>
+      inherited.explicit_visual_traits.includes(row.trait));
     // Merely naming a character is NOT a source-grounded appearance.
     // Require some visual/physical evidence before asking a generator to draw
     // an individual. Underspecified actors may instead use a real owner image.
     // Alias, name and generic presence are narrative identity, NOT appearance.
     // Physical action constraints alone also cannot establish how someone looks.
     return{...inherited,source_definition_hash,
-      visual_readiness:char.explicit_visual_traits.length?
+      visual_readiness:inherited.explicit_visual_traits.length?
         'READY_FOR_REFERENCE' as const:'NEEDS_OWNER_DEFINITION' as const};
   });
   const base={schema:'stickman-project-style-bible-v1' as const,
