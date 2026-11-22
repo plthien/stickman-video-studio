@@ -251,13 +251,18 @@ const mediaRelative=(root:string,relative:string,kind:'image'|'sfx')=>{
     ? /\.(png|jpe?g)$/i.test(relative) && ((header[0]===0x89&&header.toString('ascii',1,4)==='PNG')||(header[0]===0xff&&header[1]===0xd8&&header[2]===0xff))
     : /\.(wav|mp3|m4a|aac|ogg|flac)$/i.test(relative) && (['RIFF','ID3','fLaC','OggS'].includes(header.toString('ascii',0,4))||(header[0]===0xff&&(header[1]&0xe0)===0xe0));
 };
+/** Studio-managed images are exact paid/imported media. Native Core @b1/
+ * assets are built-ins and remain renderable, but require no G-Labs approval. */
+export function isManagedNativeImagePath(path:unknown):path is string{
+  return typeof path==='string'&&!path.startsWith('@b1/');
+}
 function nativeRefs(manifest:Record<string,unknown>):MissingNativeReference[]{
   const refs:MissingNativeReference[]=[];
   const shots=manifest.shots as Array<Record<string,unknown>>;
   const visit=(layers:unknown[],shot:Record<string,unknown>,index:number,parentFrom=0)=>{
     for(const layerValue of layers){
       const layer=layerValue as Record<string,unknown>;
-      if(layer?.type==='image'&&typeof layer.path==='string'&&!layer.path.startsWith('@b1/')){
+      if(layer?.type==='image'&&isManagedNativeImagePath(layer.path)){
         const shotId=typeof shot.id==='string'?shot.id:undefined,layerId=typeof layer.id==='string'?layer.id:undefined;
         refs.push({key:'image:'+index+':'+String(layerId??''),kind:'image',path:layer.path,shotId,shotIndex:index,layerId,scopeStart:Number(shot.start)+Math.max(parentFrom,Number(layer.from??0))});
       }
@@ -653,7 +658,7 @@ export function getNativeImageGallery(_appPath:string,root:string){
       for(const node of layers){
         if(!node||typeof node!=='object'||Array.isArray(node))continue;
         const layer=node as Record<string,unknown>,layerId=String(layer.id??'');
-        if(layer.type==='image'&&typeof layer.path==='string'&&shotId&&layerId){
+        if(layer.type==='image'&&isManagedNativeImagePath(layer.path)&&shotId&&layerId){
           const key='image:'+index+':'+layerId;
           const ref=frozenRefs.find(row=>row.key===key&&row.shotId===shotId&&row.path===layer.path);
           const binding=ref?pending.fulfillments[key]:undefined;
