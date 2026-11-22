@@ -1,8 +1,8 @@
 // @vitest-environment node
 import {describe,expect,it} from 'vitest';
 import type {NativeImageNeedV2,StyleBible,BibleCharacter} from '../../src/main/identity/contracts';
-import {validateNativeIdentityNeeds,detectPublishedCharacterMentions,
-  assertNativeCastConsistency} from '../../src/main/identity/nativeNeeds';
+import {validateNativeIdentityNeeds,
+  detectPublishedCharacterMentions} from '../../src/main/identity/nativeNeeds';
 
 const character=(id:`char_${string}`,label:string,aliases:string[]=[]):BibleCharacter=>({
   char_id:id,label,entity_kind:'human_character',description:'',
