@@ -296,6 +296,27 @@ describe('F24 Native canonical bytes, billing gate and final source receipt',()=
     expect(()=>importIdentityResult(root,JSON.stringify(wrong),frozen.revision))
       .toThrow('SCRIPT_ANALYSIS_CORRECTION_FINDINGS_INVALID');
   });
+  it('C03-06b pre-upgrade frozen Correct remains importable only with its original candidate/finding SHA',()=>{
+    const {root}=setup();p2Candidate(root);
+    const reviewed=importVerdict(root,'review',false,[finding('P2-OLD')]);
+    freezeIdentityTask(root,'correct',reviewed.revision);
+    const file=path.join(root,'.studio/identity/workflow-v1.json');
+    const legacy=readIdentityWorkflow(root);
+    // Earlier F24 Correct envelopes had the same frozen input_sha256 but
+    // did not yet expose resolved_finding_ids in the external JSON.
+    delete legacy.currentTask!.task.finding_ids;
+    delete legacy.currentTask!.task.review_findings;
+    delete legacy.currentTask!.task.review_sha256;
+    atomicJson(file,legacy);
+    const task=legacy.currentTask!.task;
+    const next=importIdentityResult(root,JSON.stringify({
+      schema:'mode-b-identity-external-result-v1',stage:'script_analysis',
+      project_id:task.project_id,task_id:task.task_id,
+      revision:task.revision,input_sha256:task.input_sha256,
+      payload:legacy.draftAnalysis
+    }),legacy.revision);
+    expect(next.currentTask?.status).toBe('IMPORTED');
+  });
   it('C03-07 stale frozen candidate SHA cannot be corrected',()=>{
     const {root}=setup();p2Candidate(root);
     const reviewed=importVerdict(root,'review',false,[finding('P2-01')]);
