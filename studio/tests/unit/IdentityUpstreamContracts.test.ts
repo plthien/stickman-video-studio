@@ -1,5 +1,6 @@
 import {describe,it,expect} from 'vitest';
 import {hash,contentHash,readAndValidate,loadSchema} from '../../src/main/identity/contracts';
+import type {ScriptCharacter,ScriptAnalysis} from '../../src/main/identity/contracts';
 import {validateScriptAnalysis,freezeAnalysisTask,validateAnalysisEnvelope,
   analysisAuthorContract,analysisReviewContract,
   verifyIndependentReview} from '../../src/main/identity/scriptAnalysis';
@@ -15,14 +16,14 @@ const sections=[{id:'sec_001',text:'Kip has a scar and enters the camp.'},
   {id:'sec_002',text:'Brog follows Kip.'}];
 const script={projectId,sha256:hash(text),authoring,revision:1,sections};
 const second=text.lastIndexOf('Kip');
-const entry=()=>({char_id:'char_001',label:'Kip',description:'',
+const entry=():ScriptCharacter=>({char_id:'char_001',label:'Kip',description:'',
   entity_kind:'human_character' as const,narrative_role:'Character in approved narration',
   explicit_visual_traits:['scar'],identity_markers:['scar'],
   continuity_notes:[],physical_constraints:[],
   occurrences:[{section_id:'sec_001',quote:'Kip',start:0,end:3},
     {section_id:'sec_002',quote:'Kip',start:second,end:second+3}],
   presence_ranges:[{start:0,end:3},{start:second,end:second+3}]});
-const analysis=()=>({schema:'stickman-script-analysis-v1' as const,project_id:projectId,
+const analysis=():ScriptAnalysis=>({schema:'stickman-script-analysis-v1' as const,project_id:projectId,
   source_script_sha256:script.sha256,
   source_authoring_sha256:contentHash(authoring),
   continuity_catalog:{characters:[entry()]}});
