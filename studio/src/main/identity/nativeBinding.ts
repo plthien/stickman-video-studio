@@ -110,7 +110,17 @@ export function validateNativeBindingPayload(root:string,appPath:string,
       path:target.path,characterIds:[...row.character_ids],canonicalAnchors:anchors,
       continuitySource:row.continuity_source??null,
       upstreamSnapshotSha:identity.snapshotSha};
-    return{...base,targetBindingSha:contentHash(base)};
+    // The published SET hash is global; using it for every target would
+    // invalidate unrelated images whenever any other actor is replaced.
+    // Pin only this layer's cast, canonical bytes/rights and installed style.
+    const targetBindingSha=contentHash({
+      targetKey:key,shotId:target.shotId,layerId:target.layerId,
+      path:target.path,assetKind:row.asset_kind,
+      characterIds:base.characterIds,canonicalAnchors:anchors,
+      continuitySource:base.continuitySource,
+      styleProfileSha:identity.styleProfileSha
+    });
+    return{...base,targetBindingSha};
   });
   return{identity,rows,digest:validated.digest!,plans};
 }
