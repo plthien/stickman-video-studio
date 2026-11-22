@@ -36,10 +36,12 @@ export function detectPublishedCharacterMentions(text:string,
     // name/marker. Arbitrary identity_markers like a scar are NOT aliases.
     for(const quote of approvedQuotes){
       const alias=quote.trim();
+      const namedMention=/^\p{Lu}[\p{L}\p{M}'’\-]*(?:\s+\p{Lu}[\p{L}\p{M}'’\-]*){0,3}$/u.test(alias);
       if(alias.length<=64&&/^[\p{L}\p{M}\p{N}'’\- ]+$/u.test(alias)&&
         alias.split(/\s+/u).length<=4&&
-        (alias===actor.label||actor.identity_markers.some(marker=>
-          normalizeMention(marker)===normalizeMention(alias))))
+        (alias===actor.label||namedMention||
+         actor.identity_markers.some(marker=>
+           normalizeMention(marker)===normalizeMention(alias))))
         candidates.push(alias);
     }
     for(const raw of candidates){
