@@ -29,7 +29,7 @@ export function detectPublishedCharacterMentions(text:string,
   const names=new Map<string,Set<string>>();
   const reviewOnly=new Set<string>();
   for(const actor of bible.characters){
-    const candidates=[actor.char_id];
+    const candidates:string[]=[actor.char_id];
     const approvedQuotes=actor.occurrences.map(hit=>hit.quote);
     if(approvedQuotes.some(quote=>occurrenceOf(quote,actor.label)))
       candidates.push(actor.label);
