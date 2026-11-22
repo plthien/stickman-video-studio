@@ -217,6 +217,133 @@ describe('F24 Native canonical bytes, billing gate and final source receipt',()=
         findings,approved}
     }),frozen.revision);
   };
+  const p2Candidate=(root:string)=>{
+    importAnalysis(root,'author',draft=>{
+      draft.continuity_catalog.characters[0].description='New candidate needing independent review';
+    });
+  };
+  const importVerdict=(root:string,operation:'review'|'recheck',
+    approved:boolean,findings:Array<{
+      finding_id:string;severity:'P0'|'P1'|'P2';
+      location:string;issue:string;evidence:string
+    }>)=>{
+    const before=readIdentityWorkflow(root);
+    const taskState=freezeIdentityTask(root,operation,before.revision);
+    const task=taskState.currentTask!.task;
+    return importIdentityResult(root,JSON.stringify({
+      schema:'mode-b-identity-external-result-v1',stage:'script_analysis',
+      project_id:task.project_id,task_id:task.task_id,
+      revision:task.revision,input_sha256:task.input_sha256,
+      payload:{schema:'stickman-analysis-review-v1',project_id:task.project_id,
+        analysis_sha256:contentHash(before.draftAnalysis),independent_review:true,
+        findings,approved}
+    }),taskState.revision);
+  };
+  const finding=(id:string,severity:'P0'|'P1'|'P2'='P2')=>({
+    finding_id:id,severity,location:'char_001',issue:'Review the source identity',
+    evidence:'Exact approved narration evidence requires correction'
+  });
+  it('C03-01 P2-only negative Review authorizes Correct',()=>{
+    const {root}=setup();p2Candidate(root);
+    const reviewed=importVerdict(root,'review',false,[finding('P2-01')]);
+    const correction=freezeIdentityTask(root,'correct',reviewed.revision);
+    expect(correction.currentTask?.task.finding_ids).toEqual(['P2-01']);
+    expect(correction.currentTask?.task.prompt).toContain('P2-01');
+  });
+  it('C03-02 multiple P2 findings remain correctable with exact frozen IDs',()=>{
+    const {root}=setup();p2Candidate(root);
+    const reviewed=importVerdict(root,'review',false,[finding('P2-A'),finding('P2-B')]);
+    expect(freezeIdentityTask(root,'correct',reviewed.revision)
+      .currentTask?.task.finding_ids).toEqual(['P2-A','P2-B']);
+  });
+  it('C03-03 mixed P1 and P2 findings authorize Correct without skipping P2',()=>{
+    const {root}=setup();p2Candidate(root);
+    const reviewed=importVerdict(root,'review',false,[finding('P1-X','P1'),finding('P2-Y')]);
+    expect(freezeIdentityTask(root,'correct',reviewed.revision)
+      .currentTask?.task.finding_ids).toEqual(['P1-X','P2-Y']);
+  });
+  it('C03-04 a clean approved Review permits owner Analysis approval',()=>{
+    const {root}=setup();p2Candidate(root);
+    const reviewed=importVerdict(root,'review',true,[]);
+    const approved=approveScriptAnalysis(root,reviewed.revision);
+    expect(approved.analysisApproved?.sha256)
+      .toBe(contentHash(approved.draftAnalysis));
+  });
+  it('C03-05 rejects negative verdict without any actionable findings',()=>{
+    const {root}=setup();p2Candidate(root);
+    expect(()=>importVerdict(root,'review',false,[]))
+      .toThrow('SCRIPT_ANALYSIS_REVIEW_INVALID');
+  });
+  it('C03-05b rejects contradictory positive Review containing P2',()=>{
+    const {root}=setup();p2Candidate(root);
+    expect(()=>importVerdict(root,'review',true,[finding('P2-01')]))
+      .toThrow('SCRIPT_ANALYSIS_REVIEW_INVALID');
+  });
+  it('C03-06 rejects incorrect resolved_finding_ids before Correct import',()=>{
+    const {root}=setup();p2Candidate(root);
+    const reviewed=importVerdict(root,'review',false,[finding('P2-01')]);
+    const frozen=freezeIdentityTask(root,'correct',reviewed.revision);
+    const task=frozen.currentTask!.task;
+    const before=readIdentityWorkflow(root);
+    const wrong={schema:'mode-b-identity-external-result-v1',
+      stage:'script_analysis',project_id:task.project_id,task_id:task.task_id,
+      revision:task.revision,input_sha256:task.input_sha256,
+      resolved_finding_ids:['WRONG-P2'],
+      payload:before.draftAnalysis};
+    expect(()=>importIdentityResult(root,JSON.stringify(wrong),frozen.revision))
+      .toThrow('SCRIPT_ANALYSIS_CORRECTION_FINDINGS_INVALID');
+  });
+  it('C03-07 stale frozen candidate SHA cannot be corrected',()=>{
+    const {root}=setup();p2Candidate(root);
+    const reviewed=importVerdict(root,'review',false,[finding('P2-01')]);
+    freezeIdentityTask(root,'correct',reviewed.revision);
+    const file=path.join(root,'.studio/identity/workflow-v1.json');
+    const changed=readIdentityWorkflow(root);
+    changed.currentTask!.frozenArtifactSha='0'.repeat(64);
+    atomicJson(file,changed);
+    const task=changed.currentTask!.task;
+    expect(()=>importIdentityResult(root,JSON.stringify({
+      schema:'mode-b-identity-external-result-v1',stage:'script_analysis',
+      project_id:task.project_id,task_id:task.task_id,
+      revision:task.revision,input_sha256:task.input_sha256,
+      resolved_finding_ids:task.finding_ids,payload:changed.draftAnalysis
+    }),changed.revision)).toThrow('SCRIPT_ANALYSIS_FROZEN_CANDIDATE_STALE');
+  });
+  it('C03-08/09 negative P2 Review → Correct → Recheck retains prior published references',()=>{
+    const {root,set}=setup(),publishedSha=readApprovedNativeIdentity(root,appPath).snapshotSha;
+    p2Candidate(root);
+    importVerdict(root,'review',false,[finding('P2-01')]);
+    importAnalysis(root,'correct',draft=>{
+      draft.continuity_catalog.characters[0].description='P2 corrected under frozen task';
+    });
+    expect(()=>approveScriptAnalysis(root,readIdentityWorkflow(root).revision))
+      .toThrow('SCRIPT_ANALYSIS_RECHECK_OR_REVIEW_REQUIRED');
+    const before=readIdentityWorkflow(root);
+    const recheck=freezeIdentityTask(root,'recheck',before.revision);
+    expect(recheck.currentTask?.task.prompt).toContain('P2-01');
+    const task=recheck.currentTask!.task;
+    importIdentityResult(root,JSON.stringify({
+      schema:'mode-b-identity-external-result-v1',stage:'script_analysis',
+      project_id:task.project_id,task_id:task.task_id,
+      revision:task.revision,input_sha256:task.input_sha256,
+      payload:{schema:'stickman-analysis-review-v1',project_id:task.project_id,
+        analysis_sha256:contentHash(before.draftAnalysis),independent_review:true,
+        findings:[finding('P2-01')],approved:false}
+    }),recheck.revision);
+    expect(readApprovedNativeIdentity(root,appPath).snapshotSha).toBe(publishedSha);
+    expect(readIdentityWorkflow(root).publishedAuthority?.referenceApprovalSet
+      .approval_set_sha256).toBe(set.approval_set_sha256);
+  });
+  it('C03-08b successful independent Recheck of a corrected P2 permits approval',()=>{
+    const {root}=setup();p2Candidate(root);
+    importVerdict(root,'review',false,[finding('P2-A')]);
+    importAnalysis(root,'correct',draft=>{
+      draft.continuity_catalog.characters[0].description='P2 properly corrected';
+    });
+    const checked=importVerdict(root,'recheck',true,[]);
+    expect(approveScriptAnalysis(root,checked.revision).analysisApproved)
+      .not.toBeNull();
+  });
   it('A01-01/02/03/04/07/09 candidate Author, negative Review, Correct and failed Recheck preserve published A after restart',()=>{
     const {root,set}=setup();
     const initial=readApprovedNativeIdentity(root,appPath).snapshotSha;
