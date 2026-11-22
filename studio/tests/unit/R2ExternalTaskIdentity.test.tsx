@@ -70,6 +70,31 @@ describe('R2 explicit external reservation identity',()=>{
     expect(harness.stageLifecycle).not.toHaveBeenCalled();
     expect(screen.queryByRole('button',{name:/Confirm reviewed import/})).not.toBeInTheDocument();
   });
+  it('B03-03 commits onload and onloadend exactly once without a second import',async()=>{
+    const payload='{"ordinary":true}';
+    class BothEventsReader {
+      result:string|null=null;
+      onload:(()=>void)|null=null;
+      onloadend:(()=>void)|null=null;
+      onerror:(()=>void)|null=null;
+      readAsText(){
+        this.result=payload;
+        this.onload?.();
+        this.onloadend?.();
+      }
+    }
+    vi.stubGlobal('FileReader',BothEventsReader);
+    showCorrect();
+    fireEvent.change(screen.getByLabelText('Choose JSON file'),{
+      target:{files:[new File([payload],'ordinary.json',{type:'application/json'})]}
+    });
+    await waitFor(()=>expect(screen.getByRole('textbox',{name:'Import JSON'}))
+      .toHaveValue(payload));
+    expect(harness.messages).toHaveBeenCalledTimes(1);
+    expect(harness.stageImport).not.toHaveBeenCalled();
+    expect(harness.stageLifecycle).not.toHaveBeenCalled();
+    expect(screen.getByRole('button',{name:'Validate import'})).toBeDisabled();
+  });
   it('accepts a one-shot loadend-only JSON read without staging or confirming',async()=>{
     const response=JSON.stringify({schema:'mode-b-external-result-v1',payload:{sections:[]}},null,2);
     class LoadEndOnlyReader {
