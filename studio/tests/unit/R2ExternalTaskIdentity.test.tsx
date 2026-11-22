@@ -88,11 +88,21 @@ describe('R2 explicit external reservation identity',()=>{
     vi.stubGlobal('FileReader',DeferredReader);
     showCorrect();
     const picker=screen.getByLabelText('Choose JSON file') as HTMLInputElement;
+    const nativeValue=Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,'value')!;
+    const clears:string[]=[];
+    Object.defineProperty(picker,'value',{configurable:true,
+      get:()=>nativeValue.get!.call(picker) as string,
+      set:(value:string)=>{
+        clears.push(value);
+        nativeValue.set!.call(picker,value);
+      }
+    });
     fireEvent.change(picker,{target:{files:[selected]}});
     expect(deferred.current).not.toBeNull();
-    // Clearing input.value synchronously in onChange can invalidate reads in
-    // Electron/JSDOM bridges before the asynchronous FileReader consumes it.
-    expect(picker.files?.[0]).toBe(selected);
+    // The selected File must remain available until the asynchronous read.
+    // A synchronous input.value='' here is the regression being guarded.
+    expect(clears).toEqual([]);
     act(()=>{
       const reader=deferred.current;
       if(reader){
@@ -103,7 +113,7 @@ describe('R2 explicit external reservation identity',()=>{
     });
     await waitFor(()=>expect(screen.getByRole('textbox',{name:'Import JSON'}))
       .toHaveValue(response));
-    expect(picker.files?.length).toBe(0);
+    expect(clears).toEqual(['']);
     expect(harness.stageImport).not.toHaveBeenCalled();
     expect(harness.stageLifecycle).not.toHaveBeenCalled();
   });
