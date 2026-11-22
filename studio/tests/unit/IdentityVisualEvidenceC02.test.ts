@@ -89,6 +89,8 @@ describe('F24-C02 permanent visual traits require exact actor/span/relationship'
     const text='Kip has a scar. Kip picks up a red hat.';
     const f=fixture(text,'scar','intrinsic_appearance');
     const second=f.analysis.continuity_catalog.characters[0];
+    second.visual_trait_evidence![0].source={section_id:'opening',
+      quote:'Kip has a scar',start:0,end:14};
     second.explicit_visual_traits.push('red hat');
     // A legacy analyzer may repeat an action as a proposed trait without
     // evidence. It is inspectable but never becomes drawable authority.
