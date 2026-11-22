@@ -166,9 +166,15 @@ export function validateScriptAnalysis(raw:unknown,script:ApprovedScriptSnapshot
         !folded.includes(marker.trim().toLocaleLowerCase('en')))
         throw Error('SCRIPT_ANALYSIS_IDENTITY_MARKER_NOT_IN_SOURCE: '+char.char_id);
     }
-    for(const trait of [...char.explicit_visual_traits,...char.physical_constraints]){
+    for(const trait of char.explicit_visual_traits){
       if(typeof trait!=='string'||!trait.trim()||
-        !attributedTo(char.char_id,trait))
+        (!char.visual_trait_evidence?.some(v=>v.trait===trait)&&
+          !attributedTo(char.char_id,trait)))
+        throw Error('SCRIPT_ANALYSIS_UNSUPPORTED_VISUAL_TRAIT: '+char.char_id);
+    }
+    for(const constraint of char.physical_constraints){
+      if(typeof constraint!=='string'||!constraint.trim()||
+        !attributedTo(char.char_id,constraint))
         throw Error('SCRIPT_ANALYSIS_UNSUPPORTED_VISUAL_TRAIT: '+char.char_id);
     }
     const supplied=char.visual_trait_evidence??[];
