@@ -86,6 +86,10 @@ export function readIdentityWorkflow(root:string):IdentityWorkflowStore{
        new Set(data.ownerVisualDefinitions.map(v=>v.charId)).size!==
          data.ownerVisualDefinitions.length)))
     throw Error('IDENTITY_WORKFLOW_CORRUPT');
+  if(data.draftAnalysis&&data.draftSha256!==contentHash(data.draftAnalysis))
+    throw Error('IDENTITY_DRAFT_ANALYSIS_TAMPERED');
+  if(!data.draftAnalysis&&data.draftSha256!==null)
+    throw Error('IDENTITY_DRAFT_ANALYSIS_TAMPERED');
   for(const priorSet of data.referenceApprovalHistory??[]){
     if(!priorSet||priorSet.schema!=='stickman-reference-approval-set-v1')
       throw Error('IDENTITY_REFERENCE_HISTORY_CORRUPT');
