@@ -211,7 +211,7 @@ describe('F24 upstream source-grounded contract gates',()=>{
     ]);
     const duplicated=structuredClone(manifest);
     duplicated.shots[0].layers.push({id:'managed1',type:'image',
-      path:'assets/images/duplicate.png'} as typeof duplicated.shots[0].layers[number]);
+      path:'assets/images/duplicate.png'});
     expect(()=>nativeImageTargetsFromManifest(duplicated))
       .toThrow('NATIVE_DUPLICATE_IMAGE_LAYER_ID');
   });
