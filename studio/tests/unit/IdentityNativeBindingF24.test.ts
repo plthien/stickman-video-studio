@@ -238,6 +238,18 @@ describe('F24 Native canonical bytes, billing gate and final source receipt',()=
     expect(prepareNativeImages(appPath,root).jobs.every(job=>job.state==='READY'))
       .toBe(true);
   });
+  it('A01-08 tampered pending Analysis SHA is rejected on reopen while published bytes remain untouched',()=>{
+    const {root}=setup();
+    importAnalysis(root,'author',draft=>{
+      draft.continuity_catalog.characters[0].description='Candidate B not approved';
+    });
+    const file=path.join(root,'.studio/identity/workflow-v1.json');
+    const pending=readIdentityWorkflow(root);
+    pending.draftSha256='0'.repeat(64);
+    atomicJson(file,pending);
+    expect(()=>readIdentityWorkflow(root))
+      .toThrow('IDENTITY_DRAFT_ANALYSIS_TAMPERED');
+  });
   it('A01-05/08/10 owner activation of reviewed B is atomic, old published A survives until Publish and tamper fails closed',()=>{
     const {root,ref,set}=setup();
     const baseline=readApprovedNativeIdentity(root,appPath);
