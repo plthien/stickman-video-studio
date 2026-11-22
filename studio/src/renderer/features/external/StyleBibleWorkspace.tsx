@@ -45,7 +45,7 @@ export function StyleBibleWorkspace(){
   const epoch=useRef(0);
   useEffect(()=>{
     const current=++epoch.current;setSnapshot(null);setJobs([]);
-    setLoaded(new Set());setImpact(null);setError('');
+    setLoaded(new Set());setChosen({});setImpact(null);setError('');
     if(!projectId||!window.studio?.identitySnapshot)return;
     void Promise.all([window.studio.identitySnapshot(projectId),
       window.studio.identityReferenceJobs(projectId)]).then(([value,nextJobs])=>{
@@ -75,10 +75,29 @@ export function StyleBibleWorkspace(){
   const bible=journal.bible;
   const approved=Boolean(bible&&
     journal.bibleTextApproved?.sha256===bible.style_bible_sha256);
+  // Current published authority wins over "last approved" candidate.
+  // An explicit per-project owner choice wins only while it remains eligible.
+  const publishedSet=journal.publishedAuthority?.referenceApprovalSet??
+    journal.referenceApprovalSet;
+  const available=(charId:string,sourceHash:string)=>journal.referenceCandidates.filter(c=>
+    c.anchor_id===charId&&c.source_definition_hash===sourceHash&&
+    c.status==='APPROVED');
+  const candidateFor=(charId:string,sourceHash:string)=>{
+    const approved=available(charId,sourceHash);
+    const explicit=chosen[charId];
+    if(explicit&&approved.some(c=>c.candidate_id===explicit))return explicit;
+    const publishedId=publishedSet?.entries.find(e=>e.anchor_id===charId)?.candidate_id;
+    if(publishedId)return approved.some(c=>c.candidate_id===publishedId)?
+      publishedId:'';
+    return approved.at(-1)?.candidate_id??'';
+  };
   const selectedIds=bible?.characters.map(char=>
-    chosen[char.char_id]??[...journal.referenceCandidates].reverse().find(c=>
-      c.anchor_id===char.char_id&&c.status==='APPROVED')?.candidate_id??'')??[];
-  const selectionsReady=selectedIds.every(Boolean);
+    candidateFor(char.char_id,char.source_definition_hash))??[];
+  const selectionsReady=selectedIds.length===(bible?.characters.length??0)&&
+    selectedIds.every(Boolean);
+  const impactCurrent=Boolean(impact&&impact.revision===journal.revision&&
+    JSON.stringify(impact.selectedIds)===JSON.stringify(selectedIds)&&
+    impact.projectId===projectId);
   return <div className="stack" data-testid="f24-style-bible">
     <section className="card">
       <h3>Project Style Bible · approved Script Analysis lineage</h3>
@@ -242,8 +261,8 @@ export function StyleBibleWorkspace(){
               }))}>I inspected the current reference image · Approve</button>}
             {candidate.status==='APPROVED'&&<label>
               <input type="radio" name={'identity-reference-'+character.char_id}
-                checked={(chosen[character.char_id]??[...candidates].reverse().find(c=>
-                  c.status==='APPROVED')?.candidate_id)===candidate.candidate_id}
+                checked={candidateFor(character.char_id,
+                  character.source_definition_hash)===candidate.candidate_id}
                 onChange={()=>{setChosen(old=>({...old,
                   [character.char_id]:candidate.candidate_id}));setImpact(null);}}/>
               Select as canonical {character.char_id}
@@ -256,7 +275,7 @@ export function StyleBibleWorkspace(){
       <h3>Publish owner-approved Reference Set</h3>
       <p>Only candidates with verified bytes, current source definitions and explicit
         owner approvals are eligible. Existing G-Labs/Native assets are never auto-approved.</p>
-      {journal.referenceApprovalSet&&<button className="button" type="button"
+      {publishedSet&&<button className="button" type="button"
         disabled={busy||!selectionsReady}
         onClick={()=>{const token=epoch.current;setError('');
           void window.studio!.identityPreviewReferenceImpact(projectId,selectedIds)
@@ -272,9 +291,9 @@ export function StyleBibleWorkspace(){
         <small>Impact digest {impact.impactSha256}</small>
       </div>}
       <button className="button primary" type="button" disabled={busy||
-        !selectionsReady||(Boolean(journal.referenceApprovalSet)&&!impact)}
+        !selectionsReady||(Boolean(publishedSet)&&!impactCurrent)}
         onClick={()=>action((id,revision)=>window.studio!.identityPublishReferences(id,
-          revision,selectedIds,impact?.impactSha256))}>
+          revision,selectedIds,impactCurrent?impact!.impactSha256:undefined))}>
         Publish approved canonical Reference Set
       </button>
       {journal.referenceApprovalSet&&<p>Published SHA:
