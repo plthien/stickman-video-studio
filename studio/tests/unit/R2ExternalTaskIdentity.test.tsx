@@ -71,6 +71,42 @@ describe('R2 explicit external reservation identity',()=>{
     expect(harness.stageLifecycle).not.toHaveBeenCalled();
     expect(screen.queryByRole('button',{name:/Confirm reviewed import/})).not.toBeInTheDocument();
   });
+  it('B03-09 keeps the selected File alive through async read and clears picker only after completion',async()=>{
+    const response='{"realAsyncFile":true}';
+    const selected=new File([response],'async.json',{type:'application/json'});
+    const deferred:{current:DeferredReader|null}={current:null};
+    class DeferredReader {
+      result:string|null=null;
+      onload:(()=>void)|null=null;
+      onloadend:(()=>void)|null=null;
+      onerror:(()=>void)|null=null;
+      readAsText(file:File){
+        expect(file).toBe(selected);
+        deferred.current=this;
+      }
+    }
+    vi.stubGlobal('FileReader',DeferredReader);
+    showCorrect();
+    const picker=screen.getByLabelText('Choose JSON file') as HTMLInputElement;
+    fireEvent.change(picker,{target:{files:[selected]}});
+    expect(deferred.current).not.toBeNull();
+    // Clearing input.value synchronously in onChange can invalidate reads in
+    // Electron/JSDOM bridges before the asynchronous FileReader consumes it.
+    expect(picker.files?.[0]).toBe(selected);
+    act(()=>{
+      const reader=deferred.current;
+      if(reader){
+        reader.result=response;
+        reader.onload?.();
+        reader.onloadend?.();
+      }
+    });
+    await waitFor(()=>expect(screen.getByRole('textbox',{name:'Import JSON'}))
+      .toHaveValue(response));
+    expect(picker.files?.length).toBe(0);
+    expect(harness.stageImport).not.toHaveBeenCalled();
+    expect(harness.stageLifecycle).not.toHaveBeenCalled();
+  });
   it('B03-03 commits onload and onloadend exactly once without a second import',async()=>{
     const payload='{"ordinary":true}';
     class BothEventsReader {
