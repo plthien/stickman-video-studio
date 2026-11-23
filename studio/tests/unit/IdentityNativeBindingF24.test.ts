@@ -625,7 +625,7 @@ describe('F24 Native canonical bytes, billing gate and final source receipt',()=
       .toHaveLength(0);
   });
   it('AUD02-07/08 owner-edited image introduces an unbound visible woman: zero paid POST',async()=>{
-    const {root}=setup(),auth=account(),mock=fakeProvider();
+    const {root,ref}=setup(),auth=account(),mock=fakeProvider();
     const first=prepareNativeImages(appPath,root).jobs.find(job=>job.layerId==='image-1')!;
     expect(first.state).toBe('READY');
     const updated=saveNativeImagePrompt(appPath,root,{
@@ -637,6 +637,9 @@ describe('F24 Native canonical bytes, billing gate and final source receipt',()=
     const edited=updated.jobs.find(job=>job.layerId==='image-1')!;
     expect(edited.state).toBe('BLOCKED');
     expect(edited.reason).toContain('NATIVE_IDENTITY_CAST_REVIEW_REQUIRED');
+    expect(edited.reason).toContain('Native Review/Correct');
+    expect(edited.identityRequiredReferences).toContain(ref.path);
+    expect(edited.references).toContain(ref.path);
     await expect(submitGlabsImage(appPath,root,auth,cipher,{
       targetKey:edited.targetKey,prompt:edited.prompt,
       model:'nano_banana_2',aspectRatio:'9:16',references:edited.references,

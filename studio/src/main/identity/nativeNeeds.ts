@@ -68,7 +68,7 @@ function assertNoUnboundVisibleSubjects(text:string,mentions:CharacterMention[])
     // A negative or object label immediately following a subject noun
     // still cannot be reinterpreted as an additional drawable character.
     if(/^(?:\s+(?:toy|statue|figure|drawing|picture)\b)/u.test(after))continue;
-    throw Error('NATIVE_IDENTITY_CAST_REVIEW_REQUIRED: unidentified on-screen subject');
+    throw Error('NATIVE_IDENTITY_CAST_REVIEW_REQUIRED: unidentified on-screen subject; resolve via Native Review/Correct');
   }
 }
 export function detectPublishedCharacterMentions(text:string,
