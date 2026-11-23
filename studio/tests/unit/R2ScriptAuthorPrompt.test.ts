@@ -118,7 +118,10 @@ describe('R2 focused source-exact Script Author handoff',()=>{
       schema:'mode-b-external-result-v1',project_id:readState(root).project.id,
       task_id:task.id,revision:task.revision,input_sha256:task.inputSha256,stage:'script'
     });
-    expect(validateScript(example.payload).sections.map(s=>s.id)).toEqual(['opening','resolution']);
+    // The frozen envelope intentionally contains a non-importable structural shell.
+    // It must not silently become sample narration or a valid Script candidate.
+    expect(example.payload).toEqual({schema:'mode-b-script-v1',sections:[],authoring:{}});
+    expect(()=>validateScript(example.payload)).toThrow('Invalid script payload.');
     expect(sha(task.prompt)).toBe(task.promptSha256);
     expect(sha(fs.readFileSync(path.join(root,task.promptPath)))).toBe(task.promptSha256);
     expect(task.inputSha256).toBe(sourceFingerprint(appPath,root,'script'));
