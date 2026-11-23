@@ -160,6 +160,12 @@ describe('F24-C02 permanent visual traits require exact actor/span/relationship'
     expect(()=>validateScriptAnalysis(f.analysis,f.script))
       .toThrow('SCRIPT_ANALYSIS_VISUAL_RELATION_REVIEW_REQUIRED: char_001');
   });
+  it('AUD01-01d unnamed second subject has an independent predicate',()=>{
+    const f=fixture('Character A has a scar and another woman has blue eyes.',
+      'blue eyes','intrinsic_appearance','Character A');
+    expect(()=>validateScriptAnalysis(f.analysis,f.script))
+      .toThrow('SCRIPT_ANALYSIS_VISUAL_RELATION_REVIEW_REQUIRED: char_001');
+  });
   it('AUD01-01b same sentence, another character predicate cuts the claim',()=>{
     const f=pairFixture('Character A has a scar and Character B has blue eyes.',
       'char_001','blue eyes','intrinsic_appearance');

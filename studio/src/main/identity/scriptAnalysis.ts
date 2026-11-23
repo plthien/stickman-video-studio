@@ -85,7 +85,7 @@ function directlyAttributedAppearance(evidence:VisualTraitEvidence,
     // A second named/pronominal subject with its own finite appearance
     // predicate also ends attribution, even if upstream omitted that actor
     // from its catalog. This is a fail-closed boundary, not name inference.
-    const newSubject=tail.search(/(?:[,;]\s*|\b(?:and|but|while|whereas)\s+)(?:[\p{Lu}][\p{L}\p{M}'’-]*(?:\s+[\p{Lu}\p{N}][\p{L}\p{M}\p{N}'’-]*){0,2}|(?:he|she|they|another|someone|somebody))\s+(?:has|have|is|was|wears?|looks?|seems?)\b/u);
+    const newSubject=tail.search(/(?:[,;]\s*|\b(?:and|but|while|whereas)\s+)(?:[\p{Lu}][\p{L}\p{M}'’-]*(?:\s+[\p{Lu}\p{N}][\p{L}\p{M}\p{N}'’-]*){0,2}|(?:he|she|they|someone|somebody|(?:another|a|an|the)\s+[\p{Ll}][\p{L}\p{M}'’-]*))\s+(?:has|have|is|was|wears?|looks?|seems?)\b/u);
     const nextOther=mentions.filter(m=>m.charId!==char.char_id&&
       m.start>=actor.end&&m.start<hit.end)
       .reduce((first,m)=>Math.min(first,m.start-hit.start),hit.quote.length);
