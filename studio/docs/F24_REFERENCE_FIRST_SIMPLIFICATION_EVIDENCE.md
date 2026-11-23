@@ -10,14 +10,14 @@ Scope: STICKMAN_PR4_REFERENCE_FIRST_SIMPLIFICATION_REPAIR_PLAN.md
 - Removed active `EntityKind`/`entity_kind` from TS contracts, Script Analysis and Style Bible schemas, frozen Author prompt, Style Bible runtime, UI and Native Author projection.
 - Active schemas are strict with `additionalProperties:false`: retired `entity_kind` is rejected, not optional.
 - Canonical new generation defaults to square 1:1 four-view 2×2, with anatomy-neutral camera directions and no automatic new features.
-- Group overview remains a *single square 1:1 image* explicitly chosen per reference-generation request, not an actor taxonomy or persistent character property.
-- New jobs pin `referenceFormat`, frozen prompt and prompt SHA before the one owner-triggered paid POST. Invalid output format fails before provider interaction.
+- As of the subsequent RFG repair, all **new** reference requests use one 1:1 square four-view prompt per char_id; no individual/group selector remains. Former group-overview prompts are available only to validate immutable historical jobs.
+- New jobs pin only the canonical four-view prompt and SHA. Retired `referenceFormat` exists exclusively in stored historical-job reads. Runtime IPC validates an allowlist and rejects any unknown option before provider probing or paid POST.
 - Historical v1 character kind is recognized ONLY by the read-only legacy storage adapter; archived Style Bible hashes and old 2×2/group prompt bytes are recomputed in memory for verification and never rewritten.
 - Published Native authority validates the original archived snapshots and preserves `char_id`, canonical media, rights, approval set, source hashes, and exact target-binding behavior. Its active projection strips retired storage-only metadata while retaining the original historical authority snapshot SHA.
 - A historical paid reference job can reconcile its original source even during newer candidate review. A simulated frozen UNKNOWN group job checks GET-only sync and byte-exact prompt/SHA, without auto-approval. No implicit job replay, retroactive publication or paid retry.
 - Native `asset_kind`, continuous shot/target binding, source evidence and square owner-import/decoder gates are unchanged.
 
-## EK regression matrix
+## Historical EK regression matrix (original plan; supplemented by RFG gates)
 
 | IDs | Tests or code paths | Execution |
 |---|---|---|
@@ -39,7 +39,7 @@ cd studio
 npm ci
 npm run typecheck
 npm run lint
-npx vitest run tests/unit/IdentityReferenceFirstEK.test.ts tests/unit/IdentityReferenceGenerationF24.test.ts tests/unit/IdentityUpstreamContracts.test.ts tests/unit/IdentityNativeBindingF24.test.ts tests/unit/IdentityCastConsistencyC01.test.ts tests/unit/IdentityVisualEvidenceC02.test.ts
+npx vitest run tests/unit/IdentityReferenceSingleWorkflowRFG.test.ts tests/unit/IdentityReferenceFirstEK.test.ts tests/unit/IdentityReferenceGenerationF24.test.ts tests/unit/IdentityUpstreamContracts.test.ts tests/unit/IdentityNativeBindingF24.test.ts tests/unit/IdentityCastConsistencyC01.test.ts tests/unit/IdentityVisualEvidenceC02.test.ts
 npm test
 npm run build
 npm run test:ui
