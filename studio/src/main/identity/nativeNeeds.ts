@@ -61,8 +61,8 @@ function assertNoUnboundVisibleSubjects(text:string,mentions:CharacterMention[])
        /\b(?:photo|picture|drawing|poster|toy|statue)\s+(?:of|showing|depicting|with)\s+(?:(?:a|an|the)\s+)?$/u.test(before)||
        /\b(?:word|text|label)\s+["'“‘]?$/u.test(before))
       continue;
-    // "Kip is a man" describes the already-established subject rather
-    // than introducing another actor. Do not erase unresolved co-presence.
+    // An explicit copula referring to an already-matched actor describes
+    // that actor rather than introducing another visible identity.
     if(/\b(?:is|was)\s+an?\s+$/u.test(before)&&
       mentions.some(m=>m.end<=at&&at-m.end<=14))continue;
     // A negative or object label immediately following a subject noun
