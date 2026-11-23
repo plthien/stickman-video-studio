@@ -214,7 +214,8 @@ export function compileImageJobSpecs(input:{
     // even when Native asset_needs contains no global rows.
     const authoritativeStyle='APPROVED MODE B STYLE '+style+' ['+
       profile.path+'; SHA256 '+profile.sha256+']\n\n'+profile.guidance;
-    const ownerCastText=validOwner?ownerText.replace(authoritativeStyle,'').trim():'';
+    const ownerCastText=validOwner?
+      ownerText.replace(/\r\n/g,'\n').replace(authoritativeStyle,'').trim():'';
     // Keep the owner-edited description as the editable field. Compile the
     // provider payload separately: owner text cannot delete style authority.
     // Both hashes are retained so the submitted provider prompt is auditable.
