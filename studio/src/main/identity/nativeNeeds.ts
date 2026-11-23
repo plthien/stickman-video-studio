@@ -37,6 +37,10 @@ function likelyNounModifier(source:string,start:number,end:number,name:string){
   // A finite predicate such as "stands", "is", "has" or an adverb
   // after the name is not a demonstrable noun-modifier construction.
   const first=phrase[1];
+  // Conjunctions, prepositions and modal predicates link an actual actor to
+  // an action/other actor; they are not adjective+noun quantity phrases.
+  if(/^(?:and|or|with|beside|near|next|at|in|on|under|over|to|from|without|is|was|has|have|will|can|may|must|should|would|could|might|shall)$/u.test(first))
+    return false;
   return !/(?:s|ed|ing|ly)$/u.test(first);
 }
 const genericVisibleNoun=/\b(?:person|people|woman|man|boy|girl|child|children|caveman|human|humans|stickman|stickmen|actor|crowd|animal|robot|creature)\b/gu;
@@ -46,7 +50,7 @@ const genericVisibleNoun=/\b(?:person|people|woman|man|boy|girl|child|children|c
 function assertNoUnboundVisibleSubjects(text:string,mentions:CharacterMention[]){
   const words=normalizeMention(text);
   for(const found of words.matchAll(genericVisibleNoun)){
-    const at=found.index,word=found[0],before=words.slice(Math.max(0,at-72),at);
+    const at=found.index??0,word=found[0],before=words.slice(Math.max(0,at-72),at);
     const after=words.slice(at+word.length,at+word.length+32);
     if(mentions.some(m=>m.start<=at&&m.end>=at+word.length))continue;
     // Explicitly absent subjects, quoted narration and words on signage

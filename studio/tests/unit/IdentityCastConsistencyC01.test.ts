@@ -153,6 +153,10 @@ describe('F24-C01 source-grounded cast consistency and ambiguous alias gates',()
     expect(()=>check(need('Kip stands beside an unidentified robot.',
       'character',['char_001']))).toThrow('NATIVE_IDENTITY_CAST_REVIEW_REQUIRED');
   });
+  it('AUD02-03b conjunction cannot hide a first actor missing from the cast',()=>{
+    expect(()=>check(need('Kip and Mara stand together.',
+      'character',['char_002']))).toThrow('NATIVE_IDENTITY_CHARACTER_CAST_MISSING: char_001');
+  });
   it('AUD02-02/03 two approved actors pass, but a missing canonical cast ID fails',()=>{
     expect(check(need('Kip and Mara stand in the scene.',
       'character',['char_001','char_002'])).status).toBe('READY');
