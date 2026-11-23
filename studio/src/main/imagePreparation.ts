@@ -266,9 +266,14 @@ function findExactLayer(layers:unknown[],layerId:string,pathValue:string):boolea
 function withUpstreamIdentity(appPath:string,root:string,item:ImageJobSpec,
   preverified?:ReturnType<typeof createContinuityResolver>):ImageJobSpec{
   if(!preverified&&readState(root).identityPolicy!=='v1')return item;
+  let pinnedCanonicalPaths:string[]=[],pinnedCharacterIds:string[]=[];
   try{
     const resolver=preverified??createContinuityResolver(appPath,root);
     const binding=resolver.getBinding(item.targetKey);
+    // Preserve immutable approved reference evidence even if an owner/source
+    // cast discrepancy makes this target BLOCKED. No partial paid request.
+    pinnedCanonicalPaths=binding.canonicalAnchors.map(anchor=>anchor.path);
+    pinnedCharacterIds=[...binding.characterIds];
     // Verify each provider-bound creative source, including the owner override.
     // The separately pinned B1–B4 style language and compiler metadata
     // are not subject depictions; scanning them would falsely cast common
@@ -341,8 +346,11 @@ function withUpstreamIdentity(appPath:string,root:string,item:ImageJobSpec,
       effectivePrompt,effectivePromptSha256:effectivePrompt?sha(effectivePrompt):''};
   }catch(error){
     const reason=error instanceof Error?error.message:'IDENTITY_REFERENCE_UNVERIFIED';
-    return{...item,state:'BLOCKED',reason,identityRequiredReferences:[],
-      identityCharacterIds:[],identityOwnerReferences:[...item.references],
+    return{...item,state:'BLOCKED',reason,
+      references:[...new Set([...pinnedCanonicalPaths,...item.references])],
+      identityRequiredReferences:pinnedCanonicalPaths,
+      identityCharacterIds:pinnedCharacterIds,
+      identityOwnerReferences:[...item.references],
       effectivePrompt:'',effectivePromptSha256:''};
   }
 }
