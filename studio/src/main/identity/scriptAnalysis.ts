@@ -61,9 +61,48 @@ const quoteContainsTrait=(quote:string,trait:string)=>{
   for(const word of source)if(word===parts[offset])offset++;
   return offset===parts.length;
 };
+type ScriptActorMention={charId:string;start:number;end:number};
+/** Only a *single source clause* after the actor may authorize an automatic
+ * visual trait. Other actor mentions and independent sentences end the window;
+ * neither a long quote nor verbs from a later actor can attribute that trait.
+ * Ambiguous syntax remains inspectable as requires_owner_review. */
+function directlyAttributedAppearance(evidence:VisualTraitEvidence,
+  char:ScriptCharacter,mentions:ScriptActorMention[]):boolean{
+  if(!['intrinsic_appearance','stable_wardrobe'].includes(evidence.relationship))
+    return false;
+  const hit=evidence.source,bodyCues=new Set(['scar','hair','eye','eyes','skin','face',
+    'beard','moustache','mustache','freckle','freckles','tattoo','birthmark',
+    'nose','cheek','cheeks','ears','ear','height','body','arm','arms','leg',
+    'legs','tall','short','thin','skinny','slim','bald','muscular','heavyset']);
+  const intrinsicCue=visualWords(evidence.trait).some(word=>bodyCues.has(word));
+  return char.occurrences.some(actor=>{
+    if(actor.start<hit.start||actor.end>hit.end||
+      hit.quote.slice(actor.start-hit.start,actor.end-hit.start)!==actor.quote)
+      return false;
+    const afterActor=actor.end-hit.start;
+    const tail=hit.quote.slice(afterActor);
+    const sentenceEnd=tail.search(/[.!?;\r\n]/u);
+    const nextOther=mentions.filter(m=>m.charId!==char.char_id&&
+      m.start>=actor.end&&m.start<hit.end)
+      .reduce((first,m)=>Math.min(first,m.start-hit.start),hit.quote.length);
+    const last=Math.min(sentenceEnd<0?hit.quote.length:afterActor+sentenceEnd,
+      nextOther);
+    if(last<=afterActor)return false;
+    const clause=hit.quote.slice(afterActor,last).normalize('NFKC')
+      .toLocaleLowerCase('en');
+    if(!quoteContainsTrait(clause,evidence.trait))return false;
+    // Subject + attributable predicate must both be in this same clause.
+    if(evidence.relationship==='intrinsic_appearance')
+      return intrinsicCue&&/^\s*(?:['’]s\s+[\p{L}\p{M}\p{N} ]+\s+(?:is|are)|(?:has|have|is|was|looks?|seems?|has\s+got)\b)/u
+        .test(clause);
+    return /^\s*(?:wears?|dresses?\s+in)\b/u.test(clause)&&
+      /\b(?:every\s+day|daily|always|usually|habitually|signature|never\s+removes?)\b/u
+        .test(clause);
+  });
+}
 function validateTraitEvidence(evidence:VisualTraitEvidence,
   char:ScriptCharacter,sections:Map<string,string>,
-  beginnings:Map<string,number>,mentions:Array<{charId:string;start:number;end:number}>){
+  beginnings:Map<string,number>,mentions:ScriptActorMention[]){
   const hit=evidence.source,source=sections.get(hit.section_id);
   const offset=beginnings.get(hit.section_id);
   if(source===undefined||offset===undefined||
@@ -75,43 +114,22 @@ function validateTraitEvidence(evidence:VisualTraitEvidence,
     throw Error('SCRIPT_ANALYSIS_VISUAL_EVIDENCE_OWNER_INVALID: '+char.char_id);
   if(!quoteContainsTrait(hit.quote,evidence.trait))
     throw Error('SCRIPT_ANALYSIS_VISUAL_EVIDENCE_TRAIT_INVALID: '+char.char_id);
-  const quote=hit.quote.normalize('NFKC').toLocaleLowerCase('en');
-  // A typed relation plus exact span still cannot turn "has a hat" into
-  // anatomy. This narrow *allowlist* admits verifiable physical identity
-  // language; other traits remain owner-review-only, not automatically false.
-  const bodyCues=new Set(['scar','hair','eye','eyes','skin','face','beard',
-    'moustache','mustache','freckle','freckles','tattoo','birthmark','nose',
-    'cheek','cheeks','ears','ear','height','body','arm','arms','leg','legs',
-    'tall','short','thin','skinny','slim','bald','muscular','heavyset']);
-  const intrinsicCue=visualWords(evidence.trait).some(token=>bodyCues.has(token));
-  const owners=char.occurrences.filter(v=>v.start>=hit.start&&v.end<=hit.end)
-    .map(v=>v.quote.normalize('NFKC').toLocaleLowerCase('en'));
-  const explicit=owners.some(owner=>{
-    const index=quote.indexOf(owner);
-    if(index<0)return false;
-    const tail=quote.slice(index+owner.length);
-    const forbidden=/\b(?:picks?\s+up|holds?|grabs?|carries?|sees?|looks?\s+at|touches?|runs?|running|throws?|watches?|borrows?)\b/u;
-    if(forbidden.test(tail))return false;
-    if(evidence.relationship==='intrinsic_appearance'){
-      return intrinsicCue&&/^\s*(?:['’]s\s+[\p{L}\p{M}\p{N} ]+\s+(?:is|are)|(?:has|have|is|was|looks?|seems?|has\s+got)\b)/u.test(tail);
-    }
-    if(evidence.relationship==='stable_wardrobe'){
-      return /^\s*(?:wears?|dresses?\s+in)\b/u.test(tail)&&
-        /\b(?:every\s+day|daily|always|usually|habitually|signature|never\s+removes?)\b/u.test(tail);
-    }
-    return false;
-  });
   if(['transient_object','transient_action','scene_state'].includes(evidence.relationship))
     throw Error('SCRIPT_ANALYSIS_TRANSIENT_NOT_CANONICAL: '+char.char_id);
   if(evidence.relationship==='requires_owner_review')return;
-  if(!explicit)throw Error('SCRIPT_ANALYSIS_VISUAL_RELATION_REVIEW_REQUIRED: '+char.char_id);
+  if(!directlyAttributedAppearance(evidence,char,mentions))
+    throw Error('SCRIPT_ANALYSIS_VISUAL_RELATION_REVIEW_REQUIRED: '+char.char_id);
 }
-/** Safe compiler projection; legacy F24 traits without evidence stay
- * inspectable in Analysis but NEVER become drawable Style Bible appearance. */
-export function verifiedVisualTraits(char:ScriptCharacter):string[]{
+/** Reuse the same source-clause gate for drawable trait projection. Caller
+ * validates the complete Analysis first, including strict quote/span/lineage. */
+export function verifiedVisualTraits(char:ScriptCharacter,
+  catalog:ScriptCharacter[]=[char]):string[]{
+  const mentions=catalog.flatMap(actor=>actor.occurrences.map(hit=>({
+    charId:actor.char_id,start:hit.start,end:hit.end
+  })));
   return char.explicit_visual_traits.filter(trait=>
     char.visual_trait_evidence?.some(record=>record.trait===trait&&
-      ['intrinsic_appearance','stable_wardrobe'].includes(record.relationship)));
+      directlyAttributedAppearance(record,char,mentions)));
 }
 export function validateScriptAnalysis(raw:unknown,script:ApprovedScriptSnapshot,
   schema=loadSchema('analysis')):ScriptAnalysis{
