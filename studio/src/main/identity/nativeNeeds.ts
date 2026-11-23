@@ -23,6 +23,50 @@ function occurrenceOf(text:string,name:string){
 export interface CharacterMention {
   charId:string;name:string;start:number;end:number;
 }
+/** A one-token alias at a clause opening can also modify a following noun
+ * phrase (e.g. a quantity + adjective + object). Do not treat that pattern
+ * as a certain actor just because the approved character has the same label.
+ * We never apply this heuristic to explicit canonical IDs or multiword names.
+ * Unresolved human/subject descriptions are checked separately below. */
+function likelyNounModifier(source:string,start:number,end:number,name:string){
+  if(name.startsWith('char_')||!/^\\p{L}+$/u.test(name))return false;
+  const before=source.slice(0,start);
+  if(before.trim()&&!/[.!?;,:]\\s*$/u.test(before))return false;
+  const phrase=source.slice(end).match(/^\\s+([\\p{Ll}\\p{M}][\\p{L}\\p{M}-]*)\\s+([\\p{Ll}\\p{M}][\\p{L}\\p{M}-]*)/u);
+  if(!phrase)return false;
+  // A finite predicate such as "stands", "is", "has" or an adverb
+  // after the name is not a demonstrable noun-modifier construction.
+  const first=phrase[1];
+  return !/(?:s|ed|ing|ly)$/u.test(first);
+}
+const genericVisibleNoun=/\\b(?:person|people|woman|man|boy|girl|child|children|caveman|human|humans|stickman|stickmen|actor|crowd|animal|robot|creature)\\b/gu;
+/** This is an uncertainty gate, not a character/entity classifier. Never
+ * assigns char_ids. Inspect actual subject descriptions independent of how
+ * many named actors or canonical references were already declared. */
+function assertNoUnboundVisibleSubjects(text:string,mentions:CharacterMention[]){
+  const words=normalizeMention(text);
+  for(const found of words.matchAll(genericVisibleNoun)){
+    const at=found.index,word=found[0],before=words.slice(Math.max(0,at-72),at);
+    const after=words.slice(at+word.length,at+word.length+32);
+    if(mentions.some(m=>m.start<=at&&m.end>=at+word.length))continue;
+    // Explicitly absent subjects, quoted narration and words on signage
+    // are not proof that a separate subject is depicted in the image.
+    if(/\\b(?:no|without|excluding|exclude|not|never)\\s+(?:(?:any|a|an|other|additional|visible)\\s+){0,2}$/u.test(before)||
+       /\\b(?:do\\s+not|don't)\\s+(?:show|include|depict)\\s+(?:(?:a|an|any)\\s+)?$/u.test(before)||
+       /\\b(?:narration|voiceover|voice-over|dialogue|caption|text|sign)\\s+(?:says|mentions|reads?)\\s+["'“‘]?(?:(?:a|an|the)\\s+)?$/u.test(before)||
+       /\\b(?:photo|picture|drawing|poster|toy|statue)\\s+(?:of|showing|depicting|with)\\s+(?:(?:a|an|the)\\s+)?$/u.test(before)||
+       /\\b(?:word|text|label)\\s+["'“‘]?$/u.test(before))
+      continue;
+    // "Kip is a man" describes the already-established subject rather
+    // than introducing another actor. Do not erase unresolved co-presence.
+    if(/\\b(?:is|was)\\s+an?\\s+$/u.test(before)&&
+      mentions.some(m=>m.end<=at&&at-m.end<=14))continue;
+    // A negative or object label immediately following a subject noun
+    // still cannot be reinterpreted as an additional drawable character.
+    if(/^(?:\\s+(?:toy|statue|figure|drawing|picture)\\b)/u.test(after))continue;
+    throw Error('NATIVE_IDENTITY_CAST_REVIEW_REQUIRED: unidentified on-screen subject');
+  }
+}
 export function detectPublishedCharacterMentions(text:string,
   bible:Pick<StyleBible,'characters'>):CharacterMention[]{
   const source=normalizeMention(text);
@@ -65,7 +109,8 @@ export function detectPublishedCharacterMentions(text:string,
       if((pos===0||!wordChar.test(source[pos-1]))&&
         (end===source.length||!wordChar.test(source[end]))){
         if(ids.size!==1)throw Error('NATIVE_IDENTITY_ALIAS_REVIEW_REQUIRED: '+name);
-        matches.push({charId:[...ids][0],name,start:pos,end});
+        if(!likelyNounModifier(source,pos,end,name))
+          matches.push({charId:[...ids][0],name,start:pos,end});
       }
       pos=source.indexOf(name,pos+1);
     }
@@ -111,19 +156,7 @@ export function assertNativeCastConsistency(row:NativeImageNeedV2,
   }
   if(mentions.length&&['background','object','prop','other'].includes(row.asset_kind))
     throw Error('NATIVE_IDENTITY_ASSET_KIND_CONFLICT');
-  if(!mentions.length&&!declared.size){
-    // Generic on-screen humans are NOT names or approved IDs. Never invent a
-    // binding from "a man" or "a crowd"; require Native owner review instead.
-    // Explicit "no people"/"without people" keeps true empty-cast scenery.
-    const words=normalizeMention(text);
-    const generic=/\b(?:person|people|woman|man|boy|girl|caveman|human|humans|stickman|stickmen|actor|crowd)\b/gu;
-    for(const found of words.matchAll(generic)){
-      const at=found.index??0;
-      const earlier=words.slice(Math.max(0,at-24),at);
-      if(!/\b(?:no|without|excluding|not)\s+(?:any\s+)?$/u.test(earlier))
-        throw Error('NATIVE_IDENTITY_CAST_REVIEW_REQUIRED: unidentified human');
-    }
-  }
+  assertNoUnboundVisibleSubjects(text,mentions);
   return mentions.map(mention=>mention.charId);
 }
 
