@@ -87,10 +87,18 @@ export function createContinuityResolver(appPath:string,root:string){
     verifyPrompt:(key:string,text:string)=>{
       const target=byKey.get(key);
       if(!target)throw Error('IDENTITY_NATIVE_TARGET_NOT_CURRENT');
-      // The underlying approved catalog is the published identity snapshot.
-      // Check owner edits as well as the exact authoritative Native content.
       return assertNativeCastConsistency(snapshot.rows[target.index],
         {characters:snapshot.identity.characters},text);
+    },
+    /** Validate all author/owner-controlled subject descriptions, NOT the
+     * compiler-owned style prompt or immutable reference appendix. Called
+     * by both Storyboard preparation and fresh paid-request preflight. */
+    verifyCreativeSources:(key:string,sources:readonly string[])=>{
+      const target=byKey.get(key);
+      if(!target)throw Error('IDENTITY_NATIVE_TARGET_NOT_CURRENT');
+      for(const description of new Set(sources.map(s=>s.trim()).filter(Boolean)))
+        assertNativeCastConsistency(snapshot.rows[target.index],
+          {characters:snapshot.identity.characters},description);
     },
     targetCount:snapshot.plans.length
   };
