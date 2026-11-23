@@ -3,6 +3,7 @@ import {describe,expect,it} from 'vitest';
 import type {NativeImageNeedV2,StyleBible,BibleCharacter} from '../../src/main/identity/contracts';
 import {validateNativeIdentityNeeds,
   detectPublishedCharacterMentions} from '../../src/main/identity/nativeNeeds';
+import {exactNativeTargetBindingHash,type ApprovedAnchor} from '../../src/main/identity/nativeBinding';
 
 const character=(id:`char_${string}`,label:string,aliases:string[]=[]):BibleCharacter=>({
   char_id:id,label,description:'',
@@ -50,6 +51,38 @@ describe('F24-C01 source-grounded cast consistency and ambiguous alias gates',()
   it('C01-05 two approved actors and both cast pass',()=>{
     expect(check(need('Kip and Mara walk across the field.',
       'character',['char_001','char_002'])).status).toBe('READY');
+  });
+  it('RFG-08 two source-established characters bind separate canonical anchors in one Native Shot',()=>{
+    const declared=check(need('Kip and Mara walk across the field.',
+      'character',['char_001','char_002'])).rows[0];
+    const anchors:ApprovedAnchor[]=['char_001','char_002'].map((id,index)=>({
+      charId:id,sourceDefinitionHash:String(index+1).repeat(64),
+      path:'assets/images/ref-'+id+'.png',sha256:String(index+3).repeat(64),
+      mime:'image/png' as const,rightsSha256:String(index+5).repeat(64),
+      candidateId:'candidate-'+id,approvalEventId:'approved-'+id
+    }));
+    const resolved=declared.character_ids.map(id=>anchors.find(a=>a.charId===id)!);
+    expect(resolved.map(a=>a.charId)).toEqual(['char_001','char_002']);
+    expect(new Set(resolved.map(a=>a.path)).size).toBe(2);
+    expect(new Set(resolved.map(a=>a.sha256)).size).toBe(2);
+    const common={targetKey:'s1/image-1/assets/images/image-1.png',
+      shotId:'s1',layerId:'image-1',path:target[0].path,
+      assetKind:declared.asset_kind,characterIds:declared.character_ids,
+      continuitySource:null,styleProfileSha:'b'.repeat(64)};
+    const both=exactNativeTargetBindingHash({...common,canonicalAnchors:resolved});
+    const missing=exactNativeTargetBindingHash({...common,
+      canonicalAnchors:resolved.slice(0,1)});
+    expect(both).not.toBe(missing);
+    expect(declared).not.toHaveProperty('group_id');
+    expect(declared).not.toHaveProperty('entity_kind');
+  });
+  it('RFG-14 generic crowd never creates an artificial group identity',()=>{
+    expect(()=>check(need('A generic crowd enters the street.')))
+      .toThrow('NATIVE_IDENTITY_CAST_REVIEW_REQUIRED');
+    expect(check(need('Empty street without people.')).rows[0].character_ids)
+      .toEqual([]);
+    expect(bible().characters.map(c=>c.char_id))
+      .toEqual(['char_001','char_002','char_003','char_004']);
   });
   it('C01-06 a true character-free environment retains empty cast',()=>{
     expect(check(need('Wind moves through a mountain canyon with no people.'))
