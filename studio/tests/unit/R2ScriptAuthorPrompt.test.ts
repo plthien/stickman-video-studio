@@ -99,7 +99,11 @@ describe('R2 focused source-exact Script Author handoff',()=>{
     expect(task.prompt).not.toContain('REQUIRED_NONEMPTY_ARRAY');
     expect(task.prompt).not.toContain('REPLACE_WITH_ACTUAL_SECTION_ID');
     expect(task.prompt).toContain('source SHA256');
-    expect(task.prompt).toContain('Never copy the kite example');
+    // The former hard-coded kite-story example was deliberately removed.
+    // Require the generic source-grounded guard instead of reviving that sample.
+    expect(task.prompt).toContain('CONTENT-FREE STRUCTURAL SHELL');
+    expect(task.prompt).toContain('No copied example text, structural placeholders');
+    expect(task.prompt).not.toContain('Never copy the kite example');
     expect(task.prompt).toContain('"language": "English"');
     expect(task.prompt).toContain('"ratio": "9:16"');
     const contractStart=task.prompt.indexOf('{\n',task.prompt.indexOf('## 5. Exact JSON output contract'));
