@@ -133,11 +133,11 @@ export function frozenRequestedReferencePrompt(bible:StyleBible,charId:string,
     'Same ONE identity and proportions in all panels. No assumed human anatomy.',
     'NO gutters, frames, captions,',
     'letters, labels, numbers, logos, watermark, cropping or extra people.'
-  ].join('\\n');
+  ].join('\n');
   const groupBlock=[
     'ONE GROUP OVERVIEW. One coherent approved group in a single image.',
     'Do not render four copies or invent new group members. No printed labels.'
-  ].join('\\n');
+  ].join('\n');
   if(!four.prompt.includes(fourBlock))throw Error('REFERENCE_FROZEN_PROMPT_LAYOUT_STALE');
   const prompt=four.prompt.replace(fourBlock,groupBlock);
   return {...four,prompt,prompt_sha256:hash(prompt)};
