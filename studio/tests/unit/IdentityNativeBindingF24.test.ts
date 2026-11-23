@@ -39,7 +39,7 @@ const owned=(root:string,suffix:string)=>{
   return importMediaFile(root,original,'image','Owner-created reference image; rights authorized');
 };
 function setup(continuity=false,additionalImages=0,includeBuiltIn=false,
-  emptyCastSecond=false){
+  emptyCastSecond=false,sourceLedgerVisibleState?:string){
   const {root}=fixture();
   const state=readState(root);state.identityPolicy='v1';writeState(root,state);
   const script=currentApprovedSource(root);
@@ -118,7 +118,9 @@ function setup(continuity=false,additionalImages=0,includeBuiltIn=false,
     needs.push({shot_id:'shot-2',layer_id:layerId,expected_path:imagePath,
       content:'Extra source-grounded character image',asset_kind:'character',character_ids:['char_001']});
   }
-  const source={...raw,asset_needs:needs};
+  const source={...raw,asset_needs:needs,
+    shot_ledger:sourceLedgerVisibleState?[{shot_id:'shot-1',
+      visible_state:sourceLedgerVisibleState}]:raw.shot_ledger};
   stageNative(root,source);
   return{root,ref,bible,set,source};
 }
@@ -621,6 +623,48 @@ describe('F24 Native canonical bytes, billing gate and final source receipt',()=
     expect(mock.posts()).toHaveLength(0);
     expect(getNativeImageGallery(appPath,root).targets.filter(row=>row.fulfilled))
       .toHaveLength(0);
+  });
+  it('AUD02-07/08 owner-edited image introduces an unbound visible woman: zero paid POST',async()=>{
+    const {root}=setup(),auth=account(),mock=fakeProvider();
+    const first=prepareNativeImages(appPath,root).jobs.find(job=>job.layerId==='image-1')!;
+    expect(first.state).toBe('READY');
+    const updated=saveNativeImagePrompt(appPath,root,{
+      targetKey:first.targetKey,
+      fingerprint:first.draftIdentity.creativeFingerprint,
+      styleSha256:first.styleProfileRef.sha256,
+      prompt:'One stands beside another woman in the foreground.',references:[]
+    });
+    const edited=updated.jobs.find(job=>job.layerId==='image-1')!;
+    expect(edited.state).toBe('BLOCKED');
+    expect(edited.reason).toContain('NATIVE_IDENTITY_CAST_REVIEW_REQUIRED');
+    await expect(submitGlabsImage(appPath,root,auth,cipher,{
+      targetKey:edited.targetKey,prompt:edited.prompt,
+      model:'nano_banana_2',aspectRatio:'9:16',references:edited.references,
+      authorized:true,preparedFingerprint:edited.draftIdentity.creativeFingerprint
+    },decode)).rejects.toThrow('NATIVE_IDENTITY_CAST_REVIEW_REQUIRED');
+    expect(mock.posts()).toHaveLength(0);
+    expect(getNativeImageGallery(appPath,root).targets.every(row=>!row.fulfilled)).toBe(true);
+  });
+  it('AUD02 source shot ledger visibly adds a person and blocks the paid target',async()=>{
+    const {root}=setup(false,0,false,false,
+      'One stands beside another unidentified woman in the doorway.');
+    const auth=account(),mock=fakeProvider();
+    const edited=prepareNativeImages(appPath,root).jobs.find(job=>job.layerId==='image-1')!;
+    expect(edited.state).toBe('BLOCKED');
+    expect(edited.reason).toContain('NATIVE_IDENTITY_CAST_REVIEW_REQUIRED');
+    await expect(submitGlabsImage(appPath,root,auth,cipher,{
+      targetKey:edited.targetKey,prompt:edited.prompt,
+      model:'nano_banana_2',aspectRatio:'9:16',references:edited.references,
+      authorized:true,preparedFingerprint:edited.draftIdentity.creativeFingerprint
+    },decode)).rejects.toThrow('NATIVE_IDENTITY_CAST_REVIEW_REQUIRED');
+    expect(mock.posts()).toHaveLength(0);
+  });
+  it('AUD03 quantity-like name in scene ledger does not block valid empty scenery',()=>{
+    const {root}=setup(false,0,false,true,
+      'One large rock rests in an otherwise empty desert.');
+    const prepared=prepareNativeImages(appPath,root).jobs.find(job=>
+      job.layerId==='image-1')!;
+    expect(prepared.state).toBe('READY');
   });
   it('RFG-09 missing approved canonical character reference blocks Native paid POST',async()=>{
     const {root}=setup(),auth=account(),mock=fakeProvider();
