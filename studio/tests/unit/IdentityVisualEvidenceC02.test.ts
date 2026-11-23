@@ -39,6 +39,29 @@ const fixture=(text:string,trait:string,relation?:VisualTraitRelationship,
 const verify=(text:string,trait:string,relation:VisualTraitRelationship)=>
   {const f=fixture(text,trait,relation);
     return{...f,bible:compileStyleBible(f.analysis,f.script,pinned)};};
+/** Two actual, source-quoted identities, never invented from the trait text. */
+const pairFixture=(text:string,owner:'char_001'|'char_002',trait:string,
+  relationship:VisualTraitRelationship)=>{
+  const f=fixture(text,owner==='char_001'?trait:'',
+    owner==='char_001'?relationship:undefined,'Character A');
+  const first=f.analysis.continuity_catalog.characters[0];
+  const offset=text.indexOf('Character B');
+  if(offset<0)throw Error('TEST_PAIR_MISSING_SECOND_ACTOR');
+  const second:ScriptCharacter={
+    ...structuredClone(first),char_id:'char_002',label:'Character B',
+    explicit_visual_traits:owner==='char_002'?[trait]:[],
+    visual_trait_evidence:owner==='char_002'?[{
+      trait,relationship,source:{section_id:'opening',
+        quote:text,start:0,end:text.length}
+    }]:[],
+    occurrences:[{section_id:'opening',quote:'Character B',
+      start:offset,end:offset+'Character B'.length}],
+    presence_ranges:[{start:offset,end:offset+'Character B'.length}]
+  };
+  f.analysis.continuity_catalog.characters.push(second);
+  return f;
+};
+
 describe('F24-C02 permanent visual traits require exact actor/span/relationship',()=>{
   it('C02-01 facial scar from explicit identity sentence is eligible',()=>{
     const f=verify('Kip has a scar across his cheek.','scar across cheek',
@@ -123,4 +146,78 @@ describe('F24-C02 permanent visual traits require exact actor/span/relationship'
     expect(()=>referencePromptForCharacter(f.bible,'char_001',pinned))
       .toThrow('STYLE_BIBLE_NEEDS_OWNER_DEFINITION');
   });
+  it('AUD01-01 cross-sentence blue eyes cannot be attributed to Character A',()=>{
+    const f=pairFixture('Character A has a scar. Character B has blue eyes.',
+      'char_001','blue eyes','intrinsic_appearance');
+    expect(()=>validateScriptAnalysis(f.analysis,f.script))
+      .toThrow('SCRIPT_ANALYSIS_VISUAL_RELATION_REVIEW_REQUIRED: char_001');
+    expect(()=>compileStyleBible(f.analysis,f.script,pinned))
+      .toThrow('SCRIPT_ANALYSIS_VISUAL_RELATION_REVIEW_REQUIRED');
+  });
+  it('AUD01-01b same sentence, another character predicate cuts the claim',()=>{
+    const f=pairFixture('Character A has a scar and Character B has blue eyes.',
+      'char_001','blue eyes','intrinsic_appearance');
+    expect(()=>validateScriptAnalysis(f.analysis,f.script))
+      .toThrow('SCRIPT_ANALYSIS_VISUAL_RELATION_REVIEW_REQUIRED: char_001');
+  });
+  it('AUD01-02 same source legitimately attributes blue eyes to Character B',()=>{
+    const f=pairFixture('Character A has a scar. Character B has blue eyes.',
+      'char_002','blue eyes','intrinsic_appearance');
+    const bible=compileStyleBible(f.analysis,f.script,pinned);
+    expect(bible.characters.find(c=>c.char_id==='char_002')?.explicit_visual_traits)
+      .toEqual(['blue eyes']);
+    expect(bible.characters.find(c=>c.char_id==='char_001')?.explicit_visual_traits)
+      .toEqual([]);
+  });
+  it('AUD01-03 a same-character scar remains valid',()=>{
+    const f=pairFixture('Character A has a scar. Character B has blue eyes.',
+      'char_001','scar','intrinsic_appearance');
+    expect(compileStyleBible(f.analysis,f.script,pinned)
+      .characters[0].explicit_visual_traits).toEqual(['scar']);
+  });
+  it('AUD01-04 recurring approved wardrobe in the same actor clause remains valid',()=>{
+    const f=pairFixture('Character A wears a blue coat every day. Character B smiles.',
+      'char_001','blue coat','stable_wardrobe');
+    expect(compileStyleBible(f.analysis,f.script,pinned)
+      .characters[0].explicit_visual_traits).toEqual(['blue coat']);
+  });
+  it('AUD01-05 temporary held objects cannot become permanent clothing',()=>{
+    const f=pairFixture('Character A picks up a red hat. Character B has blue eyes.',
+      'char_001','red hat','stable_wardrobe');
+    expect(()=>validateScriptAnalysis(f.analysis,f.script))
+      .toThrow('SCRIPT_ANALYSIS_VISUAL_RELATION_REVIEW_REQUIRED');
+    f.analysis.continuity_catalog.characters[0].visual_trait_evidence![0]
+      .relationship='transient_object';
+    expect(()=>validateScriptAnalysis(f.analysis,f.script))
+      .toThrow('SCRIPT_ANALYSIS_TRANSIENT_NOT_CANONICAL');
+  });
+  it('AUD01-06 unresolved cross-actor appearance is not canonical or drawable',()=>{
+    const f=pairFixture('Character A has a scar. Character B has blue eyes.',
+      'char_001','blue eyes','requires_owner_review');
+    const bible=compileStyleBible(f.analysis,f.script,pinned);
+    expect(bible.characters[0].explicit_visual_traits).toEqual([]);
+    expect(bible.characters[0].visual_readiness).toBe('NEEDS_OWNER_DEFINITION');
+    expect(()=>referencePromptForCharacter(bible,'char_001',pinned))
+      .toThrow('STYLE_BIBLE_NEEDS_OWNER_DEFINITION');
+  });
+  it('AUD01-07 tampered spans, quote and section name are still rejected',()=>{
+    const text='Character A has a scar. Character B has blue eyes.';
+    const base=()=>pairFixture(text,'char_002','blue eyes','intrinsic_appearance');
+    const offset=base();
+    offset.analysis.continuity_catalog.characters[1].visual_trait_evidence![0]
+      .source.start=1;
+    expect(()=>validateScriptAnalysis(offset.analysis,offset.script))
+      .toThrow('SCRIPT_ANALYSIS_VISUAL_EVIDENCE_SPAN_INVALID');
+    const quote=base();
+    quote.analysis.continuity_catalog.characters[1].visual_trait_evidence![0]
+      .source.quote='a different quote';
+    expect(()=>validateScriptAnalysis(quote.analysis,quote.script))
+      .toThrow('SCRIPT_ANALYSIS_VISUAL_EVIDENCE_SPAN_INVALID');
+    const section=base();
+    section.analysis.continuity_catalog.characters[1].visual_trait_evidence![0]
+      .source.section_id='absent';
+    expect(()=>validateScriptAnalysis(section.analysis,section.script))
+      .toThrow('SCRIPT_ANALYSIS_VISUAL_EVIDENCE_SPAN_INVALID');
+  });
+
 });
