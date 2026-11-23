@@ -147,4 +147,83 @@ describe('F24-C01 source-grounded cast consistency and ambiguous alias gates',()
     expect(()=>check(need('Do not include Kip anywhere in the background.')))
       .toThrow('NATIVE_IDENTITY_CAST_REVIEW_REQUIRED');
   });
+  it('AUD02-01 known actor plus another visible woman requires review',()=>{
+    expect(()=>check(need('Kip stands beside another woman.',
+      'character',['char_001']))).toThrow('NATIVE_IDENTITY_CAST_REVIEW_REQUIRED');
+    expect(()=>check(need('Kip stands beside an unidentified robot.',
+      'character',['char_001']))).toThrow('NATIVE_IDENTITY_CAST_REVIEW_REQUIRED');
+  });
+  it('AUD02-02/03 two approved actors pass, but a missing canonical cast ID fails',()=>{
+    expect(check(need('Kip and Mara stand in the scene.',
+      'character',['char_001','char_002'])).status).toBe('READY');
+    expect(()=>check(need('Kip and Mara stand in the scene.',
+      'character',['char_001']))).toThrow('NATIVE_IDENTITY_CHARACTER_CAST_MISSING: char_002');
+  });
+  it('AUD02-04 an unbound person is caught even when the declared cast is nonempty',()=>{
+    expect(()=>check(need('An unidentified person enters beside Kip.',
+      'character',['char_001']))).toThrow('NATIVE_IDENTITY_CAST_REVIEW_REQUIRED');
+    expect(()=>check(need('A woman stands behind the camera.')))
+      .toThrow('NATIVE_IDENTITY_CAST_REVIEW_REQUIRED');
+  });
+  it('AUD02-05/06 valid empty scenery and absent people remain character-free',()=>{
+    expect(check(need('An empty street without people.')).status).toBe('READY');
+    expect(check(need('An empty canyon and clouds.')).rows[0].character_ids)
+      .toEqual([]);
+    expect(check(need('No people appear in an empty meadow.')).status).toBe('READY');
+  });
+  it('AUD02-09 valid existing canonical cast is not stripped by ambiguity checking',()=>{
+    const result=check(need('Kip and Mara stand together in the shot.',
+      'character',['char_001','char_002']));
+    expect(result.rows[0].character_ids).toEqual(['char_001','char_002']);
+  });
+  it('AUD02 incidental text, narration and depicted objects are not new actors',()=>{
+    expect(check(need('Narration mentions a woman, but the screen is an empty road.'))
+      .status).toBe('READY');
+    expect(check(need('A photo of a woman lies on a wooden table.','prop')).status)
+      .toBe('READY');
+    expect(check(need('Kip is a man with a scar.','character',['char_001']))
+      .status).toBe('READY');
+    expect(check(need('Do not show a woman; show only an empty street.')).status)
+      .toBe('READY');
+  });
+  it('AUD03-01 quantity-like single-token label is not auto-cast from scenery',()=>{
+    const person=character('char_001','One');
+    const content='One large rock rests in an empty desert.';
+    expect(detectPublishedCharacterMentions(content,bible([person]))).toEqual([]);
+    expect(check(need(content),bible([person])).status).toBe('READY');
+  });
+  it('AUD03-02 exact canonical char_id is still recognized',()=>{
+    const person=character('char_001','One');
+    const text='char_001 stands in the foreground.';
+    expect(detectPublishedCharacterMentions(text,bible([person]))
+      .map(m=>m.charId)).toEqual(['char_001']);
+    expect(()=>check(need(text),bible([person])))
+      .toThrow('NATIVE_IDENTITY_CHARACTER_CAST_MISSING: char_001');
+  });
+  it('AUD03-03 clear actor depiction is matched; unresolved aliases still review',()=>{
+    const person=character('char_001','One');
+    expect(()=>check(need('One stands at the camp entrance.'),
+      bible([person]))).toThrow('NATIVE_IDENTITY_CHARACTER_CAST_MISSING');
+    expect(check(need('One stands at the camp entrance.',
+      'character',['char_001']),bible([person])).status).toBe('READY');
+    const ambiguous=character('char_001','Camp Woman');
+    ambiguous.occurrences=[{section_id:'s1',quote:'woman',start:0,end:5}];
+    expect(()=>check(need('A woman stands at the door.'),
+      bible([ambiguous]))).toThrow('NATIVE_IDENTITY_ALIAS_REVIEW_REQUIRED');
+  });
+  it('AUD03-04/05 source-grounded multiword and Unicode aliases remain recognized',()=>{
+    expect(detectPublishedCharacterMentions('Little Ann greets ÉLISE!',
+      bible()).map(m=>m.charId)).toEqual(['char_003','char_004']);
+  });
+  it('AUD03-06 ambiguous shared source aliases still require review',()=>{
+    const first=character('char_001','Kip',['Fox']);
+    const second=character('char_002','Mara',['Fox']);
+    expect(()=>check(need('Fox steps forward.'),bible([first,second])))
+      .toThrow('NATIVE_IDENTITY_ALIAS_REVIEW_REQUIRED');
+  });
+  it('AUD03-07 negated on-screen names cannot become positive cast evidence',()=>{
+    expect(()=>check(need('Do not include Kip anywhere in this frame.')))
+      .toThrow('NATIVE_IDENTITY_CAST_REVIEW_REQUIRED');
+  });
+
 });
