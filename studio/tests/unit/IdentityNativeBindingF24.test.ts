@@ -622,6 +622,20 @@ describe('F24 Native canonical bytes, billing gate and final source receipt',()=
     expect(getNativeImageGallery(appPath,root).targets.filter(row=>row.fulfilled))
       .toHaveLength(0);
   });
+  it('RFG-09 missing approved canonical character reference blocks Native paid POST',async()=>{
+    const {root}=setup(),auth=account(),mock=fakeProvider();
+    const ready=prepareNativeImages(appPath,root).jobs[0];
+    expect(ready.state).toBe('READY');
+    const old=readIdentityWorkflow(root);
+    old.referenceCandidates=[];
+    atomicJson(path.join(root,'.studio/identity/workflow-v1.json'),old);
+    await expect(submitGlabsImage(appPath,root,auth,cipher,{
+      targetKey:ready.targetKey,prompt:ready.prompt,
+      model:'nano_banana_2',aspectRatio:'9:16',references:ready.references,
+      authorized:true,preparedFingerprint:ready.draftIdentity.creativeFingerprint
+    },decode)).rejects.toThrow('IDENTITY_NATIVE_ANCHOR_NOT_APPROVED');
+    expect(mock.posts()).toHaveLength(0);
+  });
   it('N08 direct manual paid POST without prepared exact Native identity cannot bypass F24',async()=>{
     const {root}=setup(),accountRoot=account(),{posts}=fakeProvider();
     const target=getNativeImageGallery(appPath,root).targets[0];
