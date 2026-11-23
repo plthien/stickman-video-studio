@@ -5,7 +5,7 @@ import {canonical,contentHash,hash,loadSchema,validateWithSchema,
   type ScriptAnalysis,type StyleBible,type BibleCharacter} from './contracts.js';
 import {validateScriptAnalysis,verifiedVisualTraits,
   type ApprovedScriptSnapshot} from './scriptAnalysis.js';
-import {referencePromptForCharacter,type PinnedStyle} from './styleBible.js';
+import type {PinnedStyle} from './styleBible.js';
 import type {OwnerVisualDefinition} from './visualDefinitions.js';
 
 function oldDiskSchema(kind:'analysis'|'bible'){
@@ -113,18 +113,29 @@ export function activeNativeCharacters(rows:BibleCharacter[]):BibleCharacter[]{
     return output;
   });
 }
-/** Strictly historical support for jobs submitted before the single-output
- * generation contract. Never used by new POST or editable character metadata.
- * Reconstruct the exact former request-scoped prompt before comparing SHA. */
+/** Immutable reconstruction of jobs frozen under the former *request-scoped*
+ * format option. Does not call active four-view prompt logic, so later changes
+ * to new-generation wording cannot invalidate historical paid job SHA. */
 export type FrozenReferenceFormat='four_view'|'group_overview';
 export function frozenRequestedReferencePrompt(bible:StyleBible,charId:string,
   pinned:PinnedStyle,ownerDefinition:OwnerVisualDefinition|undefined,
   frozenFormat:FrozenReferenceFormat){
   if(frozenFormat!=='four_view'&&frozenFormat!=='group_overview')
     throw Error('REFERENCE_HISTORICAL_FORMAT_INVALID');
-  const four=referencePromptForCharacter(bible,charId,pinned,ownerDefinition);
-  if(frozenFormat==='four_view')return four;
-  const fourBlock=[
+  if(bible.style_profile_sha256!==pinned.sha256||bible.style_profile_id!==pinned.id)
+    throw Error('STYLE_BIBLE_STYLE_STALE');
+  const row=bible.characters.find(c=>c.char_id===charId);
+  if(!row)throw Error('STYLE_BIBLE_CHARACTER_NOT_FOUND');
+  if(ownerDefinition&&(ownerDefinition.charId!==charId||
+    ownerDefinition.styleBibleSha!==bible.style_bible_sha256||
+    ownerDefinition.approvedByOwner!==true))
+    throw Error('STYLE_BIBLE_OWNER_DEFINITION_STALE');
+  if(row.visual_readiness!=='READY_FOR_REFERENCE'&&!ownerDefinition)
+    throw Error('STYLE_BIBLE_NEEDS_OWNER_DEFINITION');
+  const format=frozenFormat==='group_overview'?[
+    'ONE GROUP OVERVIEW. One coherent approved group in a single image.',
+    'Do not render four copies or invent new group members. No printed labels.'
+  ].join('\n'):[
     'ONE SQUARE 1:1 IMAGE. Exactly FOUR edge-to-edge panels in a 2×2 sheet:',
     'Upper-left: front close-up/detail of the actual subject.',
     'Upper-right: front full view of the entire subject.',
@@ -134,11 +145,22 @@ export function frozenRequestedReferencePrompt(bible:StyleBible,charId:string,
     'NO gutters, frames, captions,',
     'letters, labels, numbers, logos, watermark, cropping or extra people.'
   ].join('\n');
-  const groupBlock=[
-    'ONE GROUP OVERVIEW. One coherent approved group in a single image.',
-    'Do not render four copies or invent new group members. No printed labels.'
-  ].join('\n');
-  if(!four.prompt.includes(fourBlock))throw Error('REFERENCE_FROZEN_PROMPT_LAYOUT_STALE');
-  const prompt=four.prompt.replace(fourBlock,groupBlock);
-  return {...four,prompt,prompt_sha256:hash(prompt)};
+  const lines=[
+    'SOURCE-GROUNDED CANONICAL STYLE BIBLE REFERENCE',
+    'Character ID: '+row.char_id,
+    'EXACT source-verified visual traits: '+JSON.stringify(row.explicit_visual_traits),
+    ...(ownerDefinition?[
+      'Explicit owner-approved visual definition SHA: '+ownerDefinition.definitionSha,
+      'Owner-verified visual traits: '+JSON.stringify(ownerDefinition.traits),
+      'Visual definition provenance: '+ownerDefinition.provenance,
+      'This addendum is explicitly approved by owner; do NOT infer other traits.'
+    ]:[]),
+    'EXACT B'+pinned.id.slice(-1)+' VISUAL STYLE / SHA '+pinned.sha256,pinned.guidance,
+    format,'No invented clothing, features, people, props or story actions.',
+    'Do not include text anywhere in generated image.'
+  ];
+  const prompt=lines.join('\n\n');
+  return{anchor_type:'character' as const,anchor_id:row.char_id,
+    source_definition_hash:row.source_definition_hash,
+    aspect_ratio:'1:1' as const,prompt,prompt_sha256:hash(prompt)};
 }
