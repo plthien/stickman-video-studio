@@ -531,7 +531,11 @@ export function registerValidatedGeneratedReference(root:string,appPath:string,
     persisted.staged?.path!==job.staged.path||
     persisted.staged?.sha256!==job.staged.sha256)
     throw Error('REFERENCE_GENERATED_JOB_PROVENANCE_INVALID');
-  const {script,analysis}=validApproved(root,prior);
+  const script=active(root),analysis=prior.draftAnalysis;
+  if(!analysis||!prior.independentReview||!verifyIndependentReview(prior.independentReview,analysis)||
+    prior.analysisApproved?.sha256!==contentHash(analysis)||
+    prior.analysisApproved.reviewSha256!==contentHash(prior.independentReview))
+    throw Error('REFERENCE_GENERATION_ANALYSIS_NOT_APPROVED');
   const pinnedStyle=pinned(appPath,root);
   const historicalKind=isFrozenLegacyAnalysis(analysis);
   const bible=historicalKind?

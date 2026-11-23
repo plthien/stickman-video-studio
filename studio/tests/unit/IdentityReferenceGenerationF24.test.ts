@@ -7,12 +7,13 @@ import {appPath,cleanup,fixture,png} from './SixIssueFixtures';
 import {readState,writeState,atomicJson,sha} from '../../src/main/services';
 import {loadImageStyleProfile} from '../../src/main/imagePreparation';
 import {compileStyleBible} from '../../src/main/identity/styleBible';
-import {frozenLegacyReferencePrompt} from '../../src/main/identity/legacyStorage';
+import {frozenLegacyReferencePrompt,frozenRequestedReferencePrompt} from '../../src/main/identity/legacyStorage';
 import {contentHash,hash} from '../../src/main/identity/contracts';
 import {readIdentityWorkflow,registerValidatedGeneratedReference,
   approveOwnerReference,currentApprovedSource,
   approveOwnerVisualDefinition} from '../../src/main/identity/identityWorkflow';
-import {readReferenceJob,submitReferenceJob,syncReferenceJob} from '../../src/main/identity/referenceGeneration';
+import {readReferenceJob,submitReferenceJob,syncReferenceJob,
+  validateNewReferenceGenerateInput} from '../../src/main/identity/referenceGeneration';
 import {saveGlabsKey} from '../../src/main/glabs';
 
 const tmp:string[]=[];
@@ -253,22 +254,64 @@ describe('F24 isolated 1:1 reference generation with explicit billing/approval b
     expect(mock.posts()).toHaveLength(1);
     expect(readReferenceJob(root,job.id).status).toBe('UNKNOWN');
   });
-  it('EK-07 requires explicit request-scoped group selection and one square paid job',async()=>{
+  it('RFG-06 rejects any retired generation option before network or paid POST',async()=>{
     const {root,dir}=setup(),mock=provider();
-    await expect(submitReferenceJob(appPath,root,dir,cipher,{
-      anchorId:'char_001',authorized:true,
-      referenceFormat:'animal' as 'four_view'
-    })).rejects.toThrow('REFERENCE_OUTPUT_FORMAT_INVALID');
-    expect(mock.posts()).toHaveLength(0);
-    const job=await submitReferenceJob(appPath,root,dir,cipher,{
-      anchorId:'char_001',authorized:true,referenceFormat:'group_overview'
+    for(const referenceFormat of ['group_overview','four_view','animal']){
+      const legacy={anchorId:'char_001',authorized:true,referenceFormat};
+      expect(()=>validateNewReferenceGenerateInput(legacy))
+        .toThrow('REFERENCE_GENERATION_REQUEST_UNKNOWN_FIELD');
+      await expect(submitReferenceJob(appPath,root,dir,cipher,
+        legacy as unknown as Parameters<typeof submitReferenceJob>[4]))
+        .rejects.toThrow('REFERENCE_GENERATION_REQUEST_UNKNOWN_FIELD');
+    }
+    expect(mock.calls).toHaveLength(0);
+  });
+  it('RFG-03/04 creates only one 1:1 four-view job without retired format field',async()=>{
+    const {root,dir}=setup(),mock=provider();
+    const created=await submitReferenceJob(appPath,root,dir,cipher,{
+      anchorId:'char_001',authorized:true
     });
-    expect(job.referenceFormat).toBe('group_overview');
-    expect(job.aspectRatio).toBe('1:1');
-    expect(job.prompt).toContain('ONE GROUP OVERVIEW');
-    expect(job.prompt).not.toContain('Upper-left:');
-    expect(readReferenceJob(root,job.id).promptSha).toBe(job.promptSha);
+    expect(created.aspectRatio).toBe('1:1');
+    expect(created.prompt).toContain('Exactly FOUR edge-to-edge panels in a 2×2 sheet');
+    expect(created.prompt).not.toContain('ONE GROUP OVERVIEW');
+    expect(created).not.toHaveProperty('referenceFormat');
+    expect(readReferenceJob(root,created.id)).not.toHaveProperty('referenceFormat');
     expect(mock.posts()).toHaveLength(1);
+  });
+  it('RFG-12 frozen requested group/four-view jobs keep exact SHA and GET-only recovery',async()=>{
+    const {root,dir}=setup(),mock=provider();
+    const snapshot=readIdentityWorkflow(root),script=currentApprovedSource(root);
+    const profile=loadImageStyleProfile(appPath,'B1');
+    const pinned={id:'B1' as const,guidance:profile.guidance,sha256:profile.sha256};
+    const history:unknown[]=[];
+    for(const [index,referenceFormat] of (['group_overview','four_view'] as const).entries()){
+      const frozen=frozenRequestedReferencePrompt(snapshot.bible!,
+        'char_001',pinned,undefined,referenceFormat);
+      const id=index===0?'12345678-1234-1234-1234-123456789012':
+        '22345678-1234-1234-1234-123456789012';
+      const job={schema:'stickman-reference-generate-job-v1',id,
+        projectId:script.projectId,anchorId:'char_001',
+        sourceDefinitionHash:frozen.source_definition_hash,
+        styleBibleSha:snapshot.bible!.style_bible_sha256,
+        styleProfileSha:pinned.sha256,analysisSha:snapshot.bible!.analysis_sha256,
+        approvedScriptSha:script.sha256,prompt:frozen.prompt,promptSha:frozen.prompt_sha256,
+        referenceFormat,model:'nano_banana_2',aspectRatio:'1:1',
+        status:'UNKNOWN',providerTaskId:'ab12cd34',
+        createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()
+      };
+      const folder=path.join(root,'.studio/identity/reference-jobs');
+      fs.mkdirSync(folder,{recursive:true});
+      atomicJson(path.join(folder,id+'.json'),job);
+      const finished=await syncReferenceJob(appPath,root,dir,cipher,id,decode);
+      expect(finished.status).toBe('VALIDATED');
+      expect(finished.prompt).toBe(job.prompt);
+      expect(finished.promptSha).toBe(job.promptSha);
+      expect(finished.referenceFormat).toBe(referenceFormat);
+      history.push(finished);
+    }
+    expect(history).toHaveLength(2);
+    expect(mock.posts()).toHaveLength(0);
+    expect(readIdentityWorkflow(root).referenceCandidates).toHaveLength(0);
   });
   it('R07 missing owner authorization always blocks before POST',async()=>{
     const {root,dir}=setup(),mock=provider();

@@ -4,8 +4,8 @@ import {canonical,contentHash,hash,loadSchema,type ScriptAnalysis,
   type ScriptCharacter,type StyleBible} from '../../src/main/identity/contracts';
 import {validateScriptAnalysis,type ApprovedScriptSnapshot} from '../../src/main/identity/scriptAnalysis';
 import {compileStyleBible,referencePromptForCharacter} from '../../src/main/identity/styleBible';
-import {frozenLegacyReferencePrompt,isFrozenLegacyAnalysis,
-  validateHistoricalPublishedBible} from '../../src/main/identity/legacyStorage';
+import {frozenLegacyReferencePrompt,frozenRequestedReferencePrompt,
+  isFrozenLegacyAnalysis,validateHistoricalPublishedBible} from '../../src/main/identity/legacyStorage';
 
 const name='Character A',line=name+' has a scar.',quote=name+' has a scar';
 const pinned={id:'B1' as const,guidance:'Test-approved simple illustrations',
@@ -79,16 +79,27 @@ describe('EK reference-first new schema and read-only historical boundary',()=>{
     }
     expect(new Set(prompts).size).toBe(1);
   });
-  it('EK-07 owner-requested group overview is only a per-request output format',()=>{
+  it('RFG-03/04 new canonical prompt stays identical to former default four_view',()=>{
     const bible=compileStyleBible(analysis(),script,pinned);
-    const group=referencePromptForCharacter(bible,'char_001',pinned,
-      undefined,'group_overview');
-    const four=referencePromptForCharacter(bible,'char_001',pinned);
-    expect(group.aspect_ratio).toBe('1:1');
-    expect(group.prompt).toContain('ONE GROUP OVERVIEW');
-    expect(group.prompt).not.toContain('Upper-left:');
-    expect(group.prompt_sha256).not.toBe(four.prompt_sha256);
+    const current=referencePromptForCharacter(bible,'char_001',pinned);
+    const frozenFour=frozenRequestedReferencePrompt(bible,'char_001',pinned,
+      undefined,'four_view');
+    expect(current).toEqual(frozenFour);
+    expect(current.aspect_ratio).toBe('1:1');
+    expect(current.prompt).toContain('Exactly FOUR');
+    expect(current.prompt).not.toContain('ONE GROUP OVERVIEW');
     expect(bible.characters[0]).not.toHaveProperty('entity_kind');
+  });
+  it('RFG-12 historical request-only group preserves SHA without enabling active group',()=>{
+    const bible=compileStyleBible(analysis(),script,pinned);
+    const old=frozenRequestedReferencePrompt(bible,'char_001',pinned,
+      undefined,'group_overview');
+    const current=referencePromptForCharacter(bible,'char_001',pinned);
+    expect(old.aspect_ratio).toBe('1:1');
+    expect(old.prompt).toContain('ONE GROUP OVERVIEW');
+    expect(old.prompt).not.toContain('Upper-left:');
+    expect(old.prompt_sha256).toBe(hash(old.prompt));
+    expect(old.prompt_sha256).not.toBe(current.prompt_sha256);
   });
   it('EK-06/EK-10 original legacy group Bible/SHA and job prompt stay byte-exact',()=>{
     const {original,bible}=historical('human_group');

@@ -123,16 +123,16 @@ describe('F24 upstream source-grounded contract gates',()=>{
     expect(bible.style_guidance_sha256).not.toBe(bible.style_profile_sha256);
     expect(()=>referencePromptForCharacter(bible,'char_001',pinned)).not.toThrow();
   });
-  it('R01/R02 compiles a single 1:1 four-view human or single group overview',()=>{
+  it('RFG-03/04 compiles the single square four-view reference for one char_id',()=>{
     const bible=compileStyleBible(analysis(),script,style);
     const prompt=referencePromptForCharacter(bible,'char_001',style);
     expect(prompt.aspect_ratio).toBe('1:1');
+    expect(prompt.prompt).toContain('Exactly FOUR edge-to-edge panels in a 2×2 sheet');
     expect(prompt.prompt).toMatch(/Upper-left: front close-up/);
+    expect(prompt.prompt).toMatch(/Upper-right: front full view/);
+    expect(prompt.prompt).toMatch(/Lower-left: side view/);
     expect(prompt.prompt).toMatch(/Lower-right: back view/);
-    const groupPrompt=referencePromptForCharacter(bible,'char_001',style,
-      undefined,'group_overview');
-    expect(groupPrompt.prompt).toContain('ONE GROUP OVERVIEW');
-    expect(groupPrompt.prompt).not.toContain('Upper-left:');
+    expect(prompt.prompt).not.toContain('ONE GROUP OVERVIEW');
   });
   it('N02/N03 requires exact typed cast, validates DAG and rejects unknown characters',()=>{
     const bible=compileStyleBible(analysis(),script,style);
