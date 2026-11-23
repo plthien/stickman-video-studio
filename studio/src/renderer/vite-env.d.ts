@@ -31,7 +31,7 @@ interface Window { studio?: Readonly<{
   identityPreviewReferenceImpact:(id:string,selectedIds:string[])=>Promise<ReturnType<typeof import('../main/identity/impact').previewReferenceSwitchImpact>>;
   identityPublishReferences:(id:string,revision:number,selectedIds:string[],impactSha256?:string)=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
   identityReferenceJobs:(id:string)=>Promise<import('../main/identity/referenceGeneration').ReferenceJob[]>;
-  identityGenerateReference:(id:string,input:{anchorId:string;authorized:true;regenerate?:boolean;acknowledgeUnknown?:boolean;referenceFormat?:'four_view'|'group_overview'})=>Promise<import('../main/identity/referenceGeneration').ReferenceJob>;
+  identityGenerateReference:(id:string,input:{anchorId:string;authorized:true;regenerate?:boolean;acknowledgeUnknown?:boolean})=>Promise<import('../main/identity/referenceGeneration').ReferenceJob>;
   identitySyncReference:(id:string,jobId:string)=>Promise<import('../main/identity/referenceGeneration').ReferenceJob>;
   galleryImages?:(id:string)=>Promise<{token:string|null;styleProfileSha256?:string;shots:Array<{id:string;index:number;imageCount:number}>;targets:Array<{
     key:string;shotId:string;layerId:string;path:string;boundPath:string;boundSha256?:string;creativeFingerprint?:string;fulfilled:boolean;managed:boolean

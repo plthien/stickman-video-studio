@@ -11,7 +11,7 @@ import {analysisLineage,freezeAnalysisTask,validateAnalysisEnvelope,
   type AnalysisTask,type AnalysisReview} from './scriptAnalysis.js';
 import {compileStyleBible,type PinnedStyle} from './styleBible.js';
 import {isFrozenLegacyAnalysis,validateHistoricalPublishedBible,
-  frozenLegacyReferencePrompt} from './legacyStorage.js';
+  frozenLegacyReferencePrompt,frozenRequestedReferencePrompt} from './legacyStorage.js';
 import {canonical} from './contracts.js';
 import {approveCandidate,publishApprovalSet,validatePublishedSet,verifyReferenceFile,
   type ReferenceCandidate,type ReferenceApprovalSet,type IdentityDecoder} from './referencePublication.js';
@@ -531,17 +531,10 @@ export function registerValidatedGeneratedReference(root:string,appPath:string,
     persisted.staged?.path!==job.staged.path||
     persisted.staged?.sha256!==job.staged.sha256)
     throw Error('REFERENCE_GENERATED_JOB_PROVENANCE_INVALID');
-  const historical=job.referenceFormat===undefined;
-  const {script,analysis}=historical?(()=>{
-    const script=active(root),analysis=prior.draftAnalysis;
-    if(!analysis||!isFrozenLegacyAnalysis(analysis)||!prior.bible||
-      !prior.independentReview||!verifyIndependentReview(prior.independentReview,analysis)||
-      prior.analysisApproved?.sha256!==contentHash(analysis))
-      throw Error('REFERENCE_HISTORICAL_APPROVAL_REQUIRED');
-    return{script,analysis};
-  })():validApproved(root,prior);
+  const {script,analysis}=validApproved(root,prior);
   const pinnedStyle=pinned(appPath,root);
-  const bible=historical?
+  const historicalKind=isFrozenLegacyAnalysis(analysis);
+  const bible=historicalKind?
     validateHistoricalPublishedBible(analysis,script,pinnedStyle,prior.bible!):
     compileStyleBible(analysis,script,pinnedStyle);
   if(prior.bibleTextApproved?.sha256!==bible.style_bible_sha256||
@@ -569,9 +562,11 @@ export function registerValidatedGeneratedReference(root:string,appPath:string,
   if(owner)validateOwnerVisualDefinition(owner,script,bible);
   if(owner?.definitionSha!==job.ownerVisualDefinitionSha)
     throw Error('REFERENCE_GENERATION_VISUAL_DEFINITION_STALE');
-  const prompt=historical?
+  const prompt=historicalKind?
     frozenLegacyReferencePrompt(bible,job.anchorId,pinnedStyle,owner):
-    referencePromptForCharacter(bible,job.anchorId,pinnedStyle,owner,job.referenceFormat);
+    job.referenceFormat!==undefined?
+      frozenRequestedReferencePrompt(bible,job.anchorId,pinnedStyle,owner,job.referenceFormat):
+      referencePromptForCharacter(bible,job.anchorId,pinnedStyle,owner);
   if(prompt.prompt_sha256!==job.promptSha)
     throw Error('REFERENCE_GENERATION_PROMPT_STALE');
   const candidate:ReferenceCandidate={

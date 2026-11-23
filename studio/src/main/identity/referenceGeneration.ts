@@ -7,10 +7,10 @@ import {glabsProbe,glabsReferenceSettings,glabsReferenceSubmit,
   glabsReferenceStatus,glabsReferenceResult,glabsReferenceDownload} from '../glabs.js';
 import {atomicJson,readState,resolveProjectFile,strictJson,sha} from '../services.js';
 import {contentHash,type StyleBible} from './contracts.js';
-import {compileStyleBible,referencePromptForCharacter,
-  type ReferenceOutputFormat} from './styleBible.js';
+import {compileStyleBible,referencePromptForCharacter} from './styleBible.js';
 import {isFrozenLegacyAnalysis,validateHistoricalPublishedBible,
-  frozenLegacyReferencePrompt} from './legacyStorage.js';
+  frozenLegacyReferencePrompt,frozenRequestedReferencePrompt,
+  type FrozenReferenceFormat} from './legacyStorage.js';
 import {currentApprovedSource,readIdentityWorkflow,publishedIdentityView,identityPolicy} from './identityWorkflow.js';
 import {verifyIndependentReview} from './scriptAnalysis.js';
 import {validateOwnerVisualDefinition} from './visualDefinitions.js';
@@ -24,8 +24,8 @@ export interface ReferenceJob{
   id:string;projectId:string;anchorId:string;sourceDefinitionHash:string;
   styleBibleSha:string;styleProfileSha:string;analysisSha:string;
   approvedScriptSha:string;prompt:string;promptSha:string;
-  /** Request-scoped format. Absent only on historical frozen jobs. */
-  referenceFormat?:ReferenceOutputFormat;
+  /** Read-only compatibility for jobs frozen before this repair; NEVER set on new jobs. */
+  referenceFormat?:FrozenReferenceFormat;
   ownerVisualDefinitionSha?:string;
   model:string;aspectRatio:'1:1';status:ReferenceJobStatus;
   providerTaskId?:string;providerCompletedAt?:string;
@@ -64,7 +64,7 @@ export function listReferenceJobs(root:string):ReferenceJob[]{
     .sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
 }
 function ready(root:string,appPath:string,anchorId:string,
-  referenceFormat:ReferenceOutputFormat='four_view',frozenHistoricalJob=false):{
+  frozenJob?:ReferenceJob):{
   bible:StyleBible;sourceDefinitionHash:string;prompt:string;promptSha:string;
   styleSha:string;analysisSha:string;scriptSha:string;
   ownerVisualDefinitionSha?:string
@@ -82,10 +82,10 @@ function ready(root:string,appPath:string,anchorId:string,
   const published=publishedIdentityView(working);
   // A frozen pre-removal paid job belongs to its original authority even
   // when a newer draft has passed review but was never owner-published.
-  const historicalPublished=frozenHistoricalJob&&published.draftAnalysis&&
-    isFrozenLegacyAnalysis(published.draftAnalysis);
-  const journal=historicalPublished?published:
-    candidateReady?working:published;
+  const archivedMatches=Boolean(frozenJob&&published.draftAnalysis&&published.bible&&
+    published.bible.style_bible_sha256===frozenJob.styleBibleSha&&
+    contentHash(published.draftAnalysis)===frozenJob.analysisSha);
+  const journal=archivedMatches?published:candidateReady?working:published;
   const analysis=journal.draftAnalysis,approved=journal.analysisApproved;
   if(!analysis||!approved||approved.sha256!==contentHash(analysis)||
     !journal.independentReview||
@@ -96,9 +96,10 @@ function ready(root:string,appPath:string,anchorId:string,
     throw Error('REFERENCE_SCRIPT_ANALYSIS_NOT_CURRENT');
   const style=loadImageStyleProfile(appPath,state.project.style as 'B1'|'B2'|'B3'|'B4');
   const pinned={id:style.id,guidance:style.guidance,sha256:style.sha256};
-  if(isFrozenLegacyAnalysis(analysis)&&!frozenHistoricalJob)
+  const legacyKind=isFrozenLegacyAnalysis(analysis);
+  if(legacyKind&&!frozenJob)
     throw Error('REFERENCE_LEGACY_NEW_GENERATION_REQUIRES_NEW_ANALYSIS');
-  const bible=frozenHistoricalJob?
+  const bible=legacyKind?
     validateHistoricalPublishedBible(analysis,source,pinned,journal.bible!):
     compileStyleBible(analysis,source,pinned);
   if(journal.bibleTextApproved?.sha256!==bible.style_bible_sha256||
@@ -111,9 +112,11 @@ function ready(root:string,appPath:string,anchorId:string,
   if(owner)validateOwnerVisualDefinition(owner,source,bible);
   if(row.visual_readiness!=='READY_FOR_REFERENCE'&&!owner)
     throw Error('REFERENCE_CHARACTER_NOT_READY');
-  const prompt=frozenHistoricalJob?
+  const prompt=legacyKind?
     frozenLegacyReferencePrompt(bible,anchorId,pinned,owner):
-    referencePromptForCharacter(bible,anchorId,pinned,owner,referenceFormat);
+    frozenJob?.referenceFormat!==undefined?
+      frozenRequestedReferencePrompt(bible,anchorId,pinned,owner,frozenJob.referenceFormat):
+      referencePromptForCharacter(bible,anchorId,pinned,owner);
   return{bible,sourceDefinitionHash:row.source_definition_hash,
     prompt:prompt.prompt,promptSha:prompt.prompt_sha256,styleSha:style.sha256,
     analysisSha:bible.analysis_sha256,scriptSha:bible.source_script_sha256,
@@ -121,8 +124,7 @@ function ready(root:string,appPath:string,anchorId:string,
 }
 function isCurrent(root:string,appPath:string,job:ReferenceJob){
   try{
-    const snapshot=ready(root,appPath,job.anchorId,
-      job.referenceFormat??'four_view',job.referenceFormat===undefined);
+    const snapshot=ready(root,appPath,job.anchorId,job);
     return job.projectId===readState(root).project.id&&
       job.styleBibleSha===snapshot.bible.style_bible_sha256&&
       job.sourceDefinitionHash===snapshot.sourceDefinitionHash&&
@@ -151,14 +153,29 @@ function markStale(root:string,job:ReferenceJob){
   }
   return job;
 }
+export interface NewReferenceGenerateInput{
+  anchorId:string;authorized:true;regenerate?:boolean;acknowledgeUnknown?:boolean;
+}
+/** IPC payloads are untrusted even when the renderer type-checks. Reject
+ * obsolete modes and ALL unknown keys before health probes or paid POST. */
+export function validateNewReferenceGenerateInput(raw:unknown):NewReferenceGenerateInput{
+  if(!raw||typeof raw!=='object'||Array.isArray(raw))
+    throw Error('REFERENCE_GENERATION_REQUEST_INVALID');
+  const input=raw as Record<string,unknown>;
+  const allowed=['anchorId','authorized','regenerate','acknowledgeUnknown'];
+  if(Object.keys(input).some(key=>!allowed.includes(key)))
+    throw Error('REFERENCE_GENERATION_REQUEST_UNKNOWN_FIELD');
+  if(typeof input.anchorId!=='string'||!/^char_[0-9]{3}$/.test(input.anchorId)||
+    (input.regenerate!==undefined&&typeof input.regenerate!=='boolean')||
+    (input.acknowledgeUnknown!==undefined&&typeof input.acknowledgeUnknown!=='boolean'))
+    throw Error('REFERENCE_GENERATION_REQUEST_INVALID');
+  if(input.authorized!==true)throw Error('REFERENCE_PAID_POST_OWNER_AUTH_REQUIRED');
+  return input as unknown as NewReferenceGenerateInput;
+}
 export async function submitReferenceJob(appPath:string,root:string,userData:string,
-  cipher:CredentialCipher,input:{anchorId:string;authorized:true;regenerate?:boolean;
-    acknowledgeUnknown?:boolean;referenceFormat?:ReferenceOutputFormat}):Promise<ReferenceJob>{
-  if(input?.authorized!==true)throw Error('REFERENCE_PAID_POST_OWNER_AUTH_REQUIRED');
-  const referenceFormat=input.referenceFormat??'four_view';
-  if(!['four_view','group_overview'].includes(referenceFormat))
-    throw Error('REFERENCE_OUTPUT_FORMAT_INVALID');
-  const definition=ready(root,appPath,input.anchorId,referenceFormat);
+  cipher:CredentialCipher,input:NewReferenceGenerateInput):Promise<ReferenceJob>{
+  const request=validateNewReferenceGenerateInput(input);
+  const definition=ready(root,appPath,request.anchorId);
   const older=listReferenceJobs(root).filter(row=>row.anchorId===input.anchorId);
   if(older.some(row=>['QUEUED','SUBMITTED','RUNNING'].includes(row.status)))
     throw Error('REFERENCE_ACTIVE_ATTEMPT_EXISTS');
@@ -184,7 +201,7 @@ export async function submitReferenceJob(appPath:string,root:string,userData:str
       styleBibleSha:definition.bible.style_bible_sha256,
       styleProfileSha:definition.styleSha,analysisSha:definition.analysisSha,
       approvedScriptSha:definition.scriptSha,prompt:definition.prompt,
-      promptSha:definition.promptSha,referenceFormat,
+      promptSha:definition.promptSha,
       ...(definition.ownerVisualDefinitionSha?{
         ownerVisualDefinitionSha:definition.ownerVisualDefinitionSha}:{}),
       model:config.model,aspectRatio:'1:1',
@@ -201,7 +218,7 @@ export async function submitReferenceJob(appPath:string,root:string,userData:str
       anchorId:input.anchorId,sourceDefinitionHash:definition.sourceDefinitionHash,
       styleBibleSha:definition.bible.style_bible_sha256,styleProfileSha:definition.styleSha,
       analysisSha:definition.analysisSha,approvedScriptSha:definition.scriptSha,
-      prompt:definition.prompt,promptSha:definition.promptSha,referenceFormat,
+      prompt:definition.prompt,promptSha:definition.promptSha,
       ...(definition.ownerVisualDefinitionSha?{
         ownerVisualDefinitionSha:definition.ownerVisualDefinitionSha}:{}),
       model:config.model,aspectRatio:'1:1',status:'QUEUED',createdAt:created,updatedAt:created};

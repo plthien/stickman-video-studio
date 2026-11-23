@@ -5,7 +5,7 @@ import {canonical,contentHash,hash,loadSchema,validateWithSchema,
   type ScriptAnalysis,type StyleBible,type BibleCharacter} from './contracts.js';
 import {validateScriptAnalysis,verifiedVisualTraits,
   type ApprovedScriptSnapshot} from './scriptAnalysis.js';
-import type {PinnedStyle} from './styleBible.js';
+import {referencePromptForCharacter,type PinnedStyle} from './styleBible.js';
 import type {OwnerVisualDefinition} from './visualDefinitions.js';
 
 function oldDiskSchema(kind:'analysis'|'bible'){
@@ -112,4 +112,33 @@ export function activeNativeCharacters(rows:BibleCharacter[]):BibleCharacter[]{
     delete output.entity_kind;
     return output;
   });
+}
+/** Strictly historical support for jobs submitted before the single-output
+ * generation contract. Never used by new POST or editable character metadata.
+ * Reconstruct the exact former request-scoped prompt before comparing SHA. */
+export type FrozenReferenceFormat='four_view'|'group_overview';
+export function frozenRequestedReferencePrompt(bible:StyleBible,charId:string,
+  pinned:PinnedStyle,ownerDefinition:OwnerVisualDefinition|undefined,
+  frozenFormat:FrozenReferenceFormat){
+  if(frozenFormat!=='four_view'&&frozenFormat!=='group_overview')
+    throw Error('REFERENCE_HISTORICAL_FORMAT_INVALID');
+  const four=referencePromptForCharacter(bible,charId,pinned,ownerDefinition);
+  if(frozenFormat==='four_view')return four;
+  const fourBlock=[
+    'ONE SQUARE 1:1 IMAGE. Exactly FOUR edge-to-edge panels in a 2×2 sheet:',
+    'Upper-left: front close-up/detail of the actual subject.',
+    'Upper-right: front full view of the entire subject.',
+    'Lower-left: side view of the entire subject.',
+    'Lower-right: back view of the entire subject.',
+    'Same ONE identity and proportions in all panels. No assumed human anatomy.',
+    'NO gutters, frames, captions,',
+    'letters, labels, numbers, logos, watermark, cropping or extra people.'
+  ].join('\\n');
+  const groupBlock=[
+    'ONE GROUP OVERVIEW. One coherent approved group in a single image.',
+    'Do not render four copies or invent new group members. No printed labels.'
+  ].join('\\n');
+  if(!four.prompt.includes(fourBlock))throw Error('REFERENCE_FROZEN_PROMPT_LAYOUT_STALE');
+  const prompt=four.prompt.replace(fourBlock,groupBlock);
+  return {...four,prompt,prompt_sha256:hash(prompt)};
 }

@@ -21,7 +21,8 @@ import {identityWorkflowSnapshot,freezeIdentityTask,importIdentityResult,
   registerOwnerReference,approveOwnerReference,publishStyleBibleReferences,
   previewIdentityUpgrade,upgradeIdentityPolicy,registerValidatedGeneratedReference,
   readIdentityWorkflow,approveOwnerVisualDefinition} from './identity/identityWorkflow.js';
-import {listReferenceJobs,submitReferenceJob,syncReferenceJob} from './identity/referenceGeneration.js';
+import {listReferenceJobs,submitReferenceJob,syncReferenceJob,
+  validateNewReferenceGenerateInput} from './identity/referenceGeneration.js';
 import {previewReferenceSwitchImpact} from './identity/impact.js';
 import type {IdentityReviewOperation} from './identity/contracts.js';
 import { assertLocalRoot, assertMediaRelative, fileFetchUrl, mediaUrl, projectId, readState, strictJson, writeState, type NativeCommand, type Stage, type StudioState } from './services.js';
@@ -125,11 +126,11 @@ function registerIpc() {
       revision,selectedIds,decodeGlabsImage,reviewedImpactSha256));
   ipcMain.handle('identity:referenceJobs',(_event,id:string)=>
     listReferenceJobs(rootFor(id)));
-  ipcMain.handle('identity:generateReference',(_event,id:string,input:{
-    anchorId:string;authorized:true;regenerate?:boolean;acknowledgeUnknown?:boolean;
-    referenceFormat?:'four_view'|'group_overview'
-  })=>submitReferenceJob(app.getAppPath(),rootFor(id),app.getPath('userData'),
-    safeStorage,input));
+  ipcMain.handle('identity:generateReference',(_event,id:string,input:unknown)=>{
+    const request=validateNewReferenceGenerateInput(input);
+    return submitReferenceJob(app.getAppPath(),rootFor(id),app.getPath('userData'),
+      safeStorage,request);
+  });
   ipcMain.handle('identity:syncReference',async(_event,id:string,jobId:string)=>{
     const root=rootFor(id);
     const job=await syncReferenceJob(app.getAppPath(),root,app.getPath('userData'),
@@ -139,7 +140,7 @@ function registerIpc() {
       // Frozen legacy jobs must never attach to an unrelated newer draft.
       const sameDraft=working.draftSha256===job.analysisSha&&
         working.bible?.style_bible_sha256===job.styleBibleSha;
-      if(job.referenceFormat!==undefined||sameDraft)
+      if(sameDraft)
         registerValidatedGeneratedReference(root,app.getAppPath(),{
           expectedRevision:working.revision,job
         },decodeGlabsImage);
