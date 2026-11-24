@@ -8,7 +8,7 @@ import { reconcileScriptActivation, confirmImport, freezeTask, stageImport, getN
 import {confirmLifecycleResult,freezeLifecycleTask,readFrozenExternalTask,stageLifecycleResult} from './externalLifecycle.js';
 import {readExternalHistory} from './externalHistory.js';
 import {prepareNativeImages,saveNativeImagePrompt,loadImageStyleProfile} from './imagePreparation.js';
-import { getCaptionReview, draftCaptionReview, approveCaptionReview,autoCaptionReview } from './captionReview.js';
+import { getCaptionReview, draftCaptionReview, approveCaptionReview,autoCaptionReview,freezeCaptionAuthorTask,importCaptionAuthorResult } from './captionReview.js';
 import {glabsSettings,saveGlabsSettings,glabsCredentialStatus,saveGlabsKey,clearGlabsKey,glabsProbe,reconcileGlabsJobs,readGlabsJob,submitGlabsImage,pollGlabsImage,approveGlabsImage,cancelQueuedGlabsImage,type GLabsSettings,type ImageRequest} from './glabs.js';
 import {createGlabsAutoPolling} from './glabsAutoPolling.js';
 import { discoverNano, generateNano, nanoBase } from './nanoClient.js';
@@ -218,6 +218,8 @@ function registerIpc() {
   ipcMain.handle('external:fulfillMedia', (_event, id: string, token:string, key:string, relative:string, rights:string) => fulfillMedia(app.getAppPath(), rootFor(id), token, key, relative, rights));
   ipcMain.handle('voice:captionReview', (_event, id: string) => getCaptionReview(rootFor(id)));
   ipcMain.handle('voice:captionAuto',(_event,id:string)=>autoCaptionReview(rootFor(id)));
+  ipcMain.handle('voice:captionAuthorFreeze',(_event,id:string)=>freezeCaptionAuthorTask(rootFor(id)));
+  ipcMain.handle('voice:captionAuthorImport',(_event,id:string,text:string)=>importCaptionAuthorResult(rootFor(id),text));
   ipcMain.handle('voice:captionDraft', (_event, id: string, boundaries: number[]) => draftCaptionReview(rootFor(id),boundaries));
   ipcMain.handle('voice:captionApprove', (_event, id: string, note: string) => approveCaptionReview(rootFor(id),note));
   ipcMain.handle('voice:nanoDiscover', (_event, endpoint: string) => discoverNano(endpoint));

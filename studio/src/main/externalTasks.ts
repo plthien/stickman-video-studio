@@ -97,7 +97,10 @@ function nativePromptProjection(context:ReturnType<typeof projectContext>,root:s
           })),
           source_definition_hash:character.source_definition_hash,
           explicit_visual_traits:character.explicit_visual_traits,
-          visual_readiness:character.visual_readiness
+          visual_readiness:character.visual_readiness,
+          ...(character.ai_design?{ai_design:character.ai_design}:{}),
+          label:character.label,narrative_role:character.narrative_role,
+          continuity_notes:character.continuity_notes,physical_constraints:character.physical_constraints
         }))
       }
     }:{}),
@@ -216,6 +219,8 @@ export function freezeTask(appPath: string, root: string, stage: Stage, rebuild 
     state.externalTaskArchive.push({stage,operation:'author',task:{...prior,status:prior.status==='IMPORTED'?'IMPORTED':'STALE'}});
     prior.status='STALE';
   }
+  if(stage==='native'&&state.identityPolicy==='v1'&&state.alignment?.captionReview?.mode==='AUTO')
+    throw Error('CAPTION_AI_OR_OWNER_REVIEW_REQUIRED: historical automatic grouping is not authority for new Native authoring.');
   const revision = (prior?.revision ?? 0) + 1; const id = randomUUID();
   const response = stage === 'script'
     ? { schema: 'mode-b-external-result-v1', project_id: state.project.id, task_id: id, revision, input_sha256: inputSha256, stage, payload: { schema: 'mode-b-script-v1', sections: [], authoring: {} } }
