@@ -92,20 +92,8 @@ function nativePromptProjection(context:ReturnType<typeof projectContext>,root:s
     ...(approvedIdentity?{
       upstream_character_authority:{
         ...approvedIdentity,
-        // Analysis.description, name aliases and narrative role are not
-        // validated appearance. Do not promote that text to Native Author.
-        characters:approvedIdentity.characters.map(character=>({
-          char_id:character.char_id,
-          source_mentions:character.occurrences.map(hit=>({
-            section_id:hit.section_id,quote:hit.quote
-          })),
-          source_definition_hash:character.source_definition_hash,
-          explicit_visual_traits:character.explicit_visual_traits,
-          visual_readiness:character.visual_readiness,
-          ...(character.ai_design?{ai_design:character.ai_design}:{}),
-          label:character.label,narrative_role:character.narrative_role,
-          continuity_notes:character.continuity_notes,physical_constraints:character.physical_constraints
-        }))
+        // Reviewed structured creative records are transported intact; no prose inference.
+        characters:approvedIdentity.characters
       }
     }:{}),
     prompt_projection_version:'native-author-word-only-v1',
@@ -757,7 +745,7 @@ export function importMediaFile(root:string,source:string,kind:'image'|'sfx',rig
   // File import alone never claims native mapping and never corrupts a frozen task.
   writeState(root,state);return{...entry,status:'IMPORTED_UNASSIGNED'};
 }
-export function fulfillMedia(appPath:string,root:string,token:string,key:string,relative:string,rights:string,hooks:{afterPending?:()=>void;afterState?:()=>void;ownerReviewed?:true;decode?:IdentityDecoder}={}){
+export function fulfillMedia(appPath:string,root:string,token:string,key:string,relative:string,rights:string,hooks:{afterPending?:()=>void;afterState?:()=>void;ownerReviewed?:true;providerApproval?:true;decode?:IdentityDecoder}={}){
   const pending=readPending(root),state=readState(root);
   if(pending.stage!=='native'||pending.projectId!==state.project.id||pending.token!==token)throw new Error('Project/pending token mismatch.');
   if(pending.taskId!==assertTaskCurrent(appPath,root,'native',state).id||pending.revision!==state.tasks?.native?.revision)throw new Error('Frozen task binding mismatch.');
@@ -771,6 +759,8 @@ export function fulfillMedia(appPath:string,root:string,token:string,key:string,
   const binding={relative,sha256:hash,rights:rights.trim(),kind:ref.kind};
   const previous=pending.fulfillments[key];
   if(previous){if(JSON.stringify(previous)!==JSON.stringify(binding))throw new Error('A frozen target cannot be silently remapped; rebuild/review the task.');return pendingResult(root,pending);}
+  if(state.identityPolicy==='v1'&&ref.kind==='image'&&hooks.ownerReviewed!==true&&hooks.providerApproval!==true)
+    throw Error('OWNER_IMAGE_EXPLICIT_APPROVAL_REQUIRED');
   let ownerImageApproval:OwnerImageApproval|undefined;
   if(state.identityPolicy==='v1'&&ref.kind==='image'&&hooks.ownerReviewed===true){
     const draft=readNativeDraft(root,state)!;

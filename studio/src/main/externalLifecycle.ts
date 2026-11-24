@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {atomicJson,inspectWavBuffer,readState,resolveProjectFile,sha,strictJson,writeState,type ExternalOperation,type Stage,type StudioState} from './services.js';
+import {readApprovedNativeIdentity} from './identity/nativeBinding.js';
 import {compileAuthority} from './externalAuthority.js';
 import {getCaptionReview,nativeVoiceTiming} from './captionReview.js';
 import {alignmentText} from './alignment.js';
@@ -22,7 +23,7 @@ const pendingPath=(root:string)=>path.join(lifecycleDir(root),'pending.json');
 const canonical=(value:unknown):string=>Array.isArray(value)?`[${value.map(canonical).join(',')}]`:value&&typeof value==='object'?`{${Object.entries(value as Record<string,unknown>).sort(([a],[b])=>a.localeCompare(b)).map(([key,item])=>`${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`:JSON.stringify(value);
 
 /** Source-exact, read-only Native lifecycle evidence. No character-level timing. */
-function nativeLifecycleEvidence(root:string,state:StudioState){
+function nativeLifecycleEvidence(root:string,state:StudioState,appPath?:string){
   const script=state.approvedScript,voice=state.voice,alignment=state.alignment;
   if(!script||sha(script.text)!==script.sha256||!Array.isArray(script.sections)||
     script.sections.map(row=>row.text).join('\n\n')!==script.text)
@@ -56,6 +57,7 @@ function nativeLifecycleEvidence(root:string,state:StudioState){
     throw new Error('NATIVE_LIFECYCLE_APPROVED_CAPTIONS_REQUIRED');
   const timing=nativeVoiceTiming(root,state);
   return{
+    ...(appPath&&state.identityPolicy==='v1'?{upstream_character_authority:readApprovedNativeIdentity(root,appPath)}:{}),
     approved_narration:{sections:script.sections,authoring:script.authoring??null,
       revision:script.revision,sha256:script.sha256},
     accepted_wav:{path:voice.path,sha256:voice.sha256,duration_seconds:voice.duration},
@@ -295,7 +297,7 @@ function assertLifecycleFresh(appPath:string,root:string,state:StudioState,task:
   if(!task.authorityFingerprint||task.authorityFingerprint!==authorityIdentity(authority))
     throw new Error('REBUILD_REQUIRED: installed Mode B creative authority changed.');
   if(task.stage==='native'&&task.evidenceSha256&&
-    sha(JSON.stringify(nativeLifecycleEvidence(root,state)))!==task.evidenceSha256)
+    sha(JSON.stringify(nativeLifecycleEvidence(root,state,task.structuredReviewScope?appPath:undefined)))!==task.evidenceSha256)
     throw new Error('STALE: Native approved narration, word or caption evidence changed.');
   for(const item of task.mediaBaseline??[]){
     const live=(state.media??[]).find(row=>JSON.stringify(row)===JSON.stringify(item));
@@ -528,7 +530,7 @@ function dedicatedLifecyclePrompt(
       'Assess approved narrative event coverage, causal progression, visually meaningful changes (not literal narration rewording), composition, silhouettes, visible actions, positions, contacts and important state changes for every Shot.',
       'Assess feasible motion with documented Mode B layers/keyframes, timing and pacing against actual words/pauses, without enforcing one Shot per caption; assess readable typography and selected B style.',
       'Assess character identity/clothes/poses, locations, props, geography, screen direction and physics across adjacent AND NON-ADJACENT Shots; consider continuing world and story constraints.',
-      'Assess every image layer versus real shot_id/layer_id/safe expected path in asset_needs, generated-image feasibility and continuity references. Differentiate proposed missing assets from actually verified local media.',
+      'Assess every image layer versus real shot_id/layer_id/safe expected path in asset_needs, generated-image feasibility and continuity references. Compare explicit character_ids, visual design and continuity with the approved upstream identity evidence; identify omitted or contradictory creative choices yourself. Differentiate proposed missing assets from actually verified local media.',
       'Assess sound_script SFX/ambience tied to genuine events, rather than generic sound beds; check manifest structural feasibility, reference and timing consistency without claiming native CLI validation.',
       'TEXT-ONLY COVERAGE: use coverage.modalities=["manifest"], ranges=[], media_sha256s=[]; findings target ONLY real frozen shot IDs, with precise violated requirement, manifest/ledger evidence and actionable recommendation. No minimum finding quota; REVIEWED_NO_FINDINGS is never a preset.',
       'DO NOT claim actual image viewing, rendered motion, listened audio, caption synchronization or original CLI PASS from local paths and SHA alone. Return review findings, NOT a corrected manifest.'
@@ -774,7 +776,7 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   // Owner-provided empty arrays are explicit authorizations, never auto-filled.
   // A verified auxiliary path does not suppress independent selected-Shot rights.
   const editableIds=[...new Set(scope.editableIds??suggested?.editableIds??[])];
-  if(operation==='correct'&&stage==='native'&&artifact.context==='DRAFT'&&
+  if(operation==='correct'&&stage==='native'&&(artifact.context==='DRAFT'||state.identityPolicy==='v1')&&
     (editableIds.length>0||editablePaths.some(pointer=>!suggested?.editablePaths.includes(pointer))))
     throw Error('CORRECT_SCOPE_EXCEEDS_STRUCTURED_REVIEW');
   if(operation==='correct'&&!editableIds.length&&!editablePaths.length)
@@ -851,7 +853,7 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
     evidencePack,mediaTransferAttested,mediaSha256s,mediaDuration,editableIds,editablePaths,findingIds,targetIds,relevantPrior,
     correctionLineage:lineage?{correctTaskId:lineage.correctTaskId,reviewTaskId:lineage.reviewTaskId}:null};
   const sourceContextSha256=lifecycleSourceContext(state,stage,operation),authorityFingerprint=authorityIdentity(authority);
-  const nativeSourceEvidence=stage==='native'?nativeLifecycleEvidence(root,state):undefined;
+  const nativeSourceEvidence=stage==='native'?nativeLifecycleEvidence(root,state,appPath):undefined;
   const evidenceSha256=nativeSourceEvidence?sha(JSON.stringify(nativeSourceEvidence)):undefined;
   const inputSha256=sha(JSON.stringify({...snapshot,sourceContextSha256,authorityFingerprint,evidenceSha256}));
   if(!rebuild&&prior?.status==='FROZEN'&&prior.inputSha256===inputSha256&&fs.existsSync(resolveProjectFile(root,prior.promptPath)))

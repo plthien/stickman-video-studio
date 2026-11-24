@@ -237,7 +237,7 @@ export function compileImageJobSpecs(input:{
       styleAnchors:profile.anchors,
       draftIdentity:{projectId,authorTaskId,token,revision:draftRevision,creativeFingerprint:fingerprint},
       occurrencesAtPath:paths.get(target.path)??1,ownerEdited:Boolean(validOwner),
-      ...(validOwner&&owner?.ownerReviewSha===ownerOverrideReviewSha(projectId,target.key,owner)?{ownerCreativeReviewSha:owner.ownerReviewSha}:{})
+      ...(validOwner&&owner&&owner.ownerReviewSha===ownerOverrideReviewSha(projectId,target.key,owner)?{ownerCreativeReviewSha:owner.ownerReviewSha}:{})
     };
   });
 }

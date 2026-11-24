@@ -287,10 +287,14 @@ export function freezeIdentityTask(root:string,operation:IdentityReviewOperation
     throw Error('SCRIPT_ANALYSIS_RECHECK_CORRECTION_REQUIRED');
   const recheckFindings=operation==='recheck'?
     prior.currentTask?.task.review_findings??[]:[];
-  const promptInputs={sourceAnalysisSha:prior.draftSha256,
+  const contextState=readState(root);
+  const creativeContext={brief:contextState.brief,style:contextState.project.style,authoring:script.authoring};
+  const creativeContextSha=contentHash(creativeContext);
+  const promptInputs={creativeContextSha,sourceAnalysisSha:prior.draftSha256,
     unresolvedFindings:operation==='recheck'?recheckFindings:
       prior.independentReview?.findings??[]};
   const task=freezeAnalysisTask(script,operation,prior.revision+1,promptInputs);
+  task.creative_context_sha256=creativeContextSha;
   if(operation==='correct'){
     task.finding_ids=prior.independentReview!.findings.map(f=>f.finding_id);
     task.review_findings=structuredClone(prior.independentReview!.findings);
@@ -322,6 +326,7 @@ export function freezeIdentityTask(root:string,operation:IdentityReviewOperation
       analysisAuthorContract(task),
     ].join('\n\n');
   }
+  task.prompt+='\n\nFROZEN PROJECT CREATIVE CONTEXT '+JSON.stringify(creativeContext);
   const next=clone(prior);
   next.currentTask={task,status:'FROZEN',frozenArtifactSha:prior.draftSha256,
     at:new Date().toISOString()};
@@ -332,6 +337,9 @@ export function importIdentityResult(root:string,text:string,expectedRevision:nu
   const prior=readIdentityWorkflow(root),script=active(root),entry=prior.currentTask;
   if(prior.revision!==expectedRevision)throw Error('IDENTITY_REVISION_CONFLICT');
   if(!entry||entry.status!=='FROZEN')throw Error('IDENTITY_FROZEN_TASK_REQUIRED');
+  const contextState=readState(root);
+  if(entry.task.creative_context_sha256!==undefined&&entry.task.creative_context_sha256!==contentHash({brief:contextState.brief,style:contextState.project.style,authoring:script.authoring}))
+    throw Error('SCRIPT_ANALYSIS_CREATIVE_CONTEXT_STALE');
   if(entry.frozenArtifactSha!==prior.draftSha256)
     throw Error('SCRIPT_ANALYSIS_FROZEN_CANDIDATE_STALE');
   if(entry.task.operation==='correct'){
@@ -347,7 +355,7 @@ export function importIdentityResult(root:string,text:string,expectedRevision:nu
     const expectedInput=contentHash({
       lineage:analysisLineage(script),operation:'correct',
       revision:entry.task.revision,
-      promptInputs:{sourceAnalysisSha:prior.draftSha256,
+      promptInputs:{...(entry.task.creative_context_sha256?{creativeContextSha:entry.task.creative_context_sha256}:{}),sourceAnalysisSha:prior.draftSha256,
         unresolvedFindings:review.findings}
     });
     if(entry.task.input_sha256!==expectedInput)
@@ -416,6 +424,8 @@ export function freezeStyleBibleTask(root:string,appPath:string,
     prior.styleDesignTask?.status!=='IMPORTED'||!['review','recheck'].includes(prior.styleDesignTask.task.operation)))
     throw Error('STYLE_DESIGN_CORRECTION_REVIEW_REQUIRED');
   if(operation==='recheck'&&(prior.styleDesignTask?.status!=='IMPORTED'||prior.styleDesignTask.task.operation!=='correct'))
+    throw Error('STYLE_DESIGN_RECHECK_CORRECTION_REQUIRED');
+  if(operation==='review'&&prior.styleDesignTask?.task.operation==='correct'&&prior.styleDesignTask.status==='IMPORTED')
     throw Error('STYLE_DESIGN_RECHECK_CORRECTION_REQUIRED');
   const findings=operation==='correct'?review!.findings:operation==='recheck'?
     prior.styleDesignTask?.task.review_findings??[]:[];

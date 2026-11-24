@@ -12,7 +12,7 @@ export interface AnalysisTask {
   schema:'mode-b-identity-external-task-v1';stage:'script_analysis';
   operation:IdentityReviewOperation;project_id:string;task_id:string;
   revision:number;input_sha256:string;source_script_sha256:string;
-  source_authoring_sha256:string;prompt:string;
+  source_authoring_sha256:string;prompt:string;creative_context_sha256?:string;
   finding_ids?:string[];review_findings?:ReviewFinding[];review_sha256?:string;
 }
 export interface ReviewFinding {

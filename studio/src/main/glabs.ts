@@ -818,7 +818,7 @@ export function approveGlabsImage(appPath:string,root:string,id:string,rights:st
       'OWNER_APPROVED_GLABS_PROJECT_USE | job='+job.id+
       ' | source=G-Labs-generated | provider_license_not_verified':rights.trim();
     const imported=importMediaFile(root,resolveProjectFile(root,job.staged.path),'image',authorization);
-    const bound=fulfillMedia(appPath,root,job.token,job.targetKey,imported.path,authorization);
+    const bound=fulfillMedia(appPath,root,job.token,job.targetKey,imported.path,authorization,{providerApproval:true});
     job.approved={rights:authorization,path:imported.path,sha256:imported.sha256,provenance};
     job.status='APPROVED';writeJob(root,job);
     return{job,pending:bound};
