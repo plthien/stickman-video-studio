@@ -7,6 +7,7 @@ import {appPath,cleanup,fixture,png} from './SixIssueFixtures';
 import {readState,writeState,atomicJson,sha} from '../../src/main/services';
 import {loadImageStyleProfile} from '../../src/main/imagePreparation';
 import {compileStyleBible} from '../../src/main/identity/styleBible';
+import {compileReviewedBible} from './AIIdentityFixtures';
 import {frozenLegacyReferencePrompt,frozenRequestedReferencePrompt} from '../../src/main/identity/legacyStorage';
 import {contentHash,hash} from '../../src/main/identity/contracts';
 import {readIdentityWorkflow,registerValidatedGeneratedReference,
@@ -23,7 +24,7 @@ const cipher={isEncryptionAvailable:()=>true,
 const decode=(bytes:Buffer)=>({png:bytes,width:1,height:1});
 afterEach(()=>{cleanup();vi.restoreAllMocks();vi.unstubAllGlobals();
   for(const d of tmp.splice(0))fs.rmSync(d,{recursive:true,force:true});});
-function setup(underdescribed=false,fromAuthor=false){
+function setup(underdescribed=false,fromAuthor=false,historical=false){
   const {root}=fixture(),state=readState(root);
   const visualScript=underdescribed?'One walks.':'One has a scar and walks.';
   if(fromAuthor)state.approvedScript!.authoring={
@@ -50,7 +51,7 @@ function setup(underdescribed=false,fromAuthor=false){
       presence_ranges:[{start:0,end:3}]
     }]}};
   const profile=loadImageStyleProfile(appPath,'B1');
-  const bible=compileStyleBible(analysis,script,{
+  const bible=(historical?compileStyleBible:compileReviewedBible)(analysis,script,{
     id:'B1',guidance:profile.guidance,sha256:profile.sha256
   });
   const review={schema:'stickman-analysis-review-v1',project_id:script.projectId,
@@ -133,17 +134,15 @@ describe('F24 isolated 1:1 reference generation with explicit billing/approval b
     expect(sha(fs.readFileSync(path.join(root,approved.media_path))))
       .toBe(validated.staged?.sha256);
   });
-  it('F24-AUD-06 owner approves appearance from exact Script Author evidence before paid 1:1 generation',async()=>{
+  it('G05 optional owner override uses exact Script Author source evidence without lexical inference',async()=>{
     const {root,dir}=setup(true,true),mock=provider();
-    await expect(submitReferenceJob(appPath,root,dir,cipher,{
-      anchorId:'char_001',authorized:true
-    })).rejects.toThrow('REFERENCE_CHARACTER_NOT_READY');
+    expect(readIdentityWorkflow(root).bible!.characters[0].visual_readiness).toBe('READY_FOR_REFERENCE');
     expect(mock.posts()).toHaveLength(0);
     await expect(()=>approveOwnerVisualDefinition(root,appPath,{
       expectedRevision:readIdentityWorkflow(root).revision,anchorId:'char_001',
       provenance:'SCRIPT_AUTHOR',traits:['blue hair'],
-      evidence:'One wears a red coat.',ownerInspected:true
-    })).toThrow();
+      evidence:'No such source text exists.',ownerInspected:true
+    })).toThrow('OWNER_VISUAL_AUTHORING_EVIDENCE_MISSING');
     const reviewed=approveOwnerVisualDefinition(root,appPath,{
       expectedRevision:readIdentityWorkflow(root).revision,anchorId:'char_001',
       provenance:'SCRIPT_AUTHOR',traits:['red coat'],
@@ -167,7 +166,7 @@ describe('F24 isolated 1:1 reference generation with explicit billing/approval b
     expect(candidate.visual_definition_sha256)
       .toBe(reviewed.ownerVisualDefinitions?.[0].definitionSha);
   });
-  it('F24-AUD-06 owner brief is explicit approved identity, never invented from a bare name',async()=>{
+  it('G06 optional owner brief augments approved AI design without rewriting it',async()=>{
     const {root,dir}=setup(true),mock=provider();
     const approved=approveOwnerVisualDefinition(root,appPath,{
       expectedRevision:readIdentityWorkflow(root).revision,anchorId:'char_001',
@@ -266,6 +265,18 @@ describe('F24 isolated 1:1 reference generation with explicit billing/approval b
     }
     expect(mock.calls).toHaveLength(0);
   });
+  it('G05/G06 underdescribed character can generate from reviewed AI design alone',async()=>{
+    const {root,dir}=setup(true),mock=provider();
+    const job=await submitReferenceJob(appPath,root,dir,cipher,{anchorId:'char_001',authorized:true});
+    expect(job.prompt).toContain('Draw the approved angular silhouette with a copper scarf');
+    expect(mock.posts()).toHaveLength(1);
+  });
+  it('G06 historical Bible cannot authorize new paid reference creation',async()=>{
+    const {root,dir}=setup(false,false,true),mock=provider();
+    await expect(submitReferenceJob(appPath,root,dir,cipher,{anchorId:'char_001',authorized:true}))
+      .rejects.toThrow('STYLE_DESIGN_REAPPROVAL_REQUIRED');
+    expect(mock.posts()).toHaveLength(0);
+  });
   it('RFG-03/04 creates only one 1:1 four-view job without retired format field',async()=>{
     const {root,dir}=setup(),mock=provider();
     const created=await submitReferenceJob(appPath,root,dir,cipher,{
@@ -279,7 +290,7 @@ describe('F24 isolated 1:1 reference generation with explicit billing/approval b
     expect(mock.posts()).toHaveLength(1);
   });
   it('RFG-12 frozen requested group/four-view jobs keep exact SHA and GET-only recovery',async()=>{
-    const {root,dir}=setup(),mock=provider();
+    const {root,dir}=setup(false,false,true),mock=provider();
     const snapshot=readIdentityWorkflow(root),script=currentApprovedSource(root);
     const profile=loadImageStyleProfile(appPath,'B1');
     const pinned={id:'B1' as const,guidance:profile.guidance,sha256:profile.sha256};

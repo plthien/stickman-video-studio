@@ -4,22 +4,22 @@ import os from 'node:os';
 import path from 'node:path';
 import {afterEach,describe,expect,it,vi} from 'vitest';
 import {appPath,cleanup,fixture,nativePayload,stageNative,png} from './SixIssueFixtures';
-import {importMediaFile,confirmImport,getNativeImageGallery,
+import {importMediaFile,fulfillMedia,confirmImport,getNativeImageGallery,
   readNativeDraft,publishNativeDraftCorrection} from '../../src/main/externalTasks';
 import {prepareNativeImages,saveNativeImagePrompt} from '../../src/main/imagePreparation';
 import {saveGlabsKey,submitGlabsImage,
   pollGlabsImage,approveGlabsImage} from '../../src/main/glabs';
 import {readState,writeState,atomicJson,sha} from '../../src/main/services';
 import {contentHash,hash} from '../../src/main/identity/contracts';
-import {compileStyleBible} from '../../src/main/identity/styleBible';
+import {compileReviewedBible,approveAIStyleBible,confirmCleanNativeReview} from './AIIdentityFixtures';
 import {approveCandidate,publishApprovalSet} from '../../src/main/identity/referencePublication';
 import {currentApprovedSource} from '../../src/main/identity/identityWorkflow';
 import {loadImageStyleProfile} from '../../src/main/imagePreparation';
-import {assertPublishedIdentityCurrent,readNativeIdentityReceipt} from '../../src/main/identity/finalGate';
+import {assertPublishedIdentityCurrent,readNativeIdentityReceipt,currentDraftIdentityReceipt} from '../../src/main/identity/finalGate';
 import {readApprovedNativeIdentity} from '../../src/main/identity/nativeBinding';
 import {readIdentityWorkflow,publishStyleBibleReferences,
   freezeIdentityTask,importIdentityResult,approveScriptAnalysis,
-  prepareProjectStyleBible,approveProjectStyleBible,identityWorkflowSnapshot,
+  identityWorkflowSnapshot,
   registerOwnerReference,approveOwnerReference,
   approveOwnerVisualDefinition} from '../../src/main/identity/identityWorkflow';
 import {previewReferenceSwitchImpact} from '../../src/main/identity/impact';
@@ -57,7 +57,7 @@ function setup(continuity=false,additionalImages=0,includeBuiltIn=false,
   };
   const profile=loadImageStyleProfile(appPath,'B1');
   const pinned={id:'B1' as const,guidance:profile.guidance,sha256:profile.sha256};
-  const bible=compileStyleBible(analysis,script,pinned);
+  const bible=compileReviewedBible(analysis,script,pinned);
   const ref=owned(root,'first');
   const ownerSha=contentHash({kind:'owner-reference-bytes-v1',
     projectId:script.projectId,styleBibleSha:bible.style_bible_sha256,
@@ -122,6 +122,7 @@ function setup(continuity=false,additionalImages=0,includeBuiltIn=false,
     shot_ledger:sourceLedgerVisibleState?[{shot_id:'shot-1',
       visible_state:sourceLedgerVisibleState}]:raw.shot_ledger};
   stageNative(root,source);
+  confirmCleanNativeReview(root,appPath);
   return{root,ref,bible,set,source};
 }
 type RequestCapture={method:string;pathname:string;body:Record<string,unknown>|null};
@@ -485,8 +486,7 @@ describe('F24 Native canonical bytes, billing gate and final source receipt',()=
     importReview(root,'review',true);
     const accepted=approveScriptAnalysis(root,readIdentityWorkflow(root).revision);
     expect(accepted.analysisApproved).not.toBeNull();
-    const prepared=prepareProjectStyleBible(root,appPath,accepted.revision);
-    const approved=approveProjectStyleBible(root,appPath,prepared.revision,true);
+    const approved=approveAIStyleBible(root,appPath,accepted.revision);
     expect(readApprovedNativeIdentity(root,appPath).snapshotSha).toBe(baseline.snapshotSha);
     const imported=registerOwnerReference(root,appPath,{
       expectedRevision:approved.revision,anchorId:'char_001',
@@ -601,7 +601,7 @@ describe('F24 Native canonical bytes, billing gate and final source receipt',()=
     expect(prepared).toHaveLength(2);
     expect(prepared.every(job=>job.state==='READY')).toBe(true);
   });
-  it('C01-11/12 owner-edited prompt introduces known actor into empty-cast background: zero paid POST',async()=>{
+  it('C01-11/12 unreviewed owner-edited prompt cannot authorize paid POST',async()=>{
     const {root}=setup(false,0,false,true);
     const initial=prepareNativeImages(appPath,root).jobs.find(job=>job.layerId==='image-2')!;
     expect(initial.state).toBe('READY');
@@ -614,17 +614,17 @@ describe('F24 Native canonical bytes, billing gate and final source receipt',()=
     });
     const edited=updated.jobs.find(job=>job.layerId==='image-2')!;
     expect(edited.state).toBe('BLOCKED');
-    expect(edited.reason).toContain('NATIVE_IDENTITY_CHARACTER_CAST_MISSING');
+    expect(edited.reason).toContain('NATIVE_OWNER_PROMPT_REVIEW_REQUIRED');
     await expect(submitGlabsImage(appPath,root,auth,cipher,{
       targetKey:edited.targetKey,prompt:edited.prompt,
       model:'nano_banana_2',aspectRatio:'9:16',references:edited.references,
       authorized:true,preparedFingerprint:edited.draftIdentity.creativeFingerprint
-    },decode)).rejects.toThrow('NATIVE_IDENTITY_CHARACTER_CAST_MISSING');
+    },decode)).rejects.toThrow('NATIVE_OWNER_PROMPT_REVIEW_REQUIRED');
     expect(mock.posts()).toHaveLength(0);
     expect(getNativeImageGallery(appPath,root).targets.filter(row=>row.fulfilled))
       .toHaveLength(0);
   });
-  it('AUD02-07/08 owner-edited image introduces an unbound visible woman: zero paid POST',async()=>{
+  it('AUD02-07/08 unreviewed owner-edited prompt retains canonical bytes but blocks paid POST',async()=>{
     const {root,ref}=setup(),auth=account(),mock=fakeProvider();
     const first=prepareNativeImages(appPath,root).jobs.find(job=>job.layerId==='image-1')!;
     expect(first.state).toBe('READY');
@@ -636,30 +636,30 @@ describe('F24 Native canonical bytes, billing gate and final source receipt',()=
     });
     const edited=updated.jobs.find(job=>job.layerId==='image-1')!;
     expect(edited.state).toBe('BLOCKED');
-    expect(edited.reason).toContain('NATIVE_IDENTITY_CAST_REVIEW_REQUIRED');
-    expect(edited.reason).toContain('Native Review/Correct');
+    expect(edited.reason).toContain('NATIVE_OWNER_PROMPT_REVIEW_REQUIRED');
     expect(edited.identityRequiredReferences).toContain(ref.path);
     expect(edited.references).toContain(ref.path);
     await expect(submitGlabsImage(appPath,root,auth,cipher,{
       targetKey:edited.targetKey,prompt:edited.prompt,
       model:'nano_banana_2',aspectRatio:'9:16',references:edited.references,
       authorized:true,preparedFingerprint:edited.draftIdentity.creativeFingerprint
-    },decode)).rejects.toThrow('NATIVE_IDENTITY_CAST_REVIEW_REQUIRED');
+    },decode)).rejects.toThrow('NATIVE_OWNER_PROMPT_REVIEW_REQUIRED');
     expect(mock.posts()).toHaveLength(0);
     expect(getNativeImageGallery(appPath,root).targets.every(row=>!row.fulfilled)).toBe(true);
   });
-  it('AUD02 source shot ledger visibly adds a person and blocks the paid target',async()=>{
-    const {root}=setup(false,0,false,false,
-      'One stands beside another unidentified woman in the doorway.');
+  it('G15/G18 missing confirmed Review cannot authorize a paid request; creative text is opaque',async()=>{
+    const {root}=setup(false,0,false,false,'One stands beside another unidentified woman in the doorway.');
     const auth=account(),mock=fakeProvider();
-    const edited=prepareNativeImages(appPath,root).jobs.find(job=>job.layerId==='image-1')!;
-    expect(edited.state).toBe('BLOCKED');
-    expect(edited.reason).toContain('NATIVE_IDENTITY_CAST_REVIEW_REQUIRED');
+    const reviewed=prepareNativeImages(appPath,root).jobs[0];
+    expect(reviewed.state).toBe('READY');
+    const state=readState(root);state.lifecycle=undefined;writeState(root,state);
+    const blocked=prepareNativeImages(appPath,root).jobs[0];
+    expect(blocked.state).toBe('BLOCKED');
+    expect(blocked.reason).toContain('NATIVE_CREATIVE_REVIEW_REQUIRED');
     await expect(submitGlabsImage(appPath,root,auth,cipher,{
-      targetKey:edited.targetKey,prompt:edited.prompt,
-      model:'nano_banana_2',aspectRatio:'9:16',references:edited.references,
-      authorized:true,preparedFingerprint:edited.draftIdentity.creativeFingerprint
-    },decode)).rejects.toThrow('NATIVE_IDENTITY_CAST_REVIEW_REQUIRED');
+      targetKey:blocked.targetKey,prompt:blocked.prompt,model:'nano_banana_2',aspectRatio:'9:16',
+      references:blocked.references,authorized:true,preparedFingerprint:blocked.draftIdentity.creativeFingerprint
+    },decode)).rejects.toThrow('NATIVE_CREATIVE_REVIEW_REQUIRED');
     expect(mock.posts()).toHaveLength(0);
   });
   it('AUD03 quantity-like name in scene ledger does not block valid empty scenery',()=>{
@@ -682,6 +682,15 @@ describe('F24 Native canonical bytes, billing gate and final source receipt',()=
       authorized:true,preparedFingerprint:ready.draftIdentity.creativeFingerprint
     },decode)).rejects.toThrow('IDENTITY_NATIVE_ANCHOR_NOT_APPROVED');
     expect(mock.posts()).toHaveLength(0);
+  });
+  it('G20 explicitly approved owner-imported image satisfies exact sample identity receipt without a provider job',()=>{
+    const {root}=setup(),draft=readNativeDraft(root)!;
+    const imported=owned(root,'owner-native'),target=getNativeImageGallery(appPath,root).targets[0];
+    fulfillMedia(appPath,root,draft.token,target.key,imported.path,imported.rights,{ownerReviewed:true,decode});
+    const receipt=currentDraftIdentityReceipt(root,appPath,10)!;
+    expect(receipt.rows[0].ownerApprovalId).toBeTruthy();
+    expect(receipt.rows[0].sourceJobId).toBeUndefined();
+    expect(receipt.rows[0].imageSha).toBe(imported.sha256);
   });
   it('N08 direct manual paid POST without prepared exact Native identity cannot bypass F24',async()=>{
     const {root}=setup(),accountRoot=account(),{posts}=fakeProvider();
@@ -708,7 +717,7 @@ const mockOriginalNativeCli=async(_exe:string,args:string[])=>{
   return{code:0,stdout:JSON.stringify({valid:true,fingerprint:sha(candidate),
     checked_seconds:30}),stderr:''};
 };
-  it('A04-07/08 cannot reclassify a reviewed character target into an empty-cast background via Correct',()=>{
+  it('G12/G15 structurally valid Correct may revise cast, but invalidates prior Review',()=>{
     const {root}=setup();
     const draft=readNativeDraft(root)!;
     const corrected=structuredClone(draft.artifact) as Record<string,unknown>;
@@ -719,7 +728,8 @@ const mockOriginalNativeCli=async(_exe:string,args:string[])=>{
       correctTaskId:'test-downgrade',reviewTaskId:'test-owner-scoped-review',
       editableIds:['shot-1'],editablePaths:['asset_needs[0]'],
       findingIds:['F24-A04']
-    })).toThrow('NATIVE_IDENTITY_CHARACTER_RECLASSIFICATION_BLOCKED');
+    })).not.toThrow();
+    expect(prepareNativeImages(appPath,root).jobs[0].reason).toContain('NATIVE_CREATIVE_REVIEW_REQUIRED');
   });
   it('F24-AUD-05 Native Correct keeps unchanged Layer reference snapshot SHA and invalidates only edited Layer',()=>{
     const {root}=setup();
