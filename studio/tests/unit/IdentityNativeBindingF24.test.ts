@@ -166,6 +166,22 @@ function request(root:string,key:string){
     aspectRatio:'9:16',references:spec.references,authorized:true,
     preparedFingerprint:spec.draftIdentity.creativeFingerprint};
 }
+async function approveAllNativeLayers(root:string,auth:string){
+  for(const spec of prepareNativeImages(appPath,root).jobs){
+    const created=await submitGlabsImage(appPath,root,auth,cipher,
+      request(root,spec.targetKey),decode);
+    const validated=await pollGlabsImage(appPath,root,auth,cipher,created.id,decode);
+    expect(validated.status).toBe('VALIDATED');
+    const bound=approveGlabsImage(appPath,root,created.id,undefined,decode);
+    expect(bound.job.status).toBe('APPROVED');
+  }
+}
+const mockOriginalNativeCli=async(_exe:string,args:string[])=>{
+  const candidate=fs.readFileSync(args[2]);
+  return{code:0,stdout:JSON.stringify({valid:true,fingerprint:sha(candidate),
+    checked_seconds:30}),stderr:''};
+};
+
 describe('F24 Native canonical bytes, billing gate and final source receipt',()=>{
   it('N02/N06 two independent Layer POST payloads contain identical source-verified canonical PNG bytes',async()=>{
     const {root,ref}=setup();
@@ -703,21 +719,7 @@ describe('F24 Native canonical bytes, billing gate and final source receipt',()=
     },decode)).rejects.toThrow('IDENTITY_PREPARED_FINGERPRINT_REQUIRED');
     expect(posts()).toHaveLength(0);
   });
-async function approveAllNativeLayers(root:string,auth:string){
-  for(const spec of prepareNativeImages(appPath,root).jobs){
-    const created=await submitGlabsImage(appPath,root,auth,cipher,
-      request(root,spec.targetKey),decode);
-    const validated=await pollGlabsImage(appPath,root,auth,cipher,created.id,decode);
-    expect(validated.status).toBe('VALIDATED');
-    const bound=approveGlabsImage(appPath,root,created.id,undefined,decode);
-    expect(bound.job.status).toBe('APPROVED');
-  }
-}
-const mockOriginalNativeCli=async(_exe:string,args:string[])=>{
-  const candidate=fs.readFileSync(args[2]);
-  return{code:0,stdout:JSON.stringify({valid:true,fingerprint:sha(candidate),
-    checked_seconds:30}),stderr:''};
-};
+
   it('G12/G15 structurally valid Correct may revise cast, but invalidates prior Review',()=>{
     const {root}=setup();
     const draft=readNativeDraft(root)!;

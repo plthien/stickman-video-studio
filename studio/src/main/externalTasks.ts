@@ -654,7 +654,7 @@ export function publishedNativeCreativeArtifact(root:string,state:StudioState){
   for(const ref of nativeRefs(manifest).filter(row=>row.kind==='image')){
     const need=asset_needs.find(value=>{
       const row=value as {shot_id?:string;layer_id?:string}|null;
-      return row?.shot_id===ref.shotId&&row.layer_id===ref.layerId;
+      return row!=null&&row.shot_id===ref.shotId&&row.layer_id===ref.layerId;
     }) as {expected_path?:string}|undefined;
     if(typeof need?.expected_path!=='string')throw Error('NATIVE_PUBLISHED_ASSET_NEED_MISSING');
     const bound=receipt.rows.find(row=>row.targetKey===ref.key);

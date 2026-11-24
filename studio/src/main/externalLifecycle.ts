@@ -1424,7 +1424,7 @@ export function confirmLifecycleResult(appPathOrRoot:string,rootOrToken:string,m
       source.status!=='REVIEWED_WITH_FINDINGS'||source.artifactContext!=='PUBLISHED'||
       (source.value as {artifact_sha256?:string})?.artifact_sha256!==task.artifactSha256||
       source.artifactSha256!==sha(JSON.stringify(source.value)))throw Error('NATIVE_CREATIVE_REVIEW_REQUIRED');
-    stagePublishedNativeCorrection(appPath,root,corrected,{correctTaskId:task.id,reviewTaskId:task.sourceReviewTaskId,
+    stagePublishedNativeCorrection(appPath,root,corrected,{correctTaskId:task.id,reviewTaskId:source.taskId,
       editableIds:task.editableIds??[],editablePaths:task.editablePaths??[],findingIds:task.findingIds??[],
       baselineSha256:task.artifactSha256,responseSha256:String(pending.responseSha256)});
     invalidateGlabsJobsAfterNativeCorrection(appPath,root);
