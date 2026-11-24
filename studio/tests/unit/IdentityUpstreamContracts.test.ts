@@ -53,13 +53,10 @@ describe('F24 upstream source-grounded contract gates',()=>{
     const foreign=analysis();foreign.continuity_catalog.characters[0].occurrences[0].section_id='sec_999';
     expect(()=>validateScriptAnalysis(foreign,script)).toThrow('SCRIPT_ANALYSIS_UNKNOWN_SECTION');
   });
-  it('U03a rejects unsupported appearance traits even when an actor quote is valid',()=>{
+  it('G02 structurally valid appearance decisions are not interpreted by Backend',()=>{
     const invented=analysis();
-    invented.continuity_catalog.characters[0].explicit_visual_traits=[
-      'neon green eyes that are not in the approved narration'
-    ];
-    expect(()=>validateScriptAnalysis(invented,script))
-      .toThrow('SCRIPT_ANALYSIS_UNSUPPORTED_VISUAL_TRAIT');
+    invented.continuity_catalog.characters[0].explicit_visual_traits.push('neon green eyes that are not in the approved narration');
+    expect(validateScriptAnalysis(invented,script)).toEqual(invented);
   });
   it('U04 has a separate frozen task envelope not spoofed as Native',()=>{
     const task=freezeAnalysisTask(script,'author',1);
@@ -166,7 +163,7 @@ describe('F24 upstream source-grounded contract gates',()=>{
     expect(()=>referencePromptForCharacter(withoutAppearance,'char_001',style))
       .toThrow('STYLE_BIBLE_NEEDS_OWNER_DEFINITION');
   });
-  it('A03-04/05 accepts an attributed trait and rejects a trait belonging to another actor',()=>{
+  it('G02/G03 exact source evidence is validated, semantic attribution belongs to independent review',()=>{
     expect(()=>validateScriptAnalysis(analysis(),script)).not.toThrow();
     const impostor=analysis();
     impostor.continuity_catalog.characters[0].occurrences=[
@@ -176,10 +173,7 @@ describe('F24 upstream source-grounded contract gates',()=>{
     impostor.continuity_catalog.characters[0].presence_ranges=[
       {start:text.indexOf('Brog'),end:text.indexOf('Brog')+4}
     ];
-    // The phrase exists in sec_001 but is not attributable to the
-    // impostor's unrelated Brog occurrence in sec_002.
-    expect(()=>validateScriptAnalysis(impostor,script))
-      .toThrow('SCRIPT_ANALYSIS_VISUAL_EVIDENCE_OWNER_INVALID');
+    expect(validateScriptAnalysis(impostor,script)).toEqual(impostor);
   });
   it('A04-01/02/03/04/07 requires v1 asset_kind and canonical cast for character/pose',()=>{
     const bible=compileStyleBible(analysis(),script,style);
