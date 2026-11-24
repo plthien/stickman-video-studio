@@ -62,7 +62,7 @@ afterEach(()=>{
   else Reflect.deleteProperty(navigator,'clipboard');
 });
 const workspace=()=> <ExternalSessionProvider><ExternalWorkspace/></ExternalSessionProvider>;
-const click=(name:string)=>fireEvent.click(screen.getByRole('button',{name,exact:true}));
+const click=(name:string)=>fireEvent.click(screen.getByRole('button',{name}));
 const editor=()=>screen.getByLabelText('Script Analysis JSON result');
 const genericEditor=()=>screen.getByRole('textbox',{name:'Import JSON'});
 const enter=async()=>{
