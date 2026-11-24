@@ -250,7 +250,7 @@ function assertJobTarget(appPath:string,root:string,job:GLabsJob){
     loadImageStyleProfile(appPath,state.project.style as 'B1'|'B2'|'B3'|'B4').sha256!==job.styleProfileSha256)
     throw new Error('GLABS_JOB_STALE_STYLE_AUTHORITY: approved style source changed after image generation.');
   if(state.identityPolicy==='v1'){
-    const prepared=prepareNativeImageTarget(appPath,root,job.targetKey);
+    const prepared=prepareNativeImageTarget(appPath,root,job.targetKey,{historicalJob:true});
     if(!prepared||prepared.state!=='READY'||
       !prepared.identityBindingSnapshotSha||
       job.identityBindingSnapshotSha!==prepared.identityBindingSnapshotSha||

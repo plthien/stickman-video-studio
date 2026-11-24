@@ -472,6 +472,29 @@ export function readNativeDraft(root:string,state=readState(root)){
     revision:1+(pending.draftHistory?.length??0),artifact,sha256:sha(JSON.stringify(artifact)),
     history:pending.draftHistory??[]};
 }
+/** Creative authority is a confirmed independent review, not a structural validator.
+ * Bind the verdict to the complete current artifact and original Author task. */
+export function requireReviewedNativeDraft(state:StudioState,draft:NonNullable<ReturnType<typeof readNativeDraft>>){
+  const rows=Object.values(state.lifecycle?.artifacts??{}).filter(row=>
+    row.stage==='native'&&(row.operation==='review'||row.operation==='recheck')&&
+    row.artifactContext==='DRAFT'&&row.draftToken===draft.token&&row.draftAuthorTaskId===draft.authorTaskId&&
+    (row.value as {artifact_sha256?:string})?.artifact_sha256===draft.sha256)
+    .sort((a,b)=>b.createdAt.localeCompare(a.createdAt)||b.taskId.localeCompare(a.taskId));
+  const latest=rows[0];
+  const result=latest?.value as {artifact_sha256?:string;status?:string;findings?:unknown[];coverage?:{target_ids?:string[];modalities?:string[]}}|undefined;
+  const manifest=draft.artifact.manifest as {shots?:Array<{id:string}>};
+  const targets=(manifest.shots??[]).map(shot=>shot.id);
+  if(!latest||latest.status!=='REVIEWED_NO_FINDINGS'||result?.status!=='REVIEWED_NO_FINDINGS'||
+    latest.artifactSha256!==sha(JSON.stringify(result))||
+    !Array.isArray(result.findings)||result.findings.length!==0||
+    !Array.isArray(result.coverage?.target_ids)||result.coverage.target_ids.length!==targets.length||
+    new Set(result.coverage.target_ids).size!==targets.length||
+    targets.some(id=>!result.coverage!.target_ids!.includes(id))||
+    !result.coverage.modalities?.includes('manifest')||
+    (draft.history.length>0&&latest.operation!=='recheck'))
+    throw Error('NATIVE_CREATIVE_REVIEW_REQUIRED: confirm a clean Review or Recheck for the exact current Native draft.');
+  return latest.artifactSha256;
+}
 /** Fingerprint only the target's effective visual instructions and global
  * visual dependencies, never the entire draft or unrelated Shot revisions. */
 function imageTargetIdentity(
@@ -564,26 +587,6 @@ export function publishNativeDraftCorrection(appPath:string,root:string,original
   assertTaskCurrent(appPath,root,'native',state);
   const pending=readPending(root);
   if(pending.token!==draft.token)throw new Error('NATIVE_DRAFT_TOKEN_CHANGED');
-  if(state.identityPolicy==='v1'){
-    const originalNeeds=(draft.artifact as unknown as{
-      asset_needs:unknown[]
-    }).asset_needs;
-    const originalRows=originalNeeds.filter(row=>row&&typeof row==='object'&&
-      !Array.isArray(row)) as Array<Record<string,unknown>>;
-    const currentRows=(normalized.assetNeeds as unknown[]).filter(row=>
-      row&&typeof row==='object'&&!Array.isArray(row)) as Array<Record<string,unknown>>;
-    for(const previous of originalRows){
-      if(previous.asset_kind!=='character'&&previous.asset_kind!=='pose')continue;
-      const updated=currentRows.find(row=>row.shot_id===previous.shot_id&&
-        row.layer_id===previous.layer_id&&
-        row.expected_path===previous.expected_path);
-      // An in-place correction cannot evade F24 by silently relabeling an
-      // existing character/pose layer "background" or "other". Such a change
-      // requires a new explicit Native Author + independent owner review.
-      if(updated&&updated.asset_kind!=='character'&&updated.asset_kind!=='pose')
-        throw Error('NATIVE_IDENTITY_CHARACTER_RECLASSIFICATION_BLOCKED');
-    }
-  }
   const kept=Object.fromEntries(Object.entries(pending.fulfillments).filter(([key,binding])=>{
     const previous=pending.references.find(ref=>ref.key===key);
     const next=normalized.missing.find(ref=>ref.key===key);

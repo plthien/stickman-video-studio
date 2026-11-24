@@ -1,7 +1,7 @@
 /** F24 final publish/render gate. Never edits Native Core project.json. */
 import fs from 'node:fs';
 import {atomicJson,readState,resolveProjectFile,sha,strictJson} from '../services.js';
-import {getNativeImageGallery,readNativeDraft,nativeImageTargetsFromManifest} from '../externalTasks.js';
+import {getNativeImageGallery,readNativeDraft,nativeImageTargetsFromManifest,requireReviewedNativeDraft} from '../externalTasks.js';
 import {listGlabsJobs,readGlabsJob} from '../glabs.js';
 import {readApprovedNativeIdentity,validateNativeBindingPayload} from './nativeBinding.js';
 import {createContinuityResolver} from './continuityGraph.js';
@@ -50,6 +50,7 @@ export function currentDraftIdentityReceipt(root:string,appPath:string,
   if(state.identityPolicy!=='v1')return null;
   const draft=readNativeDraft(root,state);
   if(!draft)throw Error('IDENTITY_NATIVE_DRAFT_REQUIRED');
+  requireReviewedNativeDraft(state,draft);
   const native=draft.artifact as unknown as {
     manifest:Record<string,unknown>;asset_needs:unknown[]
   };

@@ -142,43 +142,11 @@ export function suggestedCorrectScope(
   const findingIds=selected??unresolvedIds;
   const findingScopes:Record<string,{editableIds:string[];editablePaths:string[]}>={};
   for(const finding of unresolved){
-    const withEvidence=finding as typeof finding & {evidence?:{detail?:string};requirement?:string};
-    const evidence=[withEvidence.evidence?.detail,withEvidence.requirement].filter(Boolean).join(' ');
-    const paths=stage==='native'?
-      [...new Set(evidence.match(/\/(?:shot_ledger|sound_script|asset_needs)\/(?:0|[1-9]\d*)(?:\/[A-Za-z0-9_~\/-]+)+/g)??[])]:[];
-    const inferredPaths:string[]=[];
-    if(paths.length===1){
-      const pointer=paths[0],parts=pointer.slice(1).split('/'),
-        collection=(current.value as Record<string,unknown>)[parts[0]];
-      if(Array.isArray(collection)){
-        const row=collection[Number(parts[1])] as Record<string,unknown>|undefined;
-        if(row&&typeof row==='object'&&!Array.isArray(row)){
-          const owner=row.shot_id??row.shotId??row.target_id??row.targetId;
-          if(typeof owner==='string'&&finding.target_ids.includes(owner)){
-            try{checkEditablePaths(stage,current.value,[pointer]);inferredPaths.push(pointer);}
-            catch{/* No exact pointer authority: fail closed on inferred auxiliary edits. */}
-          }
-        }
-      }
-    }
-    // A concrete auxiliary-only finding never grants an entire Shot. A mixed
-    // finding may grant both scopes ONLY if it explicitly references a Shot
-    // field in the current manifest as well as an existing auxiliary pointer.
-    const shotPaths=stage==='native'?
-      [...new Set(evidence.match(/\/manifest\/shots\/(?:0|[1-9]\d*)\/(?:[A-Za-z0-9_~\/-]+)/g)??[])]:[];
-    const shots=stage==='native'?
-      ((current.value as {manifest:{shots?:Array<{id:string}>}}).manifest.shots??[]):[];
-    const explicitShotEvidence=shotPaths.some(pointer=>{
-      const index=Number(pointer.split('/')[3]),target=shots[index];
-      if(!target||!finding.target_ids.includes(target.id))return false;
-      try{checkEditablePaths(stage,current.value,[pointer]);return true;}
-      catch{return false;}
-    });
-    const auxiliaryOnly=paths.length>0&&!explicitShotEvidence;
-    findingScopes[finding.id]={
-      editableIds:auxiliaryOnly?[]:[...new Set(finding.target_ids)],
-      editablePaths:inferredPaths
-    };
+    // Only structured, target-bound paths confer edit authority. Historical
+    // prose is evidence for humans, never a source of editable JSON paths.
+    const paths=(finding as typeof finding & {editable_paths?:string[]}).editable_paths??[];
+    if(stage==='native'&&paths.length)validateFindingPaths(current.value,finding.target_ids,paths);
+    findingScopes[finding.id]={editableIds:stage==='native'?[]:[...finding.target_ids],editablePaths:[...paths]};
   }
   return{
     editableIds:[...new Set(findingIds.flatMap(id=>findingScopes[id]?.editableIds??[]))],
@@ -590,6 +558,7 @@ function dedicatedLifecyclePrompt(
     'NOT_VERIFIED: a requested verification cannot be established from supplied evidence.',
     'payload.coverage has exactly target_ids,modalities,ranges,media_sha256s. target_ids must be actual reviewed IDs within the frozen inventory. Use script/manifest for inspectable text only; do not claim picture, motion or sound observation without actual media examination.',
     'For each finding include exactly id, severity (critical|major|minor), status (open|resolved|uncertain), target_ids (real IDs), requirement, evidence (kind, detail and supported optional SHA/time range), recommendation.',
+    ...(stage==='native'&&operation!=='media-review'?['For Native Review/Recheck include editable_paths: exact existing JSON pointers owned by the declared target IDs. Unresolved findings require explicit paths; resolved findings may use []. Never rely on prose for edit authority.']:[]),
     'Allowed evidence.kind: manifest|inferred|unverified|observed. observed claims require genuine inspection of supplied media, source_sha256 tied to attested primary media and real supported in-range time/target. Never fabricate observations.',
     'Use [] for findings only when that is the truthful outcome. Never invent a finding to meet a quota.',
     'Construct ONE COMPLETE mode-b-lifecycle-result-v1 JSON object with the exact frozen identity and the required payload fields. The identity reference below is NOT a completed result.'
@@ -906,6 +875,7 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,prompt,{encoding:'utf8',flag:'wx'});
   state.lifecycle??={tasks:{},artifacts:{}};
   state.lifecycle.tasks[key]={id,stage,operation,revision,inputSha256,artifactSha256:artifact.sha256,
+    ...(stage==='native'&&(operation==='review'||operation==='recheck')?{structuredReviewScope:true}:{}),
     artifactContext:artifact.context,draftToken:artifact.draftToken,draftAuthorTaskId:artifact.authorTaskId,draftRevision:artifact.draftRevision,promptPath:relative,promptSha256:sha(prompt),status:'FROZEN',createdAt:new Date().toISOString(),editableIds,editablePaths,targetIds,findingIds,sourceReviewTaskId:operation==='correct'?reviewSource?.taskId:undefined,originalTaskSha256:sha(originalTask),sourceContextSha256,authorityFingerprint,evidenceSha256,mediaTransferAttested,mediaKind:scope.media,mediaSha256s,mediaDuration,mediaBaseline:structuredClone(state.media??[])};
   writeState(root,state);
   return{...state.lifecycle.tasks[key],prompt};
@@ -957,7 +927,24 @@ export function validateLocks(stage:Stage,before:unknown,after:unknown,editable:
   }
   compare(before,after,'');
 }
-function validateReview(payload:Record<string,unknown>,task:NonNullable<StudioState['lifecycle']>['tasks'][string],operation:ExternalOperation){
+/** JSON-pointer ownership is structural: resolve declared paths against the artifact. */
+function validateFindingPaths(artifact:unknown,targetIds:string[],paths:string[]){
+  if(new Set(paths).size!==paths.length)throw Error('REVIEW_EDITABLE_PATHS_DUPLICATE');
+  checkEditablePaths('native',artifact,paths);
+  const root=artifact as {manifest:{shots?:Array<{id:string}>};[key:string]:unknown};
+  for(const path of paths){
+    const parts=path.split('/');
+    let owner:unknown;
+    if(parts[1]==='manifest'&&parts[2]==='shots')owner=root.manifest.shots?.[Number(parts[3])]?.id;
+    else if(['shot_ledger','sound_script','asset_needs'].includes(parts[1])){
+      const rows=root[parts[1]];
+      const row=Array.isArray(rows)?rows[Number(parts[2])]:undefined;
+      owner=row?.shot_id??row?.shotId??row?.target_id??row?.targetId;
+    }
+    if(typeof owner!=='string'||!targetIds.includes(owner))throw Error('REVIEW_EDITABLE_PATH_TARGET_MISMATCH: '+path);
+  }
+}
+function validateReview(payload:Record<string,unknown>,task:NonNullable<StudioState['lifecycle']>['tasks'][string],operation:ExternalOperation,artifact:unknown){
   exact(payload,['schema','artifact_sha256','status','coverage','findings']);
   if(payload.schema!=='mode-b-review-v1'||payload.artifact_sha256!==task.artifactSha256||
     !['REVIEWED_WITH_FINDINGS','REVIEWED_NO_FINDINGS','INSUFFICIENT_EVIDENCE','NOT_VERIFIED'].includes(String(payload.status))||
@@ -1006,13 +993,18 @@ function validateReview(payload:Record<string,unknown>,task:NonNullable<StudioSt
   for(const item of findings){
     if(!item||typeof item!=='object'||Array.isArray(item))throw new Error('Invalid review finding.');
     const f=item as Record<string,unknown>;
-    exact(f,['id','severity','status','target_ids','requirement','evidence','recommendation']);
+    exact(f,['id','severity','status','target_ids','requirement','evidence','recommendation',...(task.structuredReviewScope?['editable_paths']:[])]);
     if(typeof f.id!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(f.id)||ids.has(f.id))throw new Error('Invalid/duplicate finding ID.');
     ids.add(f.id);
     if(!['critical','major','minor'].includes(String(f.severity))||!['open','resolved','uncertain'].includes(String(f.status)))
       throw new Error('Invalid finding severity/status.');
     if(!Array.isArray(f.target_ids)||!f.target_ids.length||f.target_ids.some(id=>!task.targetIds?.includes(String(id))))
       throw new Error('Finding refers to an unknown shot/section target.');
+    if(task.structuredReviewScope){
+      if(!Array.isArray(f.editable_paths)||f.editable_paths.some(path=>typeof path!=='string')||
+        (f.status!=='resolved'&&!f.editable_paths.length))throw Error('REVIEW_EDITABLE_PATHS_REQUIRED');
+      validateFindingPaths(artifact,f.target_ids as string[],f.editable_paths as string[]);
+    }
     if(typeof f.requirement!=='string'||!f.requirement.trim()||typeof f.recommendation!=='string')throw new Error('Finding lacks violated requirement.');
     const ev=f.evidence as Record<string,unknown>;
     if(!ev||typeof ev!=='object'||Array.isArray(ev)||!['manifest','inferred','unverified','observed'].includes(String(ev.kind))||
@@ -1186,7 +1178,7 @@ export function stageLifecycleResult(appPath:string,root:string,stage:Stage,oper
       validateLocks(stage,previous,corrected,task.editableIds??[],task.editablePaths??[]);
     }
   }else{
-    validateReview(payload,task,operation);
+    validateReview(payload,task,operation,current.value);
   }
   const responseSha256=sha(text),savedPath=resultPath(root,task.id),stagingPath=pendingPath(root);
   if(fs.existsSync(stagingPath))recoverDisabledMediaReviewPending(root,state);

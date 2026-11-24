@@ -39,7 +39,7 @@ interface Window { studio?: Readonly<{
     key:string;shotId:string;layerId:string;path:string;boundPath:string;boundSha256?:string;creativeFingerprint?:string;fulfilled:boolean;managed:boolean
   }>;}>;
   prepareImages:(id:string,persist?:boolean)=>Promise<{status:string;style:string;revision:number;token:string;jobs:import('../main/imagePreparation').ImageJobSpec[];shotCount:number;imageOccurrences:number;uniquePaths:number}>;
-  saveImagePrompt:(id:string,input:{targetKey:string;fingerprint:string;styleSha256?:string;prompt:string;references:string[]})=>Promise<Awaited<ReturnType<NonNullable<Window['studio']>['prepareImages']>>>;
+  saveImagePrompt:(id:string,input:{targetKey:string;fingerprint:string;styleSha256?:string;prompt:string;references:string[];ownerReviewed?:true})=>Promise<Awaited<ReturnType<NonNullable<Window['studio']>['prepareImages']>>>;
   glabsSettings:()=>Promise<{config:{endpoint:string;contract:'legacy';model:string;aspectRatio:string};credential:{configured:boolean;secureStorageAvailable:boolean}}>;
   glabsConfigure:(config:{endpoint:string;contract:'legacy';model:string;aspectRatio:string})=>Promise<unknown>;
   glabsSaveKey:(key:string)=>Promise<unknown>;glabsClearKey:()=>Promise<unknown>;

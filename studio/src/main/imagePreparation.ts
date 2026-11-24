@@ -1,7 +1,7 @@
 /** Phase-1 Native image prompt projection. No paid requests and no Native mutation. */
 import fs from 'node:fs';
 import path from 'node:path';
-import {getPendingMedia,nativeImageTargetIdentity,nativeImageTargetIdentityFromSnapshot,readNativeDraft} from './externalTasks.js';
+import {getPendingMedia,nativeImageTargetIdentity,nativeImageTargetIdentityFromSnapshot,readNativeDraft,requireReviewedNativeDraft} from './externalTasks.js';
 import {imageRequirementsForTarget} from './imageRequirements.js';
 import {createContinuityResolver} from './identity/continuityGraph.js';
 import {contentHash} from './identity/contracts.js';
@@ -19,7 +19,7 @@ export interface ImageJobSpec {
   styleProfileRef:{id:Style;path:string;sha256:string};
   references:string[];styleAnchors:Array<{id:string;label:string;sha256:string}>;
   draftIdentity:{projectId:string;authorTaskId:string;token:string;revision:number;creativeFingerprint:string};
-  occurrencesAtPath:number; ownerEdited:boolean;
+  occurrencesAtPath:number; ownerEdited:boolean; ownerCreativeReviewSha?:string;
   /** Current policy's mandatory reference snapshot; absent on legacy jobs. */
   identityBindingSnapshotSha?:string;identityTargetBindingSha?:string;
   identityApprovalSetSha?:string;identityStyleBibleSha?:string;
@@ -93,7 +93,11 @@ export function loadImageStyleProfile(appPath:string,style:Style):StyleProfile{
   if(!guidance.trim())throw new Error('STYLE_AUTHORITY_EMPTY');
   return{id:style,path:relative,sha256:sha(file),guidance,anchors:[]};
 }
-interface Override {creativeFingerprint:string;style:'B1'|'B2'|'B3'|'B4';styleSha256:string;prompt:string;references:string[]}
+interface Override {creativeFingerprint:string;style:'B1'|'B2'|'B3'|'B4';styleSha256:string;prompt:string;references:string[];ownerReviewSha?:string}
+function ownerOverrideReviewSha(projectId:string,targetKey:string,override:Override){
+  const {ownerReviewSha:_review,...body}=override;void _review;
+  return contentHash({schema:'owner-reviewed-image-prompt-v1',projectId,targetKey,...body});
+}
 interface OverrideFile {schema:'storyboard-image-overrides-v1';projectId:string;items:Record<string,Override>}
 const overridesFile=(root:string)=>resolveProjectFile(root,'.studio/storyboard/image-overrides-v1.json');
 function readOverrides(root:string,projectId:string):OverrideFile{
@@ -232,7 +236,8 @@ export function compileImageJobSpecs(input:{
       references:validOwner&&Array.isArray(owner?.references)?owner.references:[],
       styleAnchors:profile.anchors,
       draftIdentity:{projectId,authorTaskId,token,revision:draftRevision,creativeFingerprint:fingerprint},
-      occurrencesAtPath:paths.get(target.path)??1,ownerEdited:Boolean(validOwner)
+      occurrencesAtPath:paths.get(target.path)??1,ownerEdited:Boolean(validOwner),
+      ...(validOwner&&owner?.ownerReviewSha===ownerOverrideReviewSha(projectId,target.key,owner)?{ownerCreativeReviewSha:owner.ownerReviewSha}:{})
     };
   });
 }
@@ -329,6 +334,14 @@ function withUpstreamIdentity(appPath:string,root:string,item:ImageJobSpec,
       effectivePrompt:'',effectivePromptSha256:''};
   }
 }
+function gateCreativeAuthority(state:ReturnType<typeof readState>,draft:NonNullable<ReturnType<typeof readNativeDraft>>,item:ImageJobSpec):ImageJobSpec{
+  if(state.identityPolicy!=='v1'||item.state==='BLOCKED')return item;
+  try{
+    requireReviewedNativeDraft(state,draft);
+    if(item.ownerEdited&&!item.ownerCreativeReviewSha)throw Error('NATIVE_OWNER_PROMPT_REVIEW_REQUIRED');
+    return item;
+  }catch(error){return {...item,state:'BLOCKED',reason:error instanceof Error?error.message:String(error)};}
+}
 export function prepareNativeImages(appPath:string,root:string,persist=false){
   const state=readState(root),draft=readNativeDraft(root,state),pending=getPendingMedia(appPath,root);
   if(!draft||!pending||draft.token!==pending.token)
@@ -345,7 +358,7 @@ export function prepareNativeImages(appPath:string,root:string,persist=false){
     createContinuityResolver(appPath,root):undefined;
   const jobs=compileImageJobSpecs({projectId:state.project.id,style,authorTaskId:draft.authorTaskId,draftRevision:draft.revision,
     token:draft.token,pending,profile,fingerprints,overrides:overrides.items})
-    .map(job=>resolver?withUpstreamIdentity(appPath,root,job,resolver):job);
+    .map(job=>gateCreativeAuthority(state,draft,resolver?withUpstreamIdentity(appPath,root,job,resolver):job));
   const result={status:'PRE_MEDIA_PROJECTION' as const,style,revision:draft.revision,token:draft.token,
     jobs,shotCount:Array.isArray(pending.after?.shots)?pending.after!.shots!.length:0,imageOccurrences:image.length,
     uniquePaths:new Set(image.map(target=>target.path)).size};
@@ -361,7 +374,7 @@ export function prepareNativeImages(appPath:string,root:string,persist=false){
  * Full Storyboard preparation remains available for the UI, but a single
  * Generate must not reparse/fingerprint all 100–200 image occurrences.
  */
-export function prepareNativeImageTarget(appPath:string,root:string,targetKey:string):ImageJobSpec|null{
+export function prepareNativeImageTarget(appPath:string,root:string,targetKey:string,options:{historicalJob?:boolean}={}):ImageJobSpec|null{
   const state=readState(root),draft=readNativeDraft(root,state);
   if(!draft)return null;
   const pending=getPendingMedia(appPath,root);
@@ -379,10 +392,12 @@ export function prepareNativeImageTarget(appPath:string,root:string,targetKey:st
     draftRevision:draft.revision,token:draft.token,pending:selectedPending,profile,
     fingerprints:{[targetKey]:fingerprint},overrides:overrides.items
   })[0];
-  return candidate?withUpstreamIdentity(appPath,root,candidate):null;
+  if(!candidate)return null;
+  const prepared=withUpstreamIdentity(appPath,root,candidate);
+  return options.historicalJob?prepared:gateCreativeAuthority(state,draft,prepared);
 }
 export function saveNativeImagePrompt(appPath:string,root:string,input:{
-  targetKey:string;fingerprint:string;styleSha256?:string;prompt:string;references:string[]
+  targetKey:string;fingerprint:string;styleSha256?:string;prompt:string;references:string[];ownerReviewed?:true
 }){
   if(!input||typeof input.targetKey!=='string'||typeof input.fingerprint!=='string'||
     typeof input.prompt!=='string'||input.prompt.length>18000||
@@ -395,8 +410,10 @@ export function saveNativeImagePrompt(appPath:string,root:string,input:{
   const style=state.project.style as Style,profile=loadImageStyleProfile(appPath,style);
   if(input.styleSha256!==undefined&&input.styleSha256!==profile.sha256)
     throw new Error('STORYBOARD_OVERRIDE_STALE_STYLE_AUTHORITY');
-  file.items[input.targetKey]={creativeFingerprint:identity.fingerprint,style,styleSha256:profile.sha256,
+  const override:Override={creativeFingerprint:identity.fingerprint,style,styleSha256:profile.sha256,
     prompt:input.prompt.trim(),references:[...input.references]};
+  if(input.ownerReviewed===true)override.ownerReviewSha=ownerOverrideReviewSha(state.project.id,input.targetKey,override);
+  file.items[input.targetKey]=override;
   atomicJson(overridesFile(root),file);
   return prepareNativeImages(appPath,root,true);
 }

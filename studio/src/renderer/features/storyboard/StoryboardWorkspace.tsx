@@ -332,9 +332,10 @@ export function StoryboardWorkspace(){
       spec.path!==target.path)return;
     setBusy(true);setError('');
     try{
+      if(!window.confirm('Approve this exact edited prompt and reference selection for the current image target?'))return;
       const next=await window.studio.saveImagePrompt(scope.projectId,{
         targetKey,fingerprint:spec.draftIdentity.creativeFingerprint,
-        styleSha256:spec.styleProfileRef.sha256,prompt,references
+        styleSha256:spec.styleProfileRef.sha256,prompt,references,ownerReviewed:true
       });
       if(isCurrentProjectSession(scope))setPrepared(next);
     }catch(error){if(isCurrentProjectSession(scope))setError(message(error));}
