@@ -918,6 +918,7 @@ describe('AF01 — Published Native Correct must stage and independently Recheck
     expect(fs.readFileSync(path.join(root,'project.json'))).toEqual(manifest);
     expect(fs.readFileSync(path.join(root,'.studio/identity/native-publication-v1.json'))).toEqual(receiptBytes);
     expect(readState(root).external.native).toEqual(before.external.native);
+    expect(readState(root).tasks?.native?.confirmedResponseSha256).toBe(before.tasks?.native?.confirmedResponseSha256);
     expect(readState(root).media).toEqual(before.media);
     expect(readState(root).nativeReadiness).toEqual(before.nativeReadiness);
     expect(assertPublishedIdentityCurrent(root,appPath)).toEqual(receipt);
@@ -934,6 +935,12 @@ describe('AF01 — Published Native Correct must stage and independently Recheck
     await expect(confirmImport(appPath,root,draft.token,{previewSeconds:20,allowSampleDraft:true,validator:mockOriginalNativeCli}))
       .rejects.toThrow('NATIVE_CREATIVE_REVIEW_REQUIRED');
     await recheck(root,paths,true);
+    const current=readState(root),correctedReview=current.lifecycle!.tasks['native:recheck'];
+    const validRecord=structuredClone(current.lifecycle!.artifacts[correctedReview.id]);
+    current.lifecycle!.artifacts[correctedReview.id].sourceCorrectTaskId='earlier-correction';
+    writeState(root,current);
+    expect(prepareNativeImages(appPath,root).jobs[0].reason).toContain('NATIVE_CREATIVE_REVIEW_REQUIRED');
+    current.lifecycle!.artifacts[correctedReview.id]=validRecord;writeState(root,current);
     const prepared=prepareNativeImages(appPath,root).jobs;
     expect(prepared).toHaveLength(1);
     expect(prepared[0].state).toBe('READY');
@@ -946,6 +953,8 @@ describe('AF01 — Published Native Correct must stage and independently Recheck
     await confirmImport(appPath,root,draft.token,{previewSeconds:30,validator:mockOriginalNativeCli});
     const published=assertPublishedIdentityCurrent(root,appPath)!;
     expect(published.rows[0]).toEqual(receipt.rows[0]);
+    expect(readState(root).tasks?.native?.confirmedResponsePath).toBe(before.tasks?.native?.confirmedResponsePath);
+    expect(readState(root).tasks?.native?.confirmedResponseSha256).toBe(before.tasks?.native?.confirmedResponseSha256);
     expect(published.rows[1].sourceJobId).toBe(job.id);
     expect(published.rows[1].targetBindingSha).not.toBe(receipt.rows[1].targetBindingSha);
     expect((readState(root).external.native!.artifact as {assetNeeds:unknown[]}).assetNeeds[1])

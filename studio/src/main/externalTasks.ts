@@ -1041,7 +1041,10 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
     oldConfirmedResponseSha=fresh.tasks!.native!.confirmedResponseSha256;
     oldConfirmedResponsePath=fresh.tasks!.native!.confirmedResponsePath;
     fresh.external.native={revision,artifact:{...again,missing:again.missing},importedAt:new Date().toISOString()};
-    fresh.nativeReadiness=readiness;fresh.preview=undefined;fresh.approval=undefined;fresh.render=undefined;fresh.tasks!.native!.status='IMPORTED';fresh.tasks!.native!.confirmedResponseSha256=pending.responseSha256;fresh.tasks!.native!.confirmedResponsePath=pending.responsePath;
+    fresh.nativeReadiness=readiness;fresh.preview=undefined;fresh.approval=undefined;fresh.render=undefined;fresh.tasks!.native!.status='IMPORTED';
+    // A Published Correct is already journaled under its own lifecycle task.
+    // Keep the original Author response identity instead of relabeling Correct JSON.
+    if(!pending.publishedCorrection){fresh.tasks!.native!.confirmedResponseSha256=pending.responseSha256;fresh.tasks!.native!.confirmedResponsePath=pending.responsePath;}
     committedState=fresh;writeState(root,fresh);stateCommitted=true;
     if(identityReceipt){
       const published=publishNativeIdentityReceipt(root,appPath,

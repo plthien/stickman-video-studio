@@ -15,7 +15,7 @@ type Scope={targetIds?:string[];editableIds?:string[];editablePaths?:string[];fi
 function requireActiveLifecycleOperation(operation:Exclude<ExternalOperation,'author'>):void{
   if(operation==='media-review')throw new Error('MEDIA_REVIEW_DISABLED: legacy history is read-only.');
 }
-type Artifact={value:unknown;sha256:string;id:string;context?:'DRAFT'|'PUBLISHED';draftRevision?:number;draftToken?:string;authorTaskId?:string;publishedCorrectionTaskId?:string};
+type Artifact={value:unknown;sha256:string;id:string;context?:'DRAFT'|'PUBLISHED';draftRevision?:number;draftToken?:string;authorTaskId?:string;publishedCorrectionTaskId?:string;latestCorrectTaskId?:string};
 const exact=(value:Record<string,unknown>,keys:string[])=>{const extra=Object.keys(value).filter(key=>!keys.includes(key));if(extra.length)throw new Error(`Unknown field: ${extra[0]}`)};
 const lifecycleDir=(root:string)=>resolveProjectFile(root,'.studio/external/lifecycle');
 const resultPath=(root:string,id:string)=>path.join(lifecycleDir(root),'results',id+'.json');
@@ -88,7 +88,8 @@ function artifactFor(root:string,state:StudioState,stage:Stage,operation:Externa
     return{value:draft.artifact,sha256:draft.sha256,
       id:'native-draft-'+draft.authorTaskId+'-r'+draft.revision+'-'+operation,
       context,draftRevision:draft.revision,draftToken:draft.token,authorTaskId:draft.authorTaskId,
-      publishedCorrectionTaskId:draft.publishedCorrectionTaskId};
+      publishedCorrectionTaskId:draft.publishedCorrectionTaskId,
+      latestCorrectTaskId:draft.publishedCorrectionTaskId?draft.history.at(-1)?.correctTaskId:undefined};
   }
   const file=path.join(root,'project.json');
   if(!state.external.native||!fs.existsSync(file))
@@ -128,6 +129,7 @@ export function suggestedCorrectScope(
     .filter(item=>item.stage===stage&&(item.operation==='review'||item.operation==='recheck')&&
       (item.value as {artifact_sha256?:string})?.artifact_sha256===current.sha256&&
       (current.context!=='DRAFT'||(item.draftAuthorTaskId===current.authorTaskId&&item.draftToken===current.draftToken))&&
+      (!current.publishedCorrectionTaskId||(item.draftRevision===current.draftRevision&&item.sourceCorrectTaskId===current.latestCorrectTaskId))&&
       (stage!=='native'||item.artifactContext===current.context||
         (current.context==='PUBLISHED'&&!item.artifactContext)))
     .sort((a,b)=>b.createdAt.localeCompare(a.createdAt)||b.taskId.localeCompare(a.taskId));
@@ -886,7 +888,7 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   state.lifecycle.tasks[key]={id,stage,operation,revision,inputSha256,artifactSha256:artifact.sha256,
     ...(stage==='native'&&(operation==='review'||operation==='recheck')?{structuredReviewScope:true}:{}),
     ...(identityEvidenceSha?{identityEvidenceSha}:{}),
-    artifactContext:artifact.context,draftToken:artifact.draftToken,draftAuthorTaskId:artifact.authorTaskId,draftRevision:artifact.draftRevision,promptPath:relative,promptSha256:sha(prompt),status:'FROZEN',createdAt:new Date().toISOString(),editableIds,editablePaths,targetIds,findingIds,sourceReviewTaskId:operation==='correct'?reviewSource?.taskId:undefined,sourceCorrectTaskId:lineage?.correctTaskId,originalTaskSha256:sha(originalTask),sourceContextSha256,authorityFingerprint,evidenceSha256,mediaTransferAttested,mediaKind:scope.media,mediaSha256s,mediaDuration,mediaBaseline:structuredClone(state.media??[])};
+    artifactContext:artifact.context,draftToken:artifact.draftToken,draftAuthorTaskId:artifact.authorTaskId,draftRevision:artifact.draftRevision,promptPath:relative,promptSha256:sha(prompt),status:'FROZEN',createdAt:new Date().toISOString(),editableIds,editablePaths,targetIds,findingIds,sourceReviewTaskId:operation==='correct'?reviewSource?.taskId:undefined,sourceCorrectTaskId:lineage?.correctTaskId??artifact.latestCorrectTaskId,originalTaskSha256:sha(originalTask),sourceContextSha256,authorityFingerprint,evidenceSha256,mediaTransferAttested,mediaKind:scope.media,mediaSha256s,mediaDuration,mediaBaseline:structuredClone(state.media??[])};
   writeState(root,state);
   return{...state.lifecycle.tasks[key],prompt};
 }

@@ -164,6 +164,7 @@ export function StyleBibleWorkspace(){
     </section>
     {bible&&<section className="card">
       <h3>Source-grounded Visual Reference catalog</h3>
+      {snapshot.currentOwnerVisualDefinitionError&&<p role="alert">{snapshot.currentOwnerVisualDefinitionError}</p>}
       {!bible.characters.length&&<p>Empty approved cast. No invented anchors are required.</p>}
       <div className="identity-bible-grid">{bible.characters.map(character=>{
         const visualDefinition=snapshot.currentOwnerVisualDefinitions?.find(value=>

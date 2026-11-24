@@ -228,6 +228,7 @@ export function identityWorkflowSnapshot(root:string,appPath:string){
     }catch(error){readiness=error instanceof Error?error.message:'IDENTITY_INTEGRITY_ERROR';}
   }
   const currentOwnerVisualDefinitions:OwnerVisualDefinition[]=[];
+  let currentOwnerVisualDefinitionError:string|null=null;
   if(record.bible&&record.bibleTextApproved?.sha256===record.bible.style_bible_sha256){
     try{
       const script=currentApprovedSource(root);
@@ -235,9 +236,9 @@ export function identityWorkflowSnapshot(root:string,appPath:string){
         const definition=resolveOwnerVisualDefinition(record.ownerVisualDefinitions,script,record.bible,row.char_id);
         if(definition)currentOwnerVisualDefinitions.push(definition);
       }
-    }catch(error){readiness=error instanceof Error?error.message:'OWNER_VISUAL_DEFINITION_INVALID';currentOwnerVisualDefinitions.length=0;}
+    }catch(error){currentOwnerVisualDefinitionError=error instanceof Error?error.message:'OWNER_VISUAL_DEFINITION_INVALID';currentOwnerVisualDefinitions.length=0;}
   }
-  return{policy,readiness,journal:record,currentOwnerVisualDefinitions};
+  return{policy,readiness,journal:record,currentOwnerVisualDefinitions,currentOwnerVisualDefinitionError};
 }
 /** No implicit migration of historical candidates, Core output or reference identity. */
 export function previewIdentityUpgrade(root:string){
