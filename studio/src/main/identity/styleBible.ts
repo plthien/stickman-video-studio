@@ -3,11 +3,13 @@ import {canonical,contentHash,hash,loadSchema,validateWithSchema,
   type StyleBible,type ScriptAnalysis,type BibleCharacter} from './contracts.js';
 import {validateScriptAnalysis,verifiedVisualTraits,type ApprovedScriptSnapshot} from './scriptAnalysis.js';
 import type {OwnerVisualDefinition} from './visualDefinitions.js';
+import {validateStyleDesign,validateStyleDesignReview} from './styleBibleAuthoring.js';
+import type {StyleDesignCandidate,StyleDesignReview} from './contracts.js';
 export interface PinnedStyle {
   id:'B1'|'B2'|'B3'|'B4';guidance:string;sha256:string;
 }
 export function compileStyleBible(analysis:ScriptAnalysis,script:ApprovedScriptSnapshot,
-  pinned:PinnedStyle):StyleBible{
+  pinned:PinnedStyle,design?:StyleDesignCandidate,review?:StyleDesignReview):StyleBible{
   validateScriptAnalysis(analysis,script);
   // loadImageStyleProfile() pins the full installed B1–B4 source (for B4:
   // manifest + lock + anchors), while guidance is an extracted projection.
@@ -16,7 +18,19 @@ export function compileStyleBible(analysis:ScriptAnalysis,script:ApprovedScriptS
   if(!pinned.guidance.trim()||!/^[a-f0-9]{64}$/.test(pinned.sha256)||
     !['B1','B2','B3','B4'].includes(pinned.id))
     throw Error('STYLE_BIBLE_STYLE_PIN_INVALID');
+  if(design){
+    validateStyleDesign(design,analysis,pinned);
+    if(!review||!validateStyleDesignReview(review,design).approved)
+      throw Error('STYLE_DESIGN_REVIEW_REQUIRED');
+  }else if(review)throw Error('STYLE_DESIGN_CANDIDATE_REQUIRED');
   const characters:BibleCharacter[]=analysis.continuity_catalog.characters.map(char=>{
+    if(design){
+      const ai_design=structuredClone(design.characters.find(row=>row.char_id===char.char_id)!);
+      const inherited=structuredClone(char);
+      return {...inherited,ai_design,
+        source_definition_hash:contentHash({inherited,ai_design,styleId:pinned.id,styleSha:pinned.sha256}),
+        visual_readiness:'READY_FOR_REFERENCE' as const};
+    }
     const inherited=structuredClone(char);
     // Keep original proposal/evidence in source_definition_hash for invalidation,
     // but only verified stable traits enter drawable Style Bible authority.
@@ -38,14 +52,39 @@ export function compileStyleBible(analysis:ScriptAnalysis,script:ApprovedScriptS
     project_id:script.projectId,source_script_sha256:script.sha256,
     source_authoring_sha256:contentHash(script.authoring),analysis_sha256:contentHash(analysis),
     style_profile_id:pinned.id,style_profile_sha256:pinned.sha256,
-    style_guidance_sha256:hash(pinned.guidance),characters};
+    style_guidance_sha256:hash(pinned.guidance),characters,
+    ...(design&&review?{design_authority:{version:'ai-style-design-v1' as const,candidate_sha256:contentHash(design),review}}:{})};
   const bible={...base,style_bible_sha256:contentHash(base)};
   return validateWithSchema<StyleBible>(loadSchema('bible'),bible);
 }
 export function validateStyleBibleCurrent(bible:StyleBible,
   analysis:ScriptAnalysis,script:ApprovedScriptSnapshot,pinned:PinnedStyle){
-  const current=compileStyleBible(analysis,script,pinned);
-  if(canonical(current)!==canonical(bible))throw Error('STYLE_BIBLE_SOURCE_STALE');
+  validateScriptAnalysis(analysis,script);
+  validateWithSchema<StyleBible>(loadSchema('bible'),bible);
+  const {style_bible_sha256,...body}=bible;
+  if(contentHash(body)!==style_bible_sha256||
+    bible.project_id!==script.projectId||bible.source_script_sha256!==script.sha256||
+    bible.source_authoring_sha256!==contentHash(script.authoring)||
+    bible.analysis_sha256!==contentHash(analysis)||bible.style_profile_id!==pinned.id||
+    bible.style_profile_sha256!==pinned.sha256||bible.style_guidance_sha256!==hash(pinned.guidance)||
+    bible.characters.length!==analysis.continuity_catalog.characters.length)
+    throw Error('STYLE_BIBLE_SOURCE_STALE');
+  if(bible.design_authority){
+    const design:StyleDesignCandidate={schema:'stickman-ai-style-design-v1',
+      project_id:bible.project_id,analysis_sha256:bible.analysis_sha256,
+      style_profile_sha256:bible.style_profile_sha256,
+      characters:bible.characters.map(row=>row.ai_design!)};
+    // The imported design order is normalized to the catalog order before review.
+    if(contentHash(design)!==bible.design_authority.candidate_sha256||
+      canonical(compileStyleBible(analysis,script,pinned,design,bible.design_authority.review))!==canonical(bible))
+      throw Error('STYLE_DESIGN_AUTHORITY_STALE');
+  }else{
+    for(const char of analysis.continuity_catalog.characters){
+      const row=bible.characters.find(c=>c.char_id===char.char_id);
+      if(!row||row.ai_design||row.source_definition_hash!==contentHash({inherited:char,styleId:pinned.id,styleSha:pinned.sha256}))
+        throw Error('STYLE_BIBLE_SOURCE_STALE');
+    }
+  }
   return true;
 }
 /** Print view labels only in prompt instructions; generated pixels must have NO text. */
@@ -71,7 +110,14 @@ export function referencePromptForCharacter(bible:StyleBible,
     'NO gutters, frames, captions,',
     'letters, labels, numbers, logos, watermark, cropping or extra people.'
   ].join('\n');
-  const lines=[
+  const lines=row.ai_design&&bible.design_authority?[
+    'APPROVED AI CHARACTER REFERENCE PROMPT',
+    'Character ID: '+row.char_id,row.ai_design.visual_design,row.ai_design.reference_prompt,
+    ...(ownerDefinition?['Explicit owner-approved override: '+JSON.stringify(ownerDefinition.traits),
+      'Owner definition SHA: '+ownerDefinition.definitionSha]:[]),
+    'EXACT B'+pinned.id.slice(-1)+' VISUAL STYLE / SHA '+pinned.sha256,pinned.guidance,format,
+    'Do not include text anywhere in generated image.'
+  ]:[
     'SOURCE-GROUNDED CANONICAL STYLE BIBLE REFERENCE',
     'Character ID: '+row.char_id,
     // Freeform label, description and narrative role are never visual input:

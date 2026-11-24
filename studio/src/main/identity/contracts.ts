@@ -29,7 +29,22 @@ export interface ScriptAnalysis {
   source_script_sha256:string;source_authoring_sha256:string;
   continuity_catalog:{characters:ScriptCharacter[]};
 }
+/** Versioned AI design extension; older published v1 snapshots omit it. */
+export interface AICharacterDesign {
+  char_id:CharacterId;visual_design:string;source_established:string[];
+  creative_decisions:string[];reference_prompt:string;
+}
+export interface StyleDesignCandidate {
+  schema:'stickman-ai-style-design-v1';project_id:string;
+  analysis_sha256:string;style_profile_sha256:string;characters:AICharacterDesign[];
+}
+export interface StyleDesignReview {
+  schema:'stickman-ai-style-design-review-v1';project_id:string;
+  candidate_sha256:string;independent_review:true;approved:boolean;
+  findings:Array<{finding_id:string;severity:'P0'|'P1'|'P2';location:string;issue:string;evidence:string}>;
+}
 export interface BibleCharacter extends ScriptCharacter {
+  ai_design?:AICharacterDesign;
   source_definition_hash:string;
   visual_readiness:'READY_FOR_REFERENCE'|'NEEDS_OWNER_DEFINITION';
 }
@@ -39,6 +54,7 @@ export interface StyleBible {
   analysis_sha256:string;style_profile_id:'B1'|'B2'|'B3'|'B4';
   style_profile_sha256:string;style_guidance_sha256:string;
   characters:BibleCharacter[];style_bible_sha256:string;
+  design_authority?:{version:'ai-style-design-v1';candidate_sha256:string;review:StyleDesignReview};
 }
 export interface NativeImageNeedV2 {
   shot_id:string;layer_id:string;expected_path:string;content:string;

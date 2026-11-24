@@ -64,6 +64,59 @@
       "items": {
         "$ref": "#/$defs/character"
       }
+    },
+    "design_authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "candidate_sha256",
+        "review"
+      ],
+      "properties": {
+        "version": {
+          "const": "ai-style-design-v1"
+        },
+        "candidate_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "review": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema",
+            "project_id",
+            "candidate_sha256",
+            "independent_review",
+            "approved",
+            "findings"
+          ],
+          "properties": {
+            "schema": {
+              "const": "stickman-ai-style-design-review-v1"
+            },
+            "project_id": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{24}$"
+            },
+            "candidate_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "independent_review": {
+              "const": true
+            },
+            "approved": {
+              "const": true
+            },
+            "findings": {
+              "type": "array",
+              "maxItems": 0
+            }
+          }
+        }
+      }
     }
   },
   "$defs": {
@@ -150,6 +203,9 @@
           "items": {
             "$ref": "#/$defs/visualTraitEvidence"
           }
+        },
+        "ai_design": {
+          "$ref": "#/$defs/aiDesign"
         }
       }
     },
@@ -236,6 +292,51 @@
             "scene_state",
             "requires_owner_review"
           ]
+        }
+      }
+    },
+    "aiDesign": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "char_id",
+        "visual_design",
+        "source_established",
+        "creative_decisions",
+        "reference_prompt"
+      ],
+      "properties": {
+        "char_id": {
+          "type": "string",
+          "pattern": "^char_[0-9]{3}$"
+        },
+        "visual_design": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 6000
+        },
+        "source_established": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "creative_decisions": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "reference_prompt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 12000
         }
       }
     }

@@ -1,9 +1,9 @@
 /** Read-only validation of immutable F24 on-disk snapshots and frozen jobs.
  * NEVER accept this schema for new External Author/Correct imports or publish
  * legacy fields into a newly compiled Style Bible. No storage rewriting. */
-import {canonical,contentHash,hash,loadSchema,validateWithSchema,
+import {contentHash,hash,loadSchema,validateWithSchema,
   type ScriptAnalysis,type StyleBible,type BibleCharacter} from './contracts.js';
-import {validateScriptAnalysis,verifiedVisualTraits,
+import {validateScriptAnalysis,
   type ApprovedScriptSnapshot} from './scriptAnalysis.js';
 import type {PinnedStyle} from './styleBible.js';
 import type {OwnerVisualDefinition} from './visualDefinitions.js';
@@ -28,29 +28,22 @@ export function validateHistoricalPublishedBible(analysis:ScriptAnalysis,
   if(!pinned.guidance.trim()||!/^[a-f0-9]{64}$/.test(pinned.sha256)||
     !['B1','B2','B3','B4'].includes(pinned.id))
     throw Error('STYLE_BIBLE_STYLE_PIN_INVALID');
-  // Recompute the original v1 derivation in-memory, with the original field
-  // included in each old source_definition_hash. Never write derived bytes.
-  const characters:BibleCharacter[]=analysis.continuity_catalog.characters.map(char=>{
-    const inherited=structuredClone(char);
-    const source_definition_hash=contentHash({inherited,
-      styleId:pinned.id,styleSha:pinned.sha256});
-    inherited.explicit_visual_traits=verifiedVisualTraits(char);
-    inherited.visual_trait_evidence=(char.visual_trait_evidence??[]).filter(row=>
-      inherited.explicit_visual_traits.includes(row.trait));
-    return {...inherited,source_definition_hash,
-      visual_readiness:inherited.explicit_visual_traits.length?
-        'READY_FOR_REFERENCE' as const:'NEEDS_OWNER_DEFINITION' as const};
-  });
-  const base={schema:'stickman-project-style-bible-v1' as const,
-    project_id:script.projectId,source_script_sha256:script.sha256,
-    source_authoring_sha256:contentHash(script.authoring),
-    analysis_sha256:contentHash(analysis),
-    style_profile_id:pinned.id,style_profile_sha256:pinned.sha256,
-    style_guidance_sha256:hash(pinned.guidance),characters};
-  const oldDerived={...base,style_bible_sha256:contentHash(base)};
+  // Historical authority is authenticated from the stored bytes and lineage,
+  // never reinterpreted through a newer creative projection.
   validateWithSchema<StyleBible>(oldDiskSchema('bible'),stored);
-  if(canonical(oldDerived)!==canonical(stored))
+  const {style_bible_sha256,...body}=stored;
+  if(contentHash(body)!==style_bible_sha256||
+    stored.project_id!==script.projectId||stored.source_script_sha256!==script.sha256||
+    stored.source_authoring_sha256!==contentHash(script.authoring)||
+    stored.analysis_sha256!==contentHash(analysis)||stored.style_profile_id!==pinned.id||
+    stored.style_profile_sha256!==pinned.sha256||stored.style_guidance_sha256!==hash(pinned.guidance)||
+    stored.characters.length!==analysis.continuity_catalog.characters.length)
     throw Error('IDENTITY_LEGACY_PUBLISHED_BIBLE_TAMPERED');
+  for(const char of analysis.continuity_catalog.characters){
+    const row=stored.characters.find(c=>c.char_id===char.char_id);
+    if(!row||row.source_definition_hash!==contentHash({inherited:char,styleId:pinned.id,styleSha:pinned.sha256}))
+      throw Error('IDENTITY_LEGACY_PUBLISHED_BIBLE_TAMPERED');
+  }
   return stored;
 }
 /** Reproduce ONLY frozen pre-removal job prompts for SHA verification/sync.
