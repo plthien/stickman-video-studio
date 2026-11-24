@@ -5,7 +5,8 @@ import path from 'node:path';
 import {afterEach,describe,expect,it,vi} from 'vitest';
 import {appPath,cleanup,fixture,nativePayload,stageNative,png} from './SixIssueFixtures';
 import {importMediaFile,fulfillMedia,confirmImport,getNativeImageGallery,
-  readNativeDraft,publishNativeDraftCorrection} from '../../src/main/externalTasks';
+  readNativeDraft,publishNativeDraftCorrection,publishedNativeCreativeArtifact,getPendingMedia} from '../../src/main/externalTasks';
+import {freezeLifecycleTask,stageLifecycleResult,confirmLifecycleResult} from '../../src/main/externalLifecycle';
 import {prepareNativeImages,saveNativeImagePrompt} from '../../src/main/imagePreparation';
 import {saveGlabsKey,submitGlabsImage,
   pollGlabsImage,approveGlabsImage} from '../../src/main/glabs';
@@ -843,5 +844,130 @@ const mockOriginalNativeCli=async(_exe:string,args:string[])=>{
       .toBe(false);
     expect((await import('../../src/main/externalTasks')).getPendingMedia(appPath,root)?.token)
       .toBe(token);
+  });
+});
+
+/** Full production lifecycle, with mocked provider/CLI only. */
+describe('AF01 — Published Native Correct must stage and independently Recheck',()=>{
+  type Life=ReturnType<typeof freezeLifecycleTask>;
+  const envelope=(root:string,task:Life,payload:unknown)=>JSON.stringify({
+    schema:'mode-b-lifecycle-result-v1',project_id:readState(root).project.id,
+    task_id:task.id,revision:task.revision,input_sha256:task.inputSha256,
+    stage:'native',operation:task.operation,payload});
+  const reviewFinding=(paths:string[],status:'open'|'resolved'='open')=>({
+    id:'AF01-finding',severity:'major',status,target_ids:['shot-2'],
+    requirement:'Review the structured creative authority of shot-2.',
+    evidence:{kind:'manifest',detail:'Fixture reviewer checks the exact second image target.'},
+    recommendation:'Repair only the declared fields.',editable_paths:status==='resolved'?[]:paths});
+  const reviewPayload=(task:Life,paths:string[],clean=false)=>({
+    schema:'mode-b-review-v1',artifact_sha256:task.artifactSha256,
+    status:clean?'REVIEWED_NO_FINDINGS':'REVIEWED_WITH_FINDINGS',
+    coverage:{target_ids:['shot-1','shot-2'],modalities:['manifest'],ranges:[],media_sha256s:[]},
+    findings:[reviewFinding(paths,clean?'resolved':'open')]});
+  async function baseline(){
+    const {root}=setup(false,0,false,true),auth=account();
+    fakeProvider(secondPng);
+    await approveAllNativeLayers(root,auth);
+    const token=getPendingMedia(appPath,root)!.token;
+    await confirmImport(appPath,root,token,{previewSeconds:30,validator:mockOriginalNativeCli});
+    const before=readState(root),receipt=assertPublishedIdentityCurrent(root,appPath)!;
+    return {root,auth,token,receipt,before,manifest:fs.readFileSync(path.join(root,'project.json')),
+      receiptBytes:fs.readFileSync(path.join(root,'.studio/identity/native-publication-v1.json'))};
+  }
+  async function correctPublished(root:string,paths:string[],edit:(a:ReturnType<typeof publishedNativeCreativeArtifact>)=>void){
+    const review=freezeLifecycleTask(appPath,root,'native','review',{targetContext:'PUBLISHED'},true);
+    const reviewed=stageLifecycleResult(appPath,root,'native','review',envelope(root,review,reviewPayload(review,paths)));
+    await confirmLifecycleResult(appPath,root,reviewed.token);
+    const correct=freezeLifecycleTask(appPath,root,'native','correct',{targetContext:'PUBLISHED',findingIds:['AF01-finding']});
+    expect(correct.editableIds).toEqual([]);
+    expect(correct.editablePaths).toEqual(paths);
+    const artifact=publishedNativeCreativeArtifact(root,readState(root));
+    edit(artifact);
+    const payload={schema:'mode-b-correction-v1',artifact_sha256:correct.artifactSha256,
+      finding_ids:correct.findingIds,editable_ids:correct.editableIds,editable_paths:correct.editablePaths,artifact};
+    // AF01-09: a neighboring undeclared Shot is still locked.
+    const unauthorized=structuredClone(payload);
+    (unauthorized.artifact.manifest.shots as Array<{end:number}>)[0].end=19;
+    expect(()=>stageLifecycleResult(appPath,root,'native','correct',envelope(root,correct,unauthorized))).toThrow(/Locked|scope/i);
+    const proposal=stageLifecycleResult(appPath,root,'native','correct',envelope(root,correct,payload));
+    const cli=vi.fn(mockOriginalNativeCli);
+    await confirmLifecycleResult(appPath,root,proposal.token,{validator:cli});
+    expect(cli).not.toHaveBeenCalled();
+    const draft=readNativeDraft(root)!;
+    expect(draft.history.at(-1)?.correctTaskId).toBe(correct.id);
+    expect(draft.history.at(-1)?.reviewTaskId).toBe(review.id);
+    return {draft,correct,review};
+  }
+  async function recheck(root:string,paths:string[],clean:boolean){
+    const task=freezeLifecycleTask(appPath,root,'native','recheck',{targetContext:'DRAFT'},true);
+    expect(task.findingIds).toEqual(['AF01-finding']);
+    const payload=reviewPayload(task,paths,clean);
+    expect(()=>stageLifecycleResult(appPath,root,'native','recheck',envelope(root,task,{
+      ...payload,artifact_sha256:'0'.repeat(64)}))).toThrow();
+    const staged=stageLifecycleResult(appPath,root,'native','recheck',envelope(root,task,payload));
+    await confirmLifecycleResult(appPath,root,staged.token);
+  }
+  it('AF01-01/02/03/04/05/06/07/09/10 auxiliary cast correction keeps last-good publication, invalidates only changed image and requires exact clean Recheck',async()=>{
+    const {root,auth,token,receipt,before,manifest,receiptBytes}=await baseline();
+    const paths=['/asset_needs/1/asset_kind','/asset_needs/1/character_ids'];
+    const {draft}=await correctPublished(root,paths,artifact=>{
+      const row=artifact.asset_needs[1] as Record<string,unknown>;
+      row.asset_kind='character';row.character_ids=['char_001'];
+    });
+    expect(draft.token).toBe(token);
+    expect(fs.readFileSync(path.join(root,'project.json'))).toEqual(manifest);
+    expect(fs.readFileSync(path.join(root,'.studio/identity/native-publication-v1.json'))).toEqual(receiptBytes);
+    expect(readState(root).external.native).toEqual(before.external.native);
+    expect(readState(root).media).toEqual(before.media);
+    expect(readState(root).nativeReadiness).toEqual(before.nativeReadiness);
+    expect(assertPublishedIdentityCurrent(root,appPath)).toEqual(receipt);
+    expect(getNativeImageGallery(appPath,root).targets.map(row=>row.fulfilled)).toEqual([true,false]);
+    const mock=fakeProvider(secondPng),blocked=prepareNativeImages(appPath,root).jobs[0];
+    expect(blocked.reason).toContain('NATIVE_CREATIVE_REVIEW_REQUIRED');
+    await expect(submitGlabsImage(appPath,root,auth,cipher,request(root,blocked.targetKey),decode))
+      .rejects.toThrow('NATIVE_CREATIVE_REVIEW_REQUIRED');
+    expect(mock.posts()).toHaveLength(0);
+    await expect(confirmImport(appPath,root,draft.token,{previewSeconds:20,allowSampleDraft:true,validator:mockOriginalNativeCli}))
+      .rejects.toThrow('NATIVE_CREATIVE_REVIEW_REQUIRED');
+    await recheck(root,paths,false);
+    expect(assertPublishedIdentityCurrent(root,appPath)).toEqual(receipt);
+    await expect(confirmImport(appPath,root,draft.token,{previewSeconds:20,allowSampleDraft:true,validator:mockOriginalNativeCli}))
+      .rejects.toThrow('NATIVE_CREATIVE_REVIEW_REQUIRED');
+    await recheck(root,paths,true);
+    const prepared=prepareNativeImages(appPath,root).jobs;
+    expect(prepared).toHaveLength(1);
+    expect(prepared[0].state).toBe('READY');
+    expect(prepared[0].identityCharacterIds).toEqual(['char_001']);
+    expect(mock.posts()).toHaveLength(0);
+    const job=await submitGlabsImage(appPath,root,auth,cipher,{...request(root,prepared[0].targetKey),regenerate:true},decode);
+    expect((await pollGlabsImage(appPath,root,auth,cipher,job.id,decode)).status).toBe('VALIDATED');
+    approveGlabsImage(appPath,root,job.id,undefined,decode);
+    expect(assertPublishedIdentityCurrent(root,appPath)).toEqual(receipt);
+    await confirmImport(appPath,root,draft.token,{previewSeconds:30,validator:mockOriginalNativeCli});
+    const published=assertPublishedIdentityCurrent(root,appPath)!;
+    expect(published.rows[0]).toEqual(receipt.rows[0]);
+    expect(published.rows[1].sourceJobId).toBe(job.id);
+    expect(published.rows[1].targetBindingSha).not.toBe(receipt.rows[1].targetBindingSha);
+    expect((readState(root).external.native!.artifact as {assetNeeds:unknown[]}).assetNeeds[1])
+      .toMatchObject({asset_kind:'character',character_ids:['char_001']});
+    expect(mock.posts()).toHaveLength(1);
+  });
+  it('AF01-08 manifest-changing Published Correct completes Correct → Draft → Recheck → explicit owner Publish',async()=>{
+    const {root,receipt,manifest}=await baseline();
+    const paths=['/manifest/shots/1/end'];
+    const {draft}=await correctPublished(root,paths,artifact=>{
+      (artifact.manifest.shots as Array<{end:number}>)[1].end=29;
+    });
+    expect(fs.readFileSync(path.join(root,'project.json'))).toEqual(manifest);
+    await recheck(root,paths,true);
+    expect(assertPublishedIdentityCurrent(root,appPath)).toEqual(receipt);
+    const target=getNativeImageGallery(appPath,root).targets[1];
+    expect(target.fulfilled).toBe(false);
+    const image=owned(root,'af01-owner-repair');
+    fulfillMedia(appPath,root,draft.token,target.key,image.path,image.rights,{ownerReviewed:true,decode});
+    await confirmImport(appPath,root,draft.token,{previewSeconds:30,validator:mockOriginalNativeCli});
+    expect(readNativeDraft(root)).toBeNull();
+    expect(assertPublishedIdentityCurrent(root,appPath)?.rows[1].ownerApprovalId).toBeTruthy();
+    expect(JSON.parse(fs.readFileSync(path.join(root,'project.json'),'utf8')).shots[1].end).toBe(29);
   });
 });

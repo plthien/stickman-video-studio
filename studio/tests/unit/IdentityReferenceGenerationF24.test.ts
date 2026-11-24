@@ -7,12 +7,13 @@ import {appPath,cleanup,fixture,png} from './SixIssueFixtures';
 import {readState,writeState,atomicJson,sha} from '../../src/main/services';
 import {loadImageStyleProfile} from '../../src/main/imagePreparation';
 import {compileStyleBible} from '../../src/main/identity/styleBible';
-import {compileReviewedBible} from './AIIdentityFixtures';
+import {compileReviewedBible,aiDesignFixture} from './AIIdentityFixtures';
 import {frozenLegacyReferencePrompt,frozenRequestedReferencePrompt} from '../../src/main/identity/legacyStorage';
 import {contentHash,hash} from '../../src/main/identity/contracts';
 import {readIdentityWorkflow,registerValidatedGeneratedReference,
   approveOwnerReference,currentApprovedSource,
-  approveOwnerVisualDefinition} from '../../src/main/identity/identityWorkflow';
+  approveOwnerVisualDefinition,currentOwnerVisualDefinition,prepareProjectStyleBible,freezeStyleBibleTask,
+  importStyleBibleResult,approveProjectStyleBible,publishStyleBibleReferences,publishedIdentityView} from '../../src/main/identity/identityWorkflow';
 import {readReferenceJob,submitReferenceJob,syncReferenceJob,
   validateNewReferenceGenerateInput} from '../../src/main/identity/referenceGeneration';
 import {saveGlabsKey} from '../../src/main/glabs';
@@ -330,5 +331,105 @@ describe('F24 isolated 1:1 reference generation with explicit billing/approval b
       anchorId:'char_001',authorized:false as true
     })).rejects.toThrow('REFERENCE_PAID_POST_OWNER_AUTH_REQUIRED');
     expect(mock.posts()).toHaveLength(0);
+  });
+});
+
+describe('AF02 — optional owner definition exact authority',()=>{
+  const override=(root:string)=>approveOwnerVisualDefinition(root,appPath,{
+    expectedRevision:readIdentityWorkflow(root).revision,anchorId:'char_001',
+    provenance:'OWNER_BRIEF',evidence:'Owner explicitly approves a green scarf.',
+    traits:['green scarf'],ownerInspected:true});
+  function nextBible(root:string){
+    const author=prepareProjectStyleBible(root,appPath,readIdentityWorkflow(root).revision);
+    const profile=loadImageStyleProfile(appPath,'B1');
+    const {design,review}=aiDesignFixture(author.draftAnalysis!,{id:'B1',sha256:profile.sha256,guidance:profile.guidance});
+    design.characters[0].visual_design='Approved AI design B with a blue geometric silhouette.';
+    design.characters[0].reference_prompt='Draw the reviewed design B blue geometric silhouette.';
+    design.characters[0].creative_decisions=['Blue geometric silhouette'];
+    review.candidate_sha256=contentHash(design);
+    const wrap=(record:ReturnType<typeof readIdentityWorkflow>,payload:unknown)=>{
+      const task=record.styleDesignTask!.task;
+      return JSON.stringify({schema:'mode-b-style-design-result-v1',stage:task.stage,task_id:task.task_id,
+        project_id:task.project_id,revision:task.revision,input_sha256:task.input_sha256,payload});
+    };
+    const imported=importStyleBibleResult(root,appPath,wrap(author,design),author.revision);
+    const reviewing=freezeStyleBibleTask(root,appPath,'review',imported.revision);
+    const reviewed=importStyleBibleResult(root,appPath,wrap(reviewing,review),reviewing.revision);
+    return approveProjectStyleBible(root,appPath,reviewed.revision,true);
+  }
+  it('AF02-01/02 historical override does not block generation from the new AI design',async()=>{
+    const {root,dir}=setup(true),old=override(root),mock=provider();
+    const next=nextBible(root);
+    expect(next.bible!.style_bible_sha256).not.toBe(old.bible!.style_bible_sha256);
+    expect(currentOwnerVisualDefinition(root,appPath,'char_001')).toBeNull();
+    expect(next.ownerVisualDefinitions).toEqual(old.ownerVisualDefinitions);
+    const job=await submitReferenceJob(appPath,root,dir,cipher,{anchorId:'char_001',authorized:true});
+    expect(job.ownerVisualDefinitionSha).toBeUndefined();
+    expect(job.prompt).toContain('Draw the reviewed design B blue geometric silhouette.');
+    expect(job.prompt).not.toContain('green scarf');
+    expect(mock.posts()).toHaveLength(1);
+  });
+  it('AF02-03/04/05/07 identical override on a new Bible is a new approval; same-lineage repeats are idempotent through candidate approval',async()=>{
+    const {root,dir}=setup(true),old=override(root);
+    nextBible(root);
+    const updated=override(root),current=currentOwnerVisualDefinition(root,appPath,'char_001')!;
+    expect(current.styleBibleSha).toBe(updated.bible!.style_bible_sha256);
+    expect(current.definitionSha).not.toBe(old.ownerVisualDefinitions![0].definitionSha);
+    expect(updated.ownerVisualDefinitions).toContainEqual(old.ownerVisualDefinitions![0]);
+    expect(override(root)).toEqual(updated);
+    const mock=provider(),job=await submitReferenceJob(appPath,root,dir,cipher,{anchorId:'char_001',authorized:true});
+    expect(job.prompt).toContain('green scarf');
+    expect(job.ownerVisualDefinitionSha).toBe(current.definitionSha);
+    const validated=await syncReferenceJob(appPath,root,dir,cipher,job.id,decode);
+    const registered=registerValidatedGeneratedReference(root,appPath,{expectedRevision:readIdentityWorkflow(root).revision,job:validated},decode);
+    expect(registered.referenceCandidates[0].visual_definition_sha256).toBe(current.definitionSha);
+    const approved=approveOwnerReference(root,appPath,{expectedRevision:registered.revision,
+      candidateId:registered.referenceCandidates[0].candidate_id,ownerInspected:true},decode);
+    expect(approved.referenceCandidates[0].status).toBe('APPROVED');
+    expect(mock.posts()).toHaveLength(1);
+  });
+  it('AF02-06 corrupted current SHA or Script lineage fails closed before any POST',async()=>{
+    const {root,dir}=setup(true),approved=override(root),mock=provider();
+    const file=path.join(root,'.studio/identity/workflow-v1.json');
+    for(const patch of [{definitionSha:'0'.repeat(64)},{sourceScriptSha:'0'.repeat(64)},{approvedByOwner:false}]){
+      const corrupt=structuredClone(approved);
+      Object.assign(corrupt.ownerVisualDefinitions![0],patch);atomicJson(file,corrupt);
+      await expect(submitReferenceJob(appPath,root,dir,cipher,{anchorId:'char_001',authorized:true}))
+        .rejects.toThrow(/OWNER_VISUAL_DEFINITION/);
+    }
+    expect(mock.posts()).toHaveLength(0);
+  });
+  it('AF02-08 original paid job recovers by original Bible and override after new design and reapproval; no new POST',async()=>{
+    const {root,dir}=setup(true),old=override(root);
+    provider();
+    const job=await submitReferenceJob(appPath,root,dir,cipher,{anchorId:'char_001',authorized:true});
+    expect(job.ownerVisualDefinitionSha).toBe(old.ownerVisualDefinitions![0].definitionSha);
+    nextBible(root);override(root);
+    const mock=provider();
+    const recovered=await syncReferenceJob(appPath,root,dir,cipher,job.id,decode);
+    expect(recovered.status).toBe('VALIDATED');
+    expect(recovered.prompt).toBe(job.prompt);
+    expect(recovered.promptSha).toBe(job.promptSha);
+    expect(recovered.ownerVisualDefinitionSha).toBe(job.ownerVisualDefinitionSha);
+    expect(recovered.providerTaskId).toBe(job.providerTaskId);
+    expect(mock.posts()).toHaveLength(0);
+    expect(mock.calls.every(call=>call.startsWith('GET '))).toBe(true);
+    expect(()=>registerValidatedGeneratedReference(root,appPath,{expectedRevision:readIdentityWorkflow(root).revision,job:recovered},decode))
+      .toThrow('REFERENCE_GENERATION_SOURCE_STALE');
+  });
+  it('AF02-09 new design and optional override never republish the existing canonical reference set',async()=>{
+    const {root,dir}=setup(true);override(root);provider();
+    const job=await submitReferenceJob(appPath,root,dir,cipher,{anchorId:'char_001',authorized:true});
+    const validated=await syncReferenceJob(appPath,root,dir,cipher,job.id,decode);
+    const registered=registerValidatedGeneratedReference(root,appPath,{expectedRevision:readIdentityWorkflow(root).revision,job:validated},decode);
+    const approved=approveOwnerReference(root,appPath,{expectedRevision:registered.revision,
+      candidateId:registered.referenceCandidates[0].candidate_id,ownerInspected:true},decode);
+    const published=publishStyleBibleReferences(root,appPath,approved.revision,[approved.referenceCandidates[0].candidate_id],decode);
+    const original=published.publishedAuthority;
+    nextBible(root);override(root);
+    const after=readIdentityWorkflow(root);
+    expect(after.publishedAuthority).toEqual(original);
+    expect(publishedIdentityView(after).referenceApprovalSet).toEqual(published.referenceApprovalSet);
+    expect(after.referenceCandidates[0]).toEqual(published.referenceCandidates[0]);
   });
 });

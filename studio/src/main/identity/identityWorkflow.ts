@@ -701,13 +701,6 @@ export function registerValidatedGeneratedReference(root:string,appPath:string,
   if(!actual||actual.width!==job.staged.width||
     actual.height!==job.staged.height||actual.width!==actual.height)
     throw Error('REFERENCE_GENERATION_DECODE_STALE');
-  const existing=prior.referenceCandidates.find(c=>c.media_path===job.staged?.path);
-  if(existing){
-    if(existing.media_sha256!==job.staged.sha256||
-      existing.source_definition_hash!==row.source_definition_hash)
-      throw Error('REFERENCE_GENERATION_JOURNAL_CONFLICT');
-    return prior;
-  }
   const owner=resolveOwnerVisualDefinition(prior.ownerVisualDefinitions,script,bible,job.anchorId);
   if(owner?.definitionSha!==job.ownerVisualDefinitionSha)
     throw Error('REFERENCE_GENERATION_VISUAL_DEFINITION_STALE');
@@ -718,6 +711,14 @@ export function registerValidatedGeneratedReference(root:string,appPath:string,
       referencePromptForCharacter(bible,job.anchorId,pinnedStyle,owner);
   if(prompt.prompt_sha256!==job.promptSha)
     throw Error('REFERENCE_GENERATION_PROMPT_STALE');
+  const existing=prior.referenceCandidates.find(c=>c.media_path===job.staged?.path);
+  if(existing){
+    if(existing.media_sha256!==job.staged.sha256||
+      existing.source_definition_hash!==row.source_definition_hash||
+      existing.visual_definition_sha256!==owner?.definitionSha||existing.prompt_sha256!==job.promptSha)
+      throw Error('REFERENCE_GENERATION_JOURNAL_CONFLICT');
+    return prior;
+  }
   const candidate:ReferenceCandidate={
     schema:'stickman-visual-reference-candidate-v1',project_id:job.projectId,
     candidate_id:randomUUID(),anchor_type:'character',anchor_id:job.anchorId,

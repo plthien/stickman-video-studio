@@ -478,7 +478,7 @@ export function readNativeDraft(root:string,state=readState(root)){
   const artifact=nativeDraftValue(pending);
   return{context:'DRAFT' as const,token:pending.token,authorTaskId:pending.taskId,
     revision:1+(pending.draftHistory?.length??0),artifact,sha256:sha(JSON.stringify(artifact)),
-    history:pending.draftHistory??[],publishedCorrectionTaskId:pending.publishedCorrection?.correctTaskId};
+    history:pending.draftHistory??[],...(pending.publishedCorrection?{publishedCorrectionTaskId:pending.publishedCorrection.correctTaskId}:{})};
 }
 /** Creative authority is a confirmed independent review, not a structural validator.
  * Bind the verdict to the complete current artifact and original Author task. */
