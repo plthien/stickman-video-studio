@@ -17,6 +17,8 @@ interface Window { studio?: Readonly<{
   identityImport:(id:string,json:string,revision:number)=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
   identityApproveAnalysis:(id:string,revision:number)=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
   identityPrepareBible:(id:string,revision:number)=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
+  identityFreezeStyleBible:(id:string,operation:import('../main/identity/contracts').IdentityReviewOperation,revision:number)=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
+  identityImportStyleBible:(id:string,json:string,revision:number)=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
   identityApproveBible:(id:string,revision:number)=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
   identityApproveVisualDefinition:(id:string,input:{
     expectedRevision:number;anchorId:string;provenance:'SCRIPT_AUTHOR'|'OWNER_BRIEF';

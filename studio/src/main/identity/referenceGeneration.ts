@@ -7,7 +7,7 @@ import {glabsProbe,glabsReferenceSettings,glabsReferenceSubmit,
   glabsReferenceStatus,glabsReferenceResult,glabsReferenceDownload} from '../glabs.js';
 import {atomicJson,readState,resolveProjectFile,strictJson,sha} from '../services.js';
 import {contentHash,type StyleBible} from './contracts.js';
-import {compileStyleBible,referencePromptForCharacter} from './styleBible.js';
+import {validateStyleBibleCurrent,referencePromptForCharacter} from './styleBible.js';
 import {isFrozenLegacyAnalysis,validateHistoricalPublishedBible,
   frozenLegacyReferencePrompt,frozenRequestedReferencePrompt,
   type FrozenReferenceFormat} from './legacyStorage.js';
@@ -99,9 +99,11 @@ function ready(root:string,appPath:string,anchorId:string,
   const legacyKind=isFrozenLegacyAnalysis(analysis);
   if(legacyKind&&!frozenJob)
     throw Error('REFERENCE_LEGACY_NEW_GENERATION_REQUIRES_NEW_ANALYSIS');
-  const bible=legacyKind?
-    validateHistoricalPublishedBible(analysis,source,pinned,journal.bible!):
-    compileStyleBible(analysis,source,pinned);
+  if(!journal.bible)throw Error('REFERENCE_STYLE_BIBLE_NOT_APPROVED');
+  const bible=journal.bible;
+  if(legacyKind)validateHistoricalPublishedBible(analysis,source,pinned,bible);
+  else validateStyleBibleCurrent(bible,analysis,source,pinned);
+  if(!frozenJob&&!bible.design_authority)throw Error('STYLE_DESIGN_REAPPROVAL_REQUIRED');
   if(journal.bibleTextApproved?.sha256!==bible.style_bible_sha256||
     !journal.bible||contentHash(journal.bible)!==contentHash(bible)||
     journal.bible.style_bible_sha256!==bible.style_bible_sha256)

@@ -7,6 +7,7 @@ export interface StyleDesignTask{
   stage:'style_bible';task_id:string;project_id:string;revision:number;
   operation:IdentityReviewOperation;input_sha256:string;candidate_sha256:string|null;
   source_sha256:string;finding_ids:string[];prompt:string;
+  review_findings?:StyleDesignReview['findings'];review_sha256?:string;
 }
 export function designSourceSha(analysis:ScriptAnalysis,style:PinnedStyle){
   return contentHash({analysis:contentHash(analysis),style:style.id,
@@ -20,6 +21,8 @@ export function validateStyleDesign(raw:unknown,analysis:ScriptAnalysis,style:Pi
     item.analysis_sha256!==contentHash(analysis)||item.style_profile_sha256!==style.sha256||
     !Array.isArray(item.characters)||item.characters.length!==analysis.continuity_catalog.characters.length)
     throw Error('STYLE_DESIGN_SOURCE_INVALID');
+  if(item.characters.some((row,index)=>row?.char_id!==analysis.continuity_catalog.characters[index]?.char_id))
+    throw Error('STYLE_DESIGN_CHARACTER_ORDER_INVALID');
   const schema=loadSchema('bible');
   const rowSchema={...schema.$defs!.aiDesign};
   const ids=new Set<string>();

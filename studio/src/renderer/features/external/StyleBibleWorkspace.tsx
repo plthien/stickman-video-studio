@@ -34,6 +34,7 @@ export function StyleBibleWorkspace(){
   const [snapshotProjectId,setSnapshotProjectId]=useState<string|null>(null);
   const [jobs,setJobs]=useState<ReferenceJob[]>([]);
   const [error,setError]=useState(''),[busy,setBusy]=useState(false);
+  const [styleResult,setStyleResult]=useState('');
   const [paths,setPaths]=useState<Record<string,string>>({});
   const [sources,setSources]=useState<Record<string,string>>({});
   const [visualTraits,setVisualTraits]=useState<Record<string,string>>({});
@@ -47,7 +48,7 @@ export function StyleBibleWorkspace(){
   useEffect(()=>{
     const current=++epoch.current;setSnapshot(null);
     setSnapshotProjectId(null);setJobs([]);
-    setLoaded(new Set());setChosen({});setImpact(null);setError('');
+    setLoaded(new Set());setChosen({});setImpact(null);setError('');setStyleResult('');
     if(!projectId||!window.studio?.identitySnapshot)return;
     void Promise.all([window.studio.identitySnapshot(projectId),
       window.studio.identityReferenceJobs(projectId)]).then(([value,nextJobs])=>{
@@ -122,20 +123,42 @@ export function StyleBibleWorkspace(){
     <section className="card">
       <h3>Project Style Bible · approved Script Analysis lineage</h3>
       <p>Current upstream readiness: <strong>{snapshot.readiness}</strong></p>
-      <p>Character identities, visual traits and source spans are inherited from the
-        independently approved analysis. No appearance is inferred from filenames.</p>
+      <p>External AI designs the appearance and reference prompts using the approved Analysis.
+        Studio verifies structure, lineage and independent Review before owner approval.</p>
       <div className="actions">
         <button className="button" type="button"
           disabled={busy||!journal.analysisApproved}
           onClick={()=>action((id,revision)=>window.studio!.identityPrepareBible(id,revision))}>
-          Prepare Style Bible from Analysis
+          Freeze AI Style Bible Author
         </button>
         <button className="button primary" type="button"
-          disabled={busy||!bible||approved}
+          disabled={busy||!journal.styleDesignReview?.approved||journal.styleDesignTask?.status!=='IMPORTED'||approved}
           onClick={()=>action((id,revision)=>window.studio!.identityApproveBible(id,revision))}>
           Approve reviewed Style Bible text
         </button>
       </div>
+      <div className="actions">
+        {(['review','correct','recheck'] as const).map(operation=>
+          <button key={operation} className="button" type="button"
+            disabled={busy||!journal.styleDesign||
+              (operation==='correct'&&journal.styleDesignReview?.approved!==false)||
+              (operation==='recheck'&&(journal.styleDesignTask?.task.operation!=='correct'||journal.styleDesignTask.status!=='IMPORTED'))}
+            onClick={()=>action((id,revision)=>window.studio!.identityFreezeStyleBible(id,operation,revision))}>
+            Freeze {operation}
+          </button>)}
+      </div>
+      {journal.styleDesignTask&&<div className="stack">
+        <small>{journal.styleDesignTask.task.operation} · {journal.styleDesignTask.status}</small>
+        <textarea className="textarea" readOnly value={journal.styleDesignTask.task.prompt}/>
+        <button className="button" type="button" onClick={()=>void navigator.clipboard.writeText(journal.styleDesignTask!.task.prompt)}>Copy frozen prompt</button>
+        <textarea className="textarea" aria-label="AI Style Bible result JSON" value={styleResult} onChange={event=>setStyleResult(event.target.value)}/>
+        <button className="button" type="button" disabled={busy||!styleResult.trim()||journal.styleDesignTask.status!=='FROZEN'}
+          onClick={()=>action((id,revision)=>window.studio!.identityImportStyleBible(id,styleResult,revision))}>Import AI result</button>
+      </div>}
+      {journal.styleDesign&&<details><summary>AI visual-design candidate</summary>
+        <pre>{JSON.stringify(journal.styleDesign,null,2)}</pre></details>}
+      {journal.styleDesignReview&&<details open><summary>Independent Review</summary>
+        <pre>{JSON.stringify(journal.styleDesignReview,null,2)}</pre></details>}
       {bible&&<p>Style {bible.style_profile_id} · style SHA {bible.style_profile_sha256} ·
         Bible SHA {bible.style_bible_sha256}</p>}
     </section>
@@ -158,6 +181,7 @@ export function StyleBibleWorkspace(){
           <h4>{character.char_id} · {character.label}</h4>
           <p>{character.narrative_role}</p>
           <p>{character.description}</p>
+          {character.ai_design&&<details><summary>Approved AI design and reference prompt</summary><p>{character.ai_design.visual_design}</p><pre>{character.ai_design.reference_prompt}</pre></details>}
           <p>Source occurrences: {character.occurrences.length} ·
             stable markers: {character.identity_markers.join(', ')||'not source-established'}</p>
           <p>Reference readiness: <strong>{character.visual_readiness}</strong></p>

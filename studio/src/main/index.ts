@@ -17,7 +17,7 @@ import { importAlignedWords, importApprovedWav, longformStatus, runLongform, nar
 import { projectSnapshot } from './projectSnapshot.js';
 import {createProjectStaged} from './projectCreation.js';
 import {identityWorkflowSnapshot,freezeIdentityTask,importIdentityResult,
-  approveScriptAnalysis,prepareProjectStyleBible,approveProjectStyleBible,
+  approveScriptAnalysis,prepareProjectStyleBible,approveProjectStyleBible,freezeStyleBibleTask,importStyleBibleResult,
   registerOwnerReference,approveOwnerReference,publishStyleBibleReferences,
   previewIdentityUpgrade,upgradeIdentityPolicy,registerValidatedGeneratedReference,
   readIdentityWorkflow,approveOwnerVisualDefinition} from './identity/identityWorkflow.js';
@@ -107,6 +107,10 @@ function registerIpc() {
     approveScriptAnalysis(rootFor(id),revision));
   ipcMain.handle('identity:prepareBible',(_event,id:string,revision:number)=>
     prepareProjectStyleBible(rootFor(id),app.getAppPath(),revision));
+  ipcMain.handle('identity:freezeStyleBible',(_event,id:string,operation:IdentityReviewOperation,revision:number)=>
+    freezeStyleBibleTask(rootFor(id),app.getAppPath(),operation,revision));
+  ipcMain.handle('identity:importStyleBible',(_event,id:string,result:string,revision:number)=>
+    importStyleBibleResult(rootFor(id),app.getAppPath(),result,revision));
   ipcMain.handle('identity:approveBible',(_event,id:string,revision:number)=>
     approveProjectStyleBible(rootFor(id),app.getAppPath(),revision,true));
   ipcMain.handle('identity:approveVisualDefinition',(_event,id:string,input:{

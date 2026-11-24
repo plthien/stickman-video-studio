@@ -4,15 +4,16 @@ import fs from 'node:fs';
 import {randomUUID} from 'node:crypto';
 import {atomicJson,readState,resolveProjectFile,strictJson,sha,writeState,type StudioState} from '../services.js';
 import {loadImageStyleProfile} from '../imagePreparation.js';
-import {contentHash,type ScriptAnalysis,type StyleBible,type IdentityReviewOperation} from './contracts.js';
+import {contentHash,loadSchema,type ScriptAnalysis,type StyleBible,type IdentityReviewOperation,
+  type StyleDesignCandidate,type StyleDesignReview} from './contracts.js';
 import {analysisLineage,freezeAnalysisTask,validateAnalysisEnvelope,
   analysisAuthorContract,analysisReviewContract,
   validateScriptAnalysis,verifyIndependentReview,type ApprovedScriptSnapshot,
   type AnalysisTask,type AnalysisReview} from './scriptAnalysis.js';
-import {compileStyleBible,type PinnedStyle} from './styleBible.js';
+import {compileStyleBible,validateStyleBibleCurrent,type PinnedStyle} from './styleBible.js';
+import {designSourceSha,validateStyleDesign,validateStyleDesignReview,type StyleDesignTask} from './styleBibleAuthoring.js';
 import {isFrozenLegacyAnalysis,validateHistoricalPublishedBible,
   frozenLegacyReferencePrompt,frozenRequestedReferencePrompt} from './legacyStorage.js';
-import {canonical} from './contracts.js';
 import {approveCandidate,publishApprovalSet,validatePublishedSet,verifyReferenceFile,
   type ReferenceCandidate,type ReferenceApprovalSet,type IdentityDecoder} from './referencePublication.js';
 import {referencePromptForCharacter} from './styleBible.js';
@@ -39,6 +40,8 @@ export interface IdentityWorkflowStore{
   draftSha256:string|null;independentReview:AnalysisReview|null;
   analysisApproved:{sha256:string;approvedAt:string;reviewSha256:string}|null;
   bible:StyleBible|null;bibleTextApproved:{sha256:string;approvedAt:string}|null;
+  styleDesign?:StyleDesignCandidate|null;styleDesignReview?:StyleDesignReview|null;
+  styleDesignTask?:{task:StyleDesignTask;status:TaskState;at:string}|null;
   referenceCandidates:ReferenceCandidate[];
   referenceApprovalSet:ReferenceApprovalSet|null;
   referenceApprovalHistory?:ReferenceApprovalSet[];
@@ -150,9 +153,7 @@ export function validatedPublishedBible(root:string,appPath:string):StyleBible{
   const script=currentApprovedSource(root),style=pinned(appPath,root);
   if(isFrozenLegacyAnalysis(publication.analysis))
     return validateHistoricalPublishedBible(publication.analysis,script,style,publication.bible);
-  const current=compileStyleBible(publication.analysis,script,style);
-  if(canonical(current)!==canonical(publication.bible))
-    throw Error('IDENTITY_PUBLISHED_STYLE_BIBLE_STALE');
+  validateStyleBibleCurrent(publication.bible,publication.analysis,script,style);
   return publication.bible;
 }
 /** Preserve prior immutable canonical authority when upstream lineage changes. */
@@ -206,7 +207,7 @@ export function identityWorkflowSnapshot(root:string,appPath:string){
       readiness='ANALYSIS_APPROVED';
       if(published.bible){
         const current=oldPublished?validatedPublishedBible(root,appPath):
-          compileStyleBible(analysis,script,pinned(appPath,root));
+          checkedStyleBible(published,analysis,script,pinned(appPath,root));
         if(published.bible.style_bible_sha256!==current.style_bible_sha256||
           contentHash(published.bible)!==contentHash(current))
           readiness='STYLE_BIBLE_STALE';
@@ -373,6 +374,7 @@ export function importIdentityResult(root:string,text:string,expectedRevision:nu
     next.publishedAuthority=publishedSnapshot(prior);
     archiveReferenceSet(next);
     next.bible=null;next.bibleTextApproved=null;next.referenceApprovalSet=null;
+    next.styleDesign=null;next.styleDesignReview=null;next.styleDesignTask=null;
   }
   next.currentTask={...entry,status:'IMPORTED'};
   return save(root,prior,next,'import:'+task.operation,raw);
@@ -389,17 +391,114 @@ export function approveScriptAnalysis(root:string,expectedRevision:number){
     reviewSha256:contentHash(review)};
   return save(root,prior,next,'approve:analysis',next.analysisApproved);
 }
-export function prepareProjectStyleBible(root:string,appPath:string,expectedRevision:number){
+/** Verify the persisted approved authority; never reconstruct creative text
+ * from narration. Old compiled Bible bytes remain readable. */
+function checkedStyleBible(journal:IdentityWorkflowStore,analysis:ScriptAnalysis,
+  script:ApprovedScriptSnapshot,style:PinnedStyle,requireDesign=false):StyleBible{
+  const bible=journal.bible;
+  if(!bible)throw Error('STYLE_BIBLE_TEXT_APPROVAL_REQUIRED');
+  if(requireDesign&&!bible.design_authority)throw Error('STYLE_DESIGN_REAPPROVAL_REQUIRED');
+  validateStyleBibleCurrent(bible,analysis,script,style);
+  return bible;
+}
+export function freezeStyleBibleTask(root:string,appPath:string,
+  operation:IdentityReviewOperation,expectedRevision:number){
   const prior=readIdentityWorkflow(root);
   if(prior.revision!==expectedRevision)throw Error('IDENTITY_REVISION_CONFLICT');
-  const {script,analysis}=validApproved(root,prior);
-  const bible=compileStyleBible(analysis,script,pinned(appPath,root));
-  const next=clone(prior);
-  if(next.bible?.style_bible_sha256!==bible.style_bible_sha256){
-    archiveReferenceSet(next);
-    next.bible=bible;next.bibleTextApproved=null;next.referenceApprovalSet=null;
+  const {script,analysis}=validApproved(root,prior),style=pinned(appPath,root);
+  if(!['author','review','correct','recheck'].includes(operation))throw Error('STYLE_DESIGN_OPERATION_INVALID');
+  const candidate=prior.styleDesign??null,review=prior.styleDesignReview??null;
+  if(operation!=='author'){
+    if(!candidate)throw Error('STYLE_DESIGN_CANDIDATE_REQUIRED');
+    validateStyleDesign(candidate,analysis,style);
   }
-  return save(root,prior,next,'prepare:style-bible',bible);
+  if(operation==='correct'&&(!candidate||!review||validateStyleDesignReview(review,candidate).approved||
+    prior.styleDesignTask?.status!=='IMPORTED'||!['review','recheck'].includes(prior.styleDesignTask.task.operation)))
+    throw Error('STYLE_DESIGN_CORRECTION_REVIEW_REQUIRED');
+  if(operation==='recheck'&&(prior.styleDesignTask?.status!=='IMPORTED'||prior.styleDesignTask.task.operation!=='correct'))
+    throw Error('STYLE_DESIGN_RECHECK_CORRECTION_REQUIRED');
+  const findings=operation==='correct'?review!.findings:operation==='recheck'?
+    prior.styleDesignTask?.task.review_findings??[]:[];
+  const source_sha256=designSourceSha(analysis,style);
+  const candidate_sha256=candidate?contentHash(candidate):null;
+  const task:StyleDesignTask={stage:'style_bible',task_id:randomUUID(),
+    project_id:script.projectId,revision:prior.revision+1,operation,
+    source_sha256,candidate_sha256,finding_ids:findings.map(x=>x.finding_id),
+    ...(findings.length?{review_findings:clone(findings)}:{}),
+    ...(operation==='correct'&&review?{review_sha256:contentHash(review)}:{}),
+    input_sha256:'',prompt:''};
+  const {input_sha256:_input,prompt:_prompt,...taskIdentity}=task;
+  void _input;void _prompt;
+  task.input_sha256=contentHash(taskIdentity);
+  const reviewing=operation==='review'||operation==='recheck';
+  const contract={schema:'mode-b-style-design-result-v1',stage:task.stage,
+    task_id:task.task_id,project_id:task.project_id,revision:task.revision,input_sha256:task.input_sha256,
+    ...(operation==='correct'?{resolved_finding_ids:task.finding_ids}:{}),
+    payload:reviewing?{schema:'stickman-ai-style-design-review-v1',project_id:script.projectId,
+      candidate_sha256,independent_review:true,approved:false,findings:[]}:
+      {schema:'stickman-ai-style-design-v1',project_id:script.projectId,
+      analysis_sha256:contentHash(analysis),style_profile_sha256:style.sha256,characters:[]}};
+  task.prompt=[
+    '# STICKMAN — AI Style Bible '+operation.toUpperCase(),
+    'AI is the creative authority. Preserve every approved character ID, source facts and continuity. Design missing appearance without inventing additional story identities. Distinguish source-established facts from creative visual design.',
+    'For each character return complete visual_design and reference_prompt, source_established and creative_decisions arrays. Keep exact catalog order. One square four-view 2×2 format for every reference, with no printed labels. Do not classify subjects by type.',
+    'Independent Review must examine each design, provenance, continuity, selected style and complete reference prompt against the exact approved Analysis and Script. Return approved=true only with zero findings; otherwise give actionable findings. Do not claim image inspection.',
+    'Correct only reviewed findings; preserve unrelated design decisions. Recheck independently against every original finding and the complete candidate.',
+    'EXACT APPROVED SCRIPT '+JSON.stringify(script.sections),
+    'APPROVED AUTHORING '+JSON.stringify(script.authoring),
+    'PROJECT BRIEF '+JSON.stringify(readState(root).brief),
+    'APPROVED SCRIPT ANALYSIS '+JSON.stringify(analysis),
+    'PINNED STYLE '+JSON.stringify(style),
+    'CURRENT DESIGN '+JSON.stringify(candidate),
+    'FROZEN FINDINGS '+JSON.stringify(findings),
+    'DESIGN ROW SCHEMA '+JSON.stringify(loadSchema('bible').$defs!.aiDesign),
+    'For Review/Recheck each finding has exactly finding_id, severity (P0/P1/P2), location, issue, evidence.',
+    'Return one JSON object matching the exact frozen envelope, not Markdown. Fill the payload; do not return the empty shell.',
+    JSON.stringify(contract,null,2)
+  ].join('\n\n');
+  const next=clone(prior);
+  next.styleDesignTask={task,status:'FROZEN',at:new Date().toISOString()};
+  return save(root,prior,next,'freeze:style-design:'+operation,task);
+}
+export function prepareProjectStyleBible(root:string,appPath:string,expectedRevision:number){
+  return freezeStyleBibleTask(root,appPath,'author',expectedRevision);
+}
+export function importStyleBibleResult(root:string,appPath:string,text:string,expectedRevision:number){
+  const prior=readIdentityWorkflow(root),entry=prior.styleDesignTask;
+  if(prior.revision!==expectedRevision)throw Error('IDENTITY_REVISION_CONFLICT');
+  if(!entry||entry.status!=='FROZEN')throw Error('STYLE_DESIGN_TASK_REQUIRED');
+  const {analysis}=validApproved(root,prior),style=pinned(appPath,root),task=entry.task;
+  if(task.source_sha256!==designSourceSha(analysis,style)||
+    task.candidate_sha256!==(prior.styleDesign?contentHash(prior.styleDesign):null)||
+    (task.operation==='correct'&&task.review_sha256!==contentHash(prior.styleDesignReview)))
+    throw Error('STYLE_DESIGN_TASK_STALE');
+  if(Buffer.byteLength(text,'utf8')>4*1024*1024)throw Error('IDENTITY_RESULT_OVERSIZE');
+  const raw=strictJson(text) as Record<string,unknown>;
+  const keys=['schema','stage','task_id','project_id','revision','input_sha256','payload',
+    ...(task.operation==='correct'?['resolved_finding_ids']:[])];
+  if(!raw||typeof raw!=='object'||Array.isArray(raw)||
+    Object.keys(raw).sort().join('|')!==keys.sort().join('|')||
+    raw.schema!=='mode-b-style-design-result-v1'||raw.stage!==task.stage||
+    raw.task_id!==task.task_id||raw.project_id!==task.project_id||
+    raw.revision!==task.revision||raw.input_sha256!==task.input_sha256)
+    throw Error('STYLE_DESIGN_ENVELOPE_INVALID');
+  if(task.operation==='correct'&&(!Array.isArray(raw.resolved_finding_ids)||
+    JSON.stringify([...raw.resolved_finding_ids].sort())!==JSON.stringify([...task.finding_ids].sort())))
+    throw Error('STYLE_DESIGN_CORRECTION_FINDINGS_INVALID');
+  const next=clone(prior);
+  if(task.operation==='review'||task.operation==='recheck'){
+    if(!next.styleDesign)throw Error('STYLE_DESIGN_CANDIDATE_REQUIRED');
+    next.styleDesignReview=validateStyleDesignReview(raw.payload,next.styleDesign);
+  }else{
+    next.styleDesign=validateStyleDesign(raw.payload,analysis,style);
+    next.styleDesignReview=null;
+  }
+  // Keep the published snapshot intact before replacing working authority.
+  next.publishedAuthority=publishedSnapshot(prior);
+  archiveReferenceSet(next);
+  next.bible=null;next.bibleTextApproved=null;next.referenceApprovalSet=null;
+  next.styleDesignTask={...entry,status:'IMPORTED'};
+  return save(root,prior,next,'import:style-design:'+task.operation,raw);
 }
 export function approveProjectStyleBible(root:string,appPath:string,
   expectedRevision:number,ownerInspected:true){
@@ -407,11 +506,15 @@ export function approveProjectStyleBible(root:string,appPath:string,
   if(prior.revision!==expectedRevision)throw Error('IDENTITY_REVISION_CONFLICT');
   if(ownerInspected!==true)throw Error('STYLE_BIBLE_OWNER_REVIEW_REQUIRED');
   const {script,analysis}=validApproved(root,prior);
-  const current=compileStyleBible(analysis,script,pinned(appPath,root));
-  if(prior.bible?.style_bible_sha256!==current.style_bible_sha256)
-    throw Error('STYLE_BIBLE_SOURCE_STALE');
+  if(!prior.styleDesign||!prior.styleDesignReview||
+    prior.styleDesignTask?.status!=='IMPORTED'||
+    !['review','recheck'].includes(prior.styleDesignTask.task.operation))
+    throw Error('STYLE_DESIGN_REVIEW_REQUIRED');
+  const bible=compileStyleBible(analysis,script,pinned(appPath,root),
+    prior.styleDesign,prior.styleDesignReview);
   const next=clone(prior);
-  next.bibleTextApproved={sha256:current.style_bible_sha256,approvedAt:new Date().toISOString()};
+  next.bible=bible;
+  next.bibleTextApproved={sha256:bible.style_bible_sha256,approvedAt:new Date().toISOString()};
   return save(root,prior,next,'approve:style-bible',next.bibleTextApproved);
 }
 /** Explicit visual traits at Style Bible stage. No automatically authored appearance.
@@ -424,7 +527,7 @@ export function approveOwnerVisualDefinition(root:string,appPath:string,input:{
   if(prior.revision!==input.expectedRevision)throw Error('IDENTITY_REVISION_CONFLICT');
   if(input.ownerInspected!==true)throw Error('OWNER_VISUAL_DEFINITION_APPROVAL_REQUIRED');
   const {script,analysis}=validApproved(root,prior);
-  const bible=compileStyleBible(analysis,script,pinned(appPath,root));
+  const bible=checkedStyleBible(prior,analysis,script,pinned(appPath,root),true);
   if(prior.bibleTextApproved?.sha256!==bible.style_bible_sha256)
     throw Error('STYLE_BIBLE_TEXT_APPROVAL_REQUIRED');
   const prepared={
@@ -458,7 +561,7 @@ export function currentOwnerVisualDefinition(root:string,appPath:string,charId:s
   if(!found)return null;
   const {script,analysis}=validApproved(root,prior);
   return validateOwnerVisualDefinition(found,script,
-    compileStyleBible(analysis,script,pinned(appPath,root)));
+    checkedStyleBible(prior,analysis,script,pinned(appPath,root),true));
 }
 /** Promote a real previously imported owner image as an unapproved candidate.
  * Import alone never asserts a four-view presentation or visual correctness. */
@@ -468,7 +571,7 @@ export function registerOwnerReference(root:string,appPath:string,input:{
   const prior=readIdentityWorkflow(root);
   if(prior.revision!==input.expectedRevision)throw Error('IDENTITY_REVISION_CONFLICT');
   const {script,analysis}=validApproved(root,prior);
-  const bible=compileStyleBible(analysis,script,pinned(appPath,root));
+  const bible=checkedStyleBible(prior,analysis,script,pinned(appPath,root),true);
   if(prior.bibleTextApproved?.sha256!==bible.style_bible_sha256)
     throw Error('STYLE_BIBLE_TEXT_APPROVAL_REQUIRED');
   const row=bible.characters.find(c=>c.char_id===input.anchorId);
@@ -540,7 +643,7 @@ export function registerValidatedGeneratedReference(root:string,appPath:string,
   const historicalKind=isFrozenLegacyAnalysis(analysis);
   const bible=historicalKind?
     validateHistoricalPublishedBible(analysis,script,pinnedStyle,prior.bible!):
-    compileStyleBible(analysis,script,pinnedStyle);
+    checkedStyleBible(prior,analysis,script,pinnedStyle);
   if(prior.bibleTextApproved?.sha256!==bible.style_bible_sha256||
     job.styleBibleSha!==bible.style_bible_sha256||
     job.styleProfileSha!==bible.style_profile_sha256||
@@ -598,7 +701,7 @@ export function approveOwnerReference(root:string,appPath:string,input:{
   const prior=readIdentityWorkflow(root);
   if(prior.revision!==input.expectedRevision)throw Error('IDENTITY_REVISION_CONFLICT');
   const {script,analysis}=validApproved(root,prior);
-  const bible=compileStyleBible(analysis,script,pinned(appPath,root));
+  const bible=checkedStyleBible(prior,analysis,script,pinned(appPath,root),true);
   if(prior.bibleTextApproved?.sha256!==bible.style_bible_sha256)
     throw Error('STYLE_BIBLE_TEXT_APPROVAL_REQUIRED');
   const candidate=prior.referenceCandidates.find(c=>c.candidate_id===input.candidateId);
@@ -644,7 +747,7 @@ export function publishStyleBibleReferences(root:string,appPath:string,
   const prior=readIdentityWorkflow(root);
   if(prior.revision!==expectedRevision)throw Error('IDENTITY_REVISION_CONFLICT');
   const {script,analysis}=validApproved(root,prior);
-  const bible=compileStyleBible(analysis,script,pinned(appPath,root));
+  const bible=checkedStyleBible(prior,analysis,script,pinned(appPath,root),true);
   if(prior.bibleTextApproved?.sha256!==bible.style_bible_sha256)
     throw Error('STYLE_BIBLE_TEXT_APPROVAL_REQUIRED');
   const selected=selectedIds.map(id=>prior.referenceCandidates.find(c=>
