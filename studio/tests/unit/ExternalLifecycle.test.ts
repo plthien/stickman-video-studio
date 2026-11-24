@@ -555,7 +555,7 @@ describe('External creative lifecycle',()=>{
     const nativeImport=stageNative(root,nativePayload(root));
     await confirmImport(appPath,root,nativeImport.response.token,{validator:validator().run});
     const nativeReview=freezeLifecycleTask(appPath,root,'native','review');
-    const finding={id:'NATIVE-HISTORY',severity:'major',status:'open',target_ids:['shot-1'],
+    const finding={id:'NATIVE-HISTORY',severity:'major',status:'open',target_ids:['shot-1'],editable_paths:['/manifest/shots/0/layers/0/text'],
       requirement:'Retain a readable Native shot objective.',
       evidence:{kind:'manifest',detail:'Synthetic test evidence for first-shot intent.'},
       recommendation:'Clarify only the authorized Native target.'};

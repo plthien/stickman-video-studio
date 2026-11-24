@@ -162,7 +162,7 @@ describe('P-01 through P-14 lifecycle prompt, lock, evidence and ancestry contra
     const review=freezeLifecycleTask(appPath,root,'native','review');
     const staged=stageLifecycleResult(appPath,root,'native','review',
       result(root,review,'review',reviewPayload(review,['shot-1','shot-2'],
-        [finding('F-NATIVE','shot-1')],'native')));
+        [{...finding('F-NATIVE','shot-1'),editable_paths:['/manifest/shots/0/layers/0/text']}],'native')));
     await Promise.resolve(confirmLifecycleResult(root,staged.token));
     const correct=freezeLifecycleTask(appPath,root,'native','correct',{editableIds:['shot-1']});
     const state=readState(root);
