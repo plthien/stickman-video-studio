@@ -20,7 +20,8 @@ const finding=(id:string,target:string,status='open')=>({
   evidence:{kind:'manifest',detail:'Synthetic fixture text establishes the narrow causal problem.'},
   recommendation:'Clarify the existing causal relation without editing locked content.'
 });
-function reviewPayload(task:Lifecycle,targetIds:string[],found:ReturnType<typeof finding>[],stage:'script'|'native'){
+type ReviewFixtureFinding=ReturnType<typeof finding>&{editable_paths?:string[]};
+function reviewPayload(task:Lifecycle,targetIds:string[],found:ReviewFixtureFinding[],stage:'script'|'native'){
   return {schema:'mode-b-review-v1',artifact_sha256:task.artifactSha256,
     status:found.length?'REVIEWED_WITH_FINDINGS':'REVIEWED_NO_FINDINGS',
     coverage:{target_ids:targetIds,modalities:[stage==='script'?'script':'manifest'],ranges:[],media_sha256s:[]},
