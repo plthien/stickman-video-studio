@@ -297,7 +297,7 @@ function assertLifecycleFresh(appPath:string,root:string,state:StudioState,task:
   if(!task.authorityFingerprint||task.authorityFingerprint!==authorityIdentity(authority))
     throw new Error('REBUILD_REQUIRED: installed Mode B creative authority changed.');
   if(task.stage==='native'&&task.evidenceSha256&&
-    sha(JSON.stringify(nativeLifecycleEvidence(root,state,task.structuredReviewScope?appPath:undefined)))!==task.evidenceSha256)
+    sha(JSON.stringify(nativeLifecycleEvidence(root,state,task.identityEvidenceSha?appPath:undefined)))!==task.evidenceSha256)
     throw new Error('STALE: Native approved narration, word or caption evidence changed.');
   for(const item of task.mediaBaseline??[]){
     const live=(state.media??[]).find(row=>JSON.stringify(row)===JSON.stringify(item));
@@ -854,6 +854,7 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
     correctionLineage:lineage?{correctTaskId:lineage.correctTaskId,reviewTaskId:lineage.reviewTaskId}:null};
   const sourceContextSha256=lifecycleSourceContext(state,stage,operation),authorityFingerprint=authorityIdentity(authority);
   const nativeSourceEvidence=stage==='native'?nativeLifecycleEvidence(root,state,appPath):undefined;
+  const identityEvidenceSha=nativeSourceEvidence&&'upstream_character_authority' in nativeSourceEvidence?nativeSourceEvidence.upstream_character_authority?.snapshotSha:undefined;
   const evidenceSha256=nativeSourceEvidence?sha(JSON.stringify(nativeSourceEvidence)):undefined;
   const inputSha256=sha(JSON.stringify({...snapshot,sourceContextSha256,authorityFingerprint,evidenceSha256}));
   if(!rebuild&&prior?.status==='FROZEN'&&prior.inputSha256===inputSha256&&fs.existsSync(resolveProjectFile(root,prior.promptPath)))
@@ -881,6 +882,7 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   state.lifecycle??={tasks:{},artifacts:{}};
   state.lifecycle.tasks[key]={id,stage,operation,revision,inputSha256,artifactSha256:artifact.sha256,
     ...(stage==='native'&&(operation==='review'||operation==='recheck')?{structuredReviewScope:true}:{}),
+    ...(identityEvidenceSha?{identityEvidenceSha}:{}),
     artifactContext:artifact.context,draftToken:artifact.draftToken,draftAuthorTaskId:artifact.authorTaskId,draftRevision:artifact.draftRevision,promptPath:relative,promptSha256:sha(prompt),status:'FROZEN',createdAt:new Date().toISOString(),editableIds,editablePaths,targetIds,findingIds,sourceReviewTaskId:operation==='correct'?reviewSource?.taskId:undefined,originalTaskSha256:sha(originalTask),sourceContextSha256,authorityFingerprint,evidenceSha256,mediaTransferAttested,mediaKind:scope.media,mediaSha256s,mediaDuration,mediaBaseline:structuredClone(state.media??[])};
   writeState(root,state);
   return{...state.lifecycle.tasks[key],prompt};
@@ -1215,6 +1217,7 @@ function finalizeLifecycle(root:string,pending:Record<string,unknown>,task:NonNu
   const payload=pending.payload as Record<string,unknown>;
   state.lifecycle.artifacts[task.id]={taskId:task.id,stage:task.stage,operation:task.operation,
     artifactContext:task.artifactContext,draftAuthorTaskId:task.draftAuthorTaskId,draftToken:task.draftToken,
+    ...(task.identityEvidenceSha?{identityEvidenceSha:task.identityEvidenceSha}:{}),
     artifactSha256:sha(JSON.stringify(payload)),value:payload,status:String(payload.status??'CORRECTION_STAGED'),
     createdAt:new Date().toISOString()};
   state.lifecycle.tasks[key].status='IMPORTED';

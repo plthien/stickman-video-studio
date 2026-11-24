@@ -19,7 +19,7 @@ export interface ImageJobSpec {
   styleProfileRef:{id:Style;path:string;sha256:string};
   references:string[];styleAnchors:Array<{id:string;label:string;sha256:string}>;
   draftIdentity:{projectId:string;authorTaskId:string;token:string;revision:number;creativeFingerprint:string};
-  occurrencesAtPath:number; ownerEdited:boolean; ownerCreativeReviewSha?:string;
+  occurrencesAtPath:number; ownerEdited:boolean; ownerCreativeReviewSha?:string;identityUpstreamSnapshotSha?:string;
   /** Current policy's mandatory reference snapshot; absent on legacy jobs. */
   identityBindingSnapshotSha?:string;identityTargetBindingSha?:string;
   identityApprovalSetSha?:string;identityStyleBibleSha?:string;
@@ -317,7 +317,7 @@ function withUpstreamIdentity(appPath:string,root:string,item:ImageJobSpec,
     const effectivePrompt=item.effectivePrompt?
       item.effectivePrompt+'\n\n'+appendix:'';
     return{...item,references:paths,
-      identityBindingSnapshotSha,identityTargetBindingSha:binding.targetBindingSha,
+      identityBindingSnapshotSha,identityTargetBindingSha:binding.targetBindingSha,identityUpstreamSnapshotSha:binding.upstreamSnapshotSha,
       identityApprovalSetSha:binding.approvalSetSha,
       identityStyleBibleSha:binding.styleBibleSha,
       identityRequiredReferences:mandatory,identityOwnerReferences:ownerRefs,
@@ -337,7 +337,7 @@ function withUpstreamIdentity(appPath:string,root:string,item:ImageJobSpec,
 function gateCreativeAuthority(state:ReturnType<typeof readState>,draft:NonNullable<ReturnType<typeof readNativeDraft>>,item:ImageJobSpec):ImageJobSpec{
   if(state.identityPolicy!=='v1'||item.state==='BLOCKED')return item;
   try{
-    requireReviewedNativeDraft(state,draft);
+    requireReviewedNativeDraft(state,draft,item.identityUpstreamSnapshotSha??'');
     if(item.ownerEdited&&!item.ownerCreativeReviewSha)throw Error('NATIVE_OWNER_PROMPT_REVIEW_REQUIRED');
     return item;
   }catch(error){return {...item,state:'BLOCKED',reason:error instanceof Error?error.message:String(error)};}

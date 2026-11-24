@@ -466,7 +466,7 @@ export function readNativeDraft(root:string,state=readState(root)){
 }
 /** Creative authority is a confirmed independent review, not a structural validator.
  * Bind the verdict to the complete current artifact and original Author task. */
-export function requireReviewedNativeDraft(state:StudioState,draft:NonNullable<ReturnType<typeof readNativeDraft>>){
+export function requireReviewedNativeDraft(state:StudioState,draft:NonNullable<ReturnType<typeof readNativeDraft>>,identityEvidenceSha:string){
   const rows=Object.values(state.lifecycle?.artifacts??{}).filter(row=>
     row.stage==='native'&&(row.operation==='review'||row.operation==='recheck')&&
     row.artifactContext==='DRAFT'&&row.draftToken===draft.token&&row.draftAuthorTaskId===draft.authorTaskId&&
@@ -476,7 +476,7 @@ export function requireReviewedNativeDraft(state:StudioState,draft:NonNullable<R
   const result=latest?.value as {artifact_sha256?:string;status?:string;findings?:unknown[];coverage?:{target_ids?:string[];modalities?:string[]}}|undefined;
   const manifest=draft.artifact.manifest as {shots?:Array<{id:string}>};
   const targets=(manifest.shots??[]).map(shot=>shot.id);
-  if(!latest||latest.status!=='REVIEWED_NO_FINDINGS'||result?.status!=='REVIEWED_NO_FINDINGS'||
+  if(!latest||latest.identityEvidenceSha!==identityEvidenceSha||latest.status!=='REVIEWED_NO_FINDINGS'||result?.status!=='REVIEWED_NO_FINDINGS'||
     latest.artifactSha256!==sha(JSON.stringify(result))||
     !Array.isArray(result.findings)||result.findings.some(f=>(f as {status?:string})?.status!=='resolved')||
     !Array.isArray(result.coverage?.target_ids)||result.coverage.target_ids.length!==targets.length||
@@ -764,8 +764,8 @@ export function fulfillMedia(appPath:string,root:string,token:string,key:string,
   let ownerImageApproval:OwnerImageApproval|undefined;
   if(state.identityPolicy==='v1'&&ref.kind==='image'&&hooks.ownerReviewed===true){
     const draft=readNativeDraft(root,state)!;
-    const reviewSha=requireReviewedNativeDraft(state,draft);
     const resolver=createContinuityResolver(appPath,root),plan=resolver.getBinding(key);
+    const reviewSha=requireReviewedNativeDraft(state,draft,plan.upstreamSnapshotSha);
     const verified=verifyReferenceFile(root,relative,hash),decoded=hooks.decode?.(verified.bytes);
     if(!decoded||!Number.isSafeInteger(decoded.width)||!Number.isSafeInteger(decoded.height)||
       decoded.width<1||decoded.height<1||!Buffer.isBuffer(decoded.png)||decoded.png.length<24)

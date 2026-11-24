@@ -51,11 +51,11 @@ export function currentDraftIdentityReceipt(root:string,appPath:string,
   if(state.identityPolicy!=='v1')return null;
   const draft=readNativeDraft(root,state);
   if(!draft)throw Error('IDENTITY_NATIVE_DRAFT_REQUIRED');
-  requireReviewedNativeDraft(state,draft);
   const native=draft.artifact as unknown as {
     manifest:Record<string,unknown>;asset_needs:unknown[]
   };
   const verified=validateNativeBindingPayload(root,appPath,native.manifest,native.asset_needs);
+  requireReviewedNativeDraft(state,draft,verified.identity.snapshotSha);
   const gallery=getNativeImageGallery(appPath,root);
   if(gallery.token!==draft.token||gallery.targets.length!==verified.plans.length)
     throw Error('IDENTITY_NATIVE_GALLERY_MISMATCH');
