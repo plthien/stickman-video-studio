@@ -16,8 +16,6 @@ export interface ImageJobSpec {
   state:PreparedState;reason:string;prompt:string;promptSha256:string;
   effectivePrompt:string;effectivePromptSha256:string;
   sourceDescription:string;sourceLedger:string;sourceRows:unknown[];
-  /** Subject-bearing Native Shot/ledger/global instructions, never style metadata. */
-  sourceCastDescriptions:string[];ownerCastText:string;
   styleProfileRef:{id:Style;path:string;sha256:string};
   references:string[];styleAnchors:Array<{id:string;label:string;sha256:string}>;
   draftIdentity:{projectId:string;authorTaskId:string;token:string;revision:number;creativeFingerprint:string};
@@ -155,19 +153,6 @@ export function compileImageJobSpecs(input:{
     const continuity=[...new Set(matching.map(row=>row.continuity).filter(Boolean))];
     const ledger=ledgers.find(value=>object(value)&&(value.shot_id===target.shotId||value.shotId===target.shotId));
     const composition=object(ledger)?field(ledger,['composition']):'';
-    // Extra source-grounded cast evidence is verified separately from the
-    // existing generated prompt: do not rewrite already-pinned prompt bytes.
-    const shotCastTexts=object(shot)?[
-      'description','summary','visual_description','visualDescription','content',
-      'intent'].map(name=>field(shot,[name])).filter(Boolean):[];
-    const ledgerCastTexts=object(ledger)?[
-      'meaning','visible_state','visibleState','important_delta','delta',
-      'action','continuity','motion','constraints','description'
-    ].map(name=>field(ledger,[name])).filter(Boolean):[];
-    const sourceCastDescriptions=[...new Set([
-      ...shotCastTexts,...ledgerCastTexts,
-      ...globals.map(row=>row.description).filter(Boolean)
-    ])];
     const sourceDescription=descriptions.length===1?descriptions[0]:'';
     let state:PreparedState='READY',reason='';
     if(!layerExists||!fingerprint||!target.shotId||!target.layerId){state='BLOCKED';reason='Exact current Shot/Layer/path or creative fingerprint is invalid.';}
@@ -214,8 +199,6 @@ export function compileImageJobSpecs(input:{
     // even when Native asset_needs contains no global rows.
     const authoritativeStyle='APPROVED MODE B STYLE '+style+' ['+
       profile.path+'; SHA256 '+profile.sha256+']\n\n'+profile.guidance;
-    const ownerCastText=validOwner?
-      ownerText.replace(/\r\n/g,'\n').replace(authoritativeStyle,'').trim():'';
     // Keep the owner-edited description as the editable field. Compile the
     // provider payload separately: owner text cannot delete style authority.
     // Both hashes are retained so the submitted provider prompt is auditable.
@@ -245,7 +228,6 @@ export function compileImageJobSpecs(input:{
       state,reason,prompt,promptSha256:prompt?sha(prompt):'',
       effectivePrompt,effectivePromptSha256:effectivePrompt?sha(effectivePrompt):'',
       sourceDescription,sourceLedger,sourceRows:requirements.effective.map(row=>row.source),
-      sourceCastDescriptions,ownerCastText,
       styleProfileRef:{id:style,path:profile.path,sha256:profile.sha256},
       references:validOwner&&Array.isArray(owner?.references)?owner.references:[],
       styleAnchors:profile.anchors,
@@ -275,14 +257,6 @@ function withUpstreamIdentity(appPath:string,root:string,item:ImageJobSpec,
     // cast discrepancy makes this target BLOCKED. No partial paid request.
     pinnedCanonicalPaths=binding.canonicalAnchors.map(anchor=>anchor.path);
     pinnedCharacterIds=[...binding.characterIds];
-    // Verify each provider-bound creative source, including the owner override.
-    // The separately pinned B1–B4 style language and compiler metadata
-    // are not subject depictions; scanning them would falsely cast common
-    // actor names such as "One" from harmless style instructions.
-    resolver.verifyCreativeSources(item.targetKey,[
-      item.sourceDescription,item.sourceLedger,...item.sourceCastDescriptions,
-      ...(item.ownerEdited?[item.ownerCastText]:[])
-    ]);
     const previous=resolver.resolve(item.targetKey);
     const canonical=binding.canonicalAnchors;
     const ownerRefs=[...item.references];

@@ -33,9 +33,7 @@ export function validateOwnerVisualDefinition(value:OwnerVisualDefinition,
     throw Error('OWNER_VISUAL_DEFINITION_INVALID');
   if(value.provenance==='SCRIPT_AUTHOR'){
     const text=scalarStrings(script.authoring);
-    if(!text.some(piece=>piece.includes(value.evidence))||
-      value.traits.some(trait=>!value.evidence.toLocaleLowerCase('en')
-        .includes(trait.toLocaleLowerCase('en'))))
+    if(!text.some(piece=>piece.includes(value.evidence)))
       throw Error('OWNER_VISUAL_AUTHORING_EVIDENCE_MISSING');
   }
   const {definitionSha,...withoutSha}=value;

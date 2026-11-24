@@ -6,7 +6,6 @@ import {listGlabsJobs} from '../glabs.js';
 import {readState} from '../services.js';
 import {verifyReferenceFile} from './referencePublication.js';
 import {validateNativeBindingPayload} from './nativeBinding.js';
-import {assertNativeCastConsistency} from './nativeNeeds.js';
 import {contentHash} from './contracts.js';
 
 export interface ContinuityImage{
@@ -84,22 +83,6 @@ export function createContinuityResolver(appPath:string,root:string){
       return value;
     },
     resolve,
-    verifyPrompt:(key:string,text:string)=>{
-      const target=byKey.get(key);
-      if(!target)throw Error('IDENTITY_NATIVE_TARGET_NOT_CURRENT');
-      return assertNativeCastConsistency(snapshot.rows[target.index],
-        {characters:snapshot.identity.characters},text);
-    },
-    /** Validate all author/owner-controlled subject descriptions, NOT the
-     * compiler-owned style prompt or immutable reference appendix. Called
-     * by both Storyboard preparation and fresh paid-request preflight. */
-    verifyCreativeSources:(key:string,sources:readonly string[])=>{
-      const target=byKey.get(key);
-      if(!target)throw Error('IDENTITY_NATIVE_TARGET_NOT_CURRENT');
-      for(const description of new Set(sources.map(s=>s.trim()).filter(Boolean)))
-        assertNativeCastConsistency(snapshot.rows[target.index],
-          {characters:snapshot.identity.characters},description);
-    },
     targetCount:snapshot.plans.length
   };
 }

@@ -41,7 +41,7 @@ function preparedSpec(layerId:string):NonNullable<GalleryCard['spec']>{
     assetKind:'other',state:'READY',reason:'',prompt,
     promptSha256:'d'.repeat(64),effectivePrompt:prompt,
     effectivePromptSha256:'d'.repeat(64),sourceDescription:'verified source',
-    sourceLedger:'',sourceRows:[],sourceCastDescriptions:[],ownerCastText:'',
+    sourceLedger:'',sourceRows:[],
     references:[],styleAnchors:[],
     styleProfileRef:{id:'B1',sha256:'b'.repeat(64),path:'references/b1-minimal-handdrawn.md'},
     draftIdentity:{projectId:'A',authorTaskId:'author-A',token:'token-A',revision:1,

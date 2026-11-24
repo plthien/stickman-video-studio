@@ -48,92 +48,20 @@ export function analysisLineage(script:ApprovedScriptSnapshot){
   return{projectId:script.projectId,scriptSha:script.sha256,
     authoringSha:contentHash(script.authoring),revision:script.revision};
 }
-/** An exact quote/span proves narration bytes, NOT whether a temporary
- * action is permanent appearance. Only narrow grammatically explicit
- * appearance or recurring wardrobe claims are eligible automatically.
- * All other relationships require explicit owner visual-definition approval. */
-const visualWords=(v:string)=>v.normalize('NFKC').toLocaleLowerCase('en')
-  .match(/[\p{L}\p{M}\p{N}]+/gu)??[];
-const quoteContainsTrait=(quote:string,trait:string)=>{
-  const source=visualWords(quote),parts=visualWords(trait);
-  if(!parts.length)return false;
-  let offset=0;
-  for(const word of source)if(word===parts[offset])offset++;
-  return offset===parts.length;
-};
-type ScriptActorMention={charId:string;start:number;end:number};
-/** Only a *single source clause* after the actor may authorize an automatic
- * visual trait. Other actor mentions and independent sentences end the window;
- * neither a long quote nor verbs from a later actor can attribute that trait.
- * Ambiguous syntax remains inspectable as requires_owner_review. */
-function directlyAttributedAppearance(evidence:VisualTraitEvidence,
-  char:ScriptCharacter,mentions:ScriptActorMention[]):boolean{
-  if(!['intrinsic_appearance','stable_wardrobe'].includes(evidence.relationship))
-    return false;
-  const hit=evidence.source,bodyCues=new Set(['scar','hair','eye','eyes','skin','face',
-    'beard','moustache','mustache','freckle','freckles','tattoo','birthmark',
-    'nose','cheek','cheeks','ears','ear','height','body','arm','arms','leg',
-    'legs','tall','short','thin','skinny','slim','bald','muscular','heavyset']);
-  const intrinsicCue=visualWords(evidence.trait).some(word=>bodyCues.has(word));
-  return char.occurrences.some(actor=>{
-    if(actor.start<hit.start||actor.end>hit.end||
-      hit.quote.slice(actor.start-hit.start,actor.end-hit.start)!==actor.quote)
-      return false;
-    const afterActor=actor.end-hit.start;
-    const tail=hit.quote.slice(afterActor);
-    const sentenceEnd=tail.search(/[.!?;\r\n]/u);
-    // A second named/pronominal subject with its own finite appearance
-    // predicate also ends attribution, even if upstream omitted that actor
-    // from its catalog. This is a fail-closed boundary, not name inference.
-    const newSubject=tail.search(/(?:[,;]\s*|\b(?:and|but|while|whereas)\s+)(?:[\p{Lu}][\p{L}\p{M}'’-]*(?:\s+[\p{Lu}\p{N}][\p{L}\p{M}\p{N}'’-]*){0,2}|(?:he|she|they|someone|somebody|(?:another|a|an|the)\s+[\p{Ll}][\p{L}\p{M}'’-]*))\s+(?:has|have|is|was|wears?|looks?|seems?)\b/u);
-    const nextOther=mentions.filter(m=>m.charId!==char.char_id&&
-      m.start>=actor.end&&m.start<hit.end)
-      .reduce((first,m)=>Math.min(first,m.start-hit.start),hit.quote.length);
-    const last=Math.min(sentenceEnd<0?hit.quote.length:afterActor+sentenceEnd,
-      newSubject<0?hit.quote.length:afterActor+newSubject,nextOther);
-    if(last<=afterActor)return false;
-    const clause=hit.quote.slice(afterActor,last).normalize('NFKC')
-      .toLocaleLowerCase('en');
-    if(!quoteContainsTrait(clause,evidence.trait))return false;
-    // Subject + attributable predicate must both be in this same clause.
-    if(evidence.relationship==='intrinsic_appearance')
-      return intrinsicCue&&/^\s*(?:['’]s\s+[\p{L}\p{M}\p{N} ]+\s+(?:is|are)|(?:has|have|is|was|looks?|seems?|has\s+got)\b)/u
-        .test(clause);
-    return /^\s*(?:wears?|dresses?\s+in)\b/u.test(clause)&&
-      /\b(?:every\s+day|daily|always|usually|habitually|signature|never\s+removes?)\b/u
-        .test(clause);
-  });
-}
-function validateTraitEvidence(evidence:VisualTraitEvidence,
-  char:ScriptCharacter,sections:Map<string,string>,
-  beginnings:Map<string,number>,mentions:ScriptActorMention[]){
-  const hit=evidence.source,source=sections.get(hit.section_id);
-  const offset=beginnings.get(hit.section_id);
-  if(source===undefined||offset===undefined||
-    hit.start>=hit.end||hit.start<offset||hit.end>offset+source.length||
+/** AI declares meaning; Backend authenticates exact UTF-16 evidence only. */
+function validateTraitEvidence(evidence:VisualTraitEvidence,char:ScriptCharacter,
+  sections:Map<string,string>,beginnings:Map<string,number>){
+  const hit=evidence.source,source=sections.get(hit.section_id),offset=beginnings.get(hit.section_id);
+  if(source===undefined||offset===undefined||hit.start>=hit.end||
+    hit.start<offset||hit.end>offset+source.length||
     source.slice(hit.start-offset,hit.end-offset)!==hit.quote)
     throw Error('SCRIPT_ANALYSIS_VISUAL_EVIDENCE_SPAN_INVALID: '+char.char_id);
-  if(!mentions.some(v=>v.charId===char.char_id&&v.start>=hit.start&&
-    v.end<=hit.end))
-    throw Error('SCRIPT_ANALYSIS_VISUAL_EVIDENCE_OWNER_INVALID: '+char.char_id);
-  if(!quoteContainsTrait(hit.quote,evidence.trait))
-    throw Error('SCRIPT_ANALYSIS_VISUAL_EVIDENCE_TRAIT_INVALID: '+char.char_id);
-  if(['transient_object','transient_action','scene_state'].includes(evidence.relationship))
-    throw Error('SCRIPT_ANALYSIS_TRANSIENT_NOT_CANONICAL: '+char.char_id);
-  if(evidence.relationship==='requires_owner_review')return;
-  if(!directlyAttributedAppearance(evidence,char,mentions))
-    throw Error('SCRIPT_ANALYSIS_VISUAL_RELATION_REVIEW_REQUIRED: '+char.char_id);
 }
-/** Reuse the same source-clause gate for drawable trait projection. Caller
- * validates the complete Analysis first, including strict quote/span/lineage. */
-export function verifiedVisualTraits(char:ScriptCharacter,
-  catalog:ScriptCharacter[]=[char]):string[]{
-  const mentions=catalog.flatMap(actor=>actor.occurrences.map(hit=>({
-    charId:actor.char_id,start:hit.start,end:hit.end
-  })));
+/** Structured projection only; no vocabulary or attribution inference. */
+export function verifiedVisualTraits(char:ScriptCharacter):string[]{
   return char.explicit_visual_traits.filter(trait=>
     char.visual_trait_evidence?.some(record=>record.trait===trait&&
-      directlyAttributedAppearance(record,char,mentions)));
+      ['intrinsic_appearance','stable_wardrobe'].includes(record.relationship)));
 }
 export function validateScriptAnalysis(raw:unknown,script:ApprovedScriptSnapshot,
   schema=loadSchema('analysis')):ScriptAnalysis{
@@ -147,26 +75,11 @@ export function validateScriptAnalysis(raw:unknown,script:ApprovedScriptSnapshot
   const beginnings=new Map<string,number>();let cursor=0;
   for(const section of script.sections){beginnings.set(section.id,cursor);
     cursor+=section.text.length+2;}
-  const sourceText=script.sections.map(section=>section.text).join('\n\n');
-  const folded=sourceText.toLocaleLowerCase('en');
-  const mentions=analysis.continuity_catalog.characters.flatMap(character=>
-    character.occurrences.map(hit=>({charId:character.char_id,start:hit.start,end:hit.end})));
-  const attributedTo=(charId:string,phrase:string)=>{
-    const needle=phrase.trim().toLocaleLowerCase('en');
-    for(let pos=folded.indexOf(needle);pos!==-1;
-      pos=folded.indexOf(needle,pos+1)){
-      const boundary=Math.max(folded.lastIndexOf('.',pos-1),
-        folded.lastIndexOf('!',pos-1),folded.lastIndexOf('?',pos-1),
-        folded.lastIndexOf(';',pos-1),folded.lastIndexOf('\n',pos-1))+1;
-      const before=mentions.filter(hit=>hit.start>=boundary&&
-        hit.start<=pos&&pos-hit.start<240)
-        .sort((a,b)=>b.start-a.start);
-      if(before.length&&before[0].charId===charId&&
-        !before.some(hit=>hit.start===before[0].start&&hit.charId!==charId))
-        return true;
-    }
-    return false;
-  };
+  const ids=new Set<string>();
+  for(const char of analysis.continuity_catalog.characters){
+    if(ids.has(char.char_id))throw Error('SCRIPT_ANALYSIS_DUPLICATE_CHARACTER_ID');
+    ids.add(char.char_id);
+  }
   for(const char of analysis.continuity_catalog.characters){
     const occurrences=[...char.occurrences].sort((a,b)=>a.start-b.start);
     let lastEnd=-1;
@@ -190,33 +103,13 @@ export function validateScriptAnalysis(raw:unknown,script:ApprovedScriptSnapshot
     }
     for(const hit of occurrences){if(!ranges.some(r=>r.start<=hit.start&&r.end>=hit.end))
       throw Error('SCRIPT_ANALYSIS_OCCURRENCE_OUTSIDE_PRESENCE');}
-    // A character ID can be inferred from recurring narration mentions, but
-    // appearance traits cannot. A literal source phrase is minimum evidence;
-    // the independent owner review still checks its attribution to this actor.
-    for(const marker of char.identity_markers){
-      if(typeof marker!=='string'||!marker.trim()||
-        !folded.includes(marker.trim().toLocaleLowerCase('en')))
-        throw Error('SCRIPT_ANALYSIS_IDENTITY_MARKER_NOT_IN_SOURCE: '+char.char_id);
-    }
-    for(const trait of char.explicit_visual_traits){
-      if(typeof trait!=='string'||!trait.trim()||
-        (!char.visual_trait_evidence?.some(v=>v.trait===trait)&&
-          !attributedTo(char.char_id,trait)))
-        throw Error('SCRIPT_ANALYSIS_UNSUPPORTED_VISUAL_TRAIT: '+char.char_id);
-    }
-    for(const constraint of char.physical_constraints){
-      if(typeof constraint!=='string'||!constraint.trim()||
-        !attributedTo(char.char_id,constraint))
-        throw Error('SCRIPT_ANALYSIS_UNSUPPORTED_VISUAL_TRAIT: '+char.char_id);
-    }
+    // Creative attribution and completeness belong to independent AI Review.
     const supplied=char.visual_trait_evidence??[];
     for(const evidence of supplied){
       if(!char.explicit_visual_traits.includes(evidence.trait))
         throw Error('SCRIPT_ANALYSIS_VISUAL_EVIDENCE_UNDECLARED_TRAIT: '+char.char_id);
-      validateTraitEvidence(evidence,char,sections,beginnings,mentions);
+      validateTraitEvidence(evidence,char,sections,beginnings);
     }
-    // The absence of evidence in an old F24 record is NOT evidence of a
-    // stable trait: Style Bible will keep it as NEEDS_OWNER_DEFINITION.
 
   }
   return analysis;
@@ -275,7 +168,7 @@ export function analysisReviewContract(task:AnalysisTask,analysisSha:string){
     '{finding_id,severity,location,issue,evidence}.',
     'severity is exactly P0, P1 or P2; every finding requires Correct then Recheck.',
     'approved=true requires an EMPTY findings array. approved=false requires at least one finding.',
-    'The independent reviewer must actually examine source quotes and spans.',
+    'The independent reviewer must examine source quotes, semantic attribution, character identity, presence, stable versus temporary traits, completeness, and distinguish source facts, inferences and unknowns. Backend validates only structured data and exact spans.',
     analysisResultContract(task,{
       schema:'stickman-analysis-review-v1',project_id:task.project_id,
       analysis_sha256:analysisSha,independent_review:true,

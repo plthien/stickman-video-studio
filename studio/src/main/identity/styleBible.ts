@@ -21,8 +21,7 @@ export function compileStyleBible(analysis:ScriptAnalysis,script:ApprovedScriptS
     // Keep original proposal/evidence in source_definition_hash for invalidation,
     // but only verified stable traits enter drawable Style Bible authority.
     const source_definition_hash=contentHash({inherited,styleId:pinned.id,styleSha:pinned.sha256});
-    inherited.explicit_visual_traits=verifiedVisualTraits(char,
-      analysis.continuity_catalog.characters);
+    inherited.explicit_visual_traits=verifiedVisualTraits(char);
     // Do not copy unverified or transient evidence as approved visual authority.
     inherited.visual_trait_evidence=(char.visual_trait_evidence??[]).filter(row=>
       inherited.explicit_visual_traits.includes(row.trait));
