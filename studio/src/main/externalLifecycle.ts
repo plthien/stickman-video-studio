@@ -8,14 +8,14 @@ import {getCaptionReview,nativeVoiceTiming} from './captionReview.js';
 import {alignmentText} from './alignment.js';
 import {invalidateGlabsJobsAfterNativeCorrection} from './glabs.js';
 import {rejectNativeUnsafePaths,validateAuthoring} from './sourceCitations.js';
-import {activateScriptCandidate,scriptCorrectionRechecked,freezeTask,sourceFingerprint,stageImport,confirmImport,validateScript,validateManifest,externalJsonFileDelivery,readNativeDraft,publishNativeDraftCorrection,type ConfirmOptions} from './externalTasks.js';
+import {activateScriptCandidate,scriptCorrectionRechecked,freezeTask,sourceFingerprint,stageImport,confirmImport,validateScript,validateManifest,externalJsonFileDelivery,readNativeDraft,publishNativeDraftCorrection,publishedNativeCreativeArtifact,stagePublishedNativeCorrection,type ConfirmOptions} from './externalTasks.js';
 
 type Scope={targetIds?:string[];editableIds?:string[];editablePaths?:string[];findingIds?:string[];targetContext?:'DRAFT'|'PUBLISHED';media?:'preview'|'film'|'voice'|'captions';transferAcknowledged?:boolean};
 /** Active execution boundary; persisted Media Review types remain readable for legacy projects. */
 function requireActiveLifecycleOperation(operation:Exclude<ExternalOperation,'author'>):void{
   if(operation==='media-review')throw new Error('MEDIA_REVIEW_DISABLED: legacy history is read-only.');
 }
-type Artifact={value:unknown;sha256:string;id:string;context?:'DRAFT'|'PUBLISHED';draftRevision?:number;draftToken?:string;authorTaskId?:string};
+type Artifact={value:unknown;sha256:string;id:string;context?:'DRAFT'|'PUBLISHED';draftRevision?:number;draftToken?:string;authorTaskId?:string;publishedCorrectionTaskId?:string};
 const exact=(value:Record<string,unknown>,keys:string[])=>{const extra=Object.keys(value).filter(key=>!keys.includes(key));if(extra.length)throw new Error(`Unknown field: ${extra[0]}`)};
 const lifecycleDir=(root:string)=>resolveProjectFile(root,'.studio/external/lifecycle');
 const resultPath=(root:string,id:string)=>path.join(lifecycleDir(root),'results',id+'.json');
@@ -87,14 +87,15 @@ function artifactFor(root:string,state:StudioState,stage:Stage,operation:Externa
     if(!draft)throw new Error('NATIVE_DRAFT_REQUIRED: no current staged Author candidate.');
     return{value:draft.artifact,sha256:draft.sha256,
       id:'native-draft-'+draft.authorTaskId+'-r'+draft.revision+'-'+operation,
-      context,draftRevision:draft.revision,draftToken:draft.token,authorTaskId:draft.authorTaskId};
+      context,draftRevision:draft.revision,draftToken:draft.token,authorTaskId:draft.authorTaskId,
+      publishedCorrectionTaskId:draft.publishedCorrectionTaskId};
   }
   const file=path.join(root,'project.json');
   if(!state.external.native||!fs.existsSync(file))
     throw new Error('REVIEW_REQUIRED: no imported Published Native artifact exists.');
   const manifest=strictJson(fs.readFileSync(file,'utf8'));
   const existing=state.external.native.artifact as Record<string,unknown>|undefined;
-  const value={manifest,shot_ledger:existing?.shotLedger??[],
+  const value=state.identityPolicy==='v1'?publishedNativeCreativeArtifact(root,state):{manifest,shot_ledger:existing?.shotLedger??[],
     sound_script:existing?.soundScript??[],asset_needs:existing?.assetNeeds??[]};
   return{value,sha256:sha(JSON.stringify(value)),id:'native-'+state.external.native.revision+'-'+operation,
     context:'PUBLISHED'};
@@ -162,7 +163,9 @@ type Lineage={correctTaskId:string;reviewTaskId:string;findingIds:string[];prior
  * never an authorization to resolve a different or retired artifact. */
 function correctionLineage(state:StudioState,stage:Stage,current:Artifact):Lineage{
   const correct=state.lifecycle?.tasks[stage+':correct'];
-  if(stage==='native'&&((correct?.artifactContext??'PUBLISHED')!==current.context||
+  const fromPublished=stage==='native'&&current.context==='DRAFT'&&correct?.artifactContext==='PUBLISHED'&&
+    current.publishedCorrectionTaskId===correct.id;
+  if(stage==='native'&&!fromPublished&&((correct?.artifactContext??'PUBLISHED')!==current.context||
     (current.context==='DRAFT'&&(correct?.draftAuthorTaskId!==current.authorTaskId||correct?.draftToken!==current.draftToken))))
     throw new Error('RECHECK_LINEAGE_REQUIRED: Native correction belongs to another draft/author lineage.');
   if(!correct||correct.status!=='IMPORTED')throw new Error('RECHECK_LINEAGE_REQUIRED: a confirmed current Correct task is required.');
@@ -182,7 +185,7 @@ function correctionLineage(state:StudioState,stage:Stage,current:Artifact):Linea
   const sources=Object.values(state.lifecycle?.artifacts??{}).filter(row=>row.stage===stage&&
     (row.operation==='review'||row.operation==='recheck')&&row.createdAt<=correct.createdAt&&
     (row.value as {artifact_sha256?:string})?.artifact_sha256===correct.artifactSha256&&
-    (current.context!=='DRAFT'||(row.draftAuthorTaskId===current.authorTaskId&&row.draftToken===current.draftToken))&&
+    (correct.artifactContext!=='DRAFT'||(row.draftAuthorTaskId===correct.draftAuthorTaskId&&row.draftToken===correct.draftToken))&&
     (stage!=='native'||row.artifactContext===correct.artifactContext||
       (correct.artifactContext==='PUBLISHED'&&!row.artifactContext)))
     .filter(row=>{
@@ -1407,6 +1410,16 @@ export function confirmLifecycleResult(appPathOrRoot:string,rootOrToken:string,m
     });
     // After a durable correction, only jobs whose effective creative target
     // changed become STALE. Unrelated jobs and approved bindings remain intact.
+    invalidateGlabsJobsAfterNativeCorrection(appPath,root);
+    return finalizeLifecycle(root,pending,task);
+  }
+  if(pending.operation==='correct'&&pending.stage==='native'&&state.identityPolicy==='v1'){
+    const corrected=(pending.payload as {artifact:Record<string,unknown>}).artifact;
+    validateLocks('native',original.value,corrected,task.editableIds??[],task.editablePaths??[]);
+    if(!task.sourceReviewTaskId||!task.identityEvidenceSha)throw Error('NATIVE_CREATIVE_REVIEW_REQUIRED');
+    stagePublishedNativeCorrection(appPath,root,corrected,{correctTaskId:task.id,reviewTaskId:task.sourceReviewTaskId,
+      editableIds:task.editableIds??[],editablePaths:task.editablePaths??[],findingIds:task.findingIds??[],
+      baselineSha256:task.artifactSha256,responseSha256:String(pending.responseSha256)});
     invalidateGlabsJobsAfterNativeCorrection(appPath,root);
     return finalizeLifecycle(root,pending,task);
   }
