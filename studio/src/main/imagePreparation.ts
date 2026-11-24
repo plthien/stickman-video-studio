@@ -300,7 +300,7 @@ function withUpstreamIdentity(appPath:string,root:string,item:ImageJobSpec,
         mediaSha:anchor.sha256,rightsSha:anchor.rightsSha256,path:anchor.path
       })),
       previous:previous?{source:previous.sourceTargetKey,sha:previous.sha256,
-        job:previous.sourceJobId,binding:previous.sourceBindingSha,
+        ...(previous.sourceJobId?{job:previous.sourceJobId}:{ownerApprovalId:previous.ownerApprovalId}),binding:previous.sourceBindingSha,
         dependency:previous.dependencySha}:null,
       ownerRefs};
     const identityBindingSnapshotSha=contentHash(frozen);

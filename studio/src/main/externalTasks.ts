@@ -8,6 +8,10 @@ import { compileAuthority } from './externalAuthority.js';
 import {imageRequirementFingerprintSources} from './imageRequirements.js';
 import {readApprovedNativeIdentity,validateNativeBindingPayload} from './identity/nativeBinding.js';
 import {currentDraftIdentityReceipt,publishNativeIdentityReceipt} from './identity/finalGate.js';
+import {createContinuityResolver} from './identity/continuityGraph.js';
+import {verifyReferenceFile,type IdentityDecoder} from './identity/referencePublication.js';
+import {contentHash} from './identity/contracts.js';
+import type {OwnerImageApproval} from './identity/ownerMediaAuthority.js';
 
 export function externalOutputFilename(
   stage:Stage,operation:'author'|'review'|'correct'|'recheck'|'media-review',
@@ -486,7 +490,7 @@ export function requireReviewedNativeDraft(state:StudioState,draft:NonNullable<R
   const targets=(manifest.shots??[]).map(shot=>shot.id);
   if(!latest||latest.status!=='REVIEWED_NO_FINDINGS'||result?.status!=='REVIEWED_NO_FINDINGS'||
     latest.artifactSha256!==sha(JSON.stringify(result))||
-    !Array.isArray(result.findings)||result.findings.length!==0||
+    !Array.isArray(result.findings)||result.findings.some(f=>(f as {status?:string})?.status!=='resolved')||
     !Array.isArray(result.coverage?.target_ids)||result.coverage.target_ids.length!==targets.length||
     new Set(result.coverage.target_ids).size!==targets.length||
     targets.some(id=>!result.coverage!.target_ids!.includes(id))||
@@ -753,7 +757,7 @@ export function importMediaFile(root:string,source:string,kind:'image'|'sfx',rig
   // File import alone never claims native mapping and never corrupts a frozen task.
   writeState(root,state);return{...entry,status:'IMPORTED_UNASSIGNED'};
 }
-export function fulfillMedia(appPath:string,root:string,token:string,key:string,relative:string,rights:string,hooks:{afterPending?:()=>void;afterState?:()=>void}={}){
+export function fulfillMedia(appPath:string,root:string,token:string,key:string,relative:string,rights:string,hooks:{afterPending?:()=>void;afterState?:()=>void;ownerReviewed?:true;decode?:IdentityDecoder}={}){
   const pending=readPending(root),state=readState(root);
   if(pending.stage!=='native'||pending.projectId!==state.project.id||pending.token!==token)throw new Error('Project/pending token mismatch.');
   if(pending.taskId!==assertTaskCurrent(appPath,root,'native',state).id||pending.revision!==state.tasks?.native?.revision)throw new Error('Frozen task binding mismatch.');
@@ -767,7 +771,26 @@ export function fulfillMedia(appPath:string,root:string,token:string,key:string,
   const binding={relative,sha256:hash,rights:rights.trim(),kind:ref.kind};
   const previous=pending.fulfillments[key];
   if(previous){if(JSON.stringify(previous)!==JSON.stringify(binding))throw new Error('A frozen target cannot be silently remapped; rebuild/review the task.');return pendingResult(root,pending);}
-  const mapped={...original,...(ref.kind==='image'?{shotId:ref.shotId,layerId:ref.layerId}:{track:ref.track,trackIndex:ref.trackIndex})};
+  let ownerImageApproval:OwnerImageApproval|undefined;
+  if(state.identityPolicy==='v1'&&ref.kind==='image'&&hooks.ownerReviewed===true){
+    const draft=readNativeDraft(root,state)!;
+    const reviewSha=requireReviewedNativeDraft(state,draft);
+    const resolver=createContinuityResolver(appPath,root),plan=resolver.getBinding(key);
+    const verified=verifyReferenceFile(root,relative,hash),decoded=hooks.decode?.(verified.bytes);
+    if(!decoded||!Number.isSafeInteger(decoded.width)||!Number.isSafeInteger(decoded.height)||
+      decoded.width<1||decoded.height<1||!Buffer.isBuffer(decoded.png)||decoded.png.length<24)
+      throw Error('OWNER_IMAGE_DECODE_REQUIRED');
+    const body:Omit<OwnerImageApproval,'approvalSha'>={
+      schema:'owner-native-image-approval-v1',approvalId:randomUUID(),projectId:state.project.id,
+      draftToken:draft.token,authorTaskId:draft.authorTaskId,targetKey:key,shotId:plan.shotId,layerId:plan.layerId,
+      imagePath:relative,imageSha:hash,rightsSha:contentHash(rights.trim()),
+      targetCreativeSha:nativeImageTargetIdentityFromSnapshot(state,draft,key).fingerprint,
+      targetBindingSha:plan.targetBindingSha,previousDependencySha:resolver.resolve(key)?.dependencySha??null,
+      reviewSha,approvedAt:new Date().toISOString()};
+    ownerImageApproval={...body,approvalSha:contentHash(body)};
+  }
+  const mapped={...original,...(ref.kind==='image'?{shotId:ref.shotId,layerId:ref.layerId}:{track:ref.track,trackIndex:ref.trackIndex}),
+    ...(ownerImageApproval?{ownerImageApproval}:{})};
   const pendingBefore=structuredClone(pending);state.media=[...(state.media??[]).filter(item=>!(item.path===relative&&item.shotId===ref.shotId&&item.layerId===ref.layerId&&item.track===ref.track&&item.trackIndex===ref.trackIndex)),mapped];
   pending.fulfillments[key]=binding;
   atomicJson(fulfillmentTxnPath(root),{schema:'media-fulfillment-transaction-v2',pendingBefore,key,binding,ownedMapping:mapped,createdAt:new Date().toISOString()});

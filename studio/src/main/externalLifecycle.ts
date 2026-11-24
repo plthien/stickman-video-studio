@@ -774,6 +774,9 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   // Owner-provided empty arrays are explicit authorizations, never auto-filled.
   // A verified auxiliary path does not suppress independent selected-Shot rights.
   const editableIds=[...new Set(scope.editableIds??suggested?.editableIds??[])];
+  if(operation==='correct'&&stage==='native'&&artifact.context==='DRAFT'&&
+    (editableIds.length>0||editablePaths.some(pointer=>!suggested?.editablePaths.includes(pointer))))
+    throw Error('CORRECT_SCOPE_EXCEEDS_STRUCTURED_REVIEW');
   if(operation==='correct'&&!editableIds.length&&!editablePaths.length)
     throw new Error('Correct requires unresolved findings from a confirmed current-artifact Review or an explicit editable section/shot scope.');
   if(editableIds.some(id=>typeof id!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(id)))throw new Error('Invalid editable ID.');

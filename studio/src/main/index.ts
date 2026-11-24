@@ -215,7 +215,7 @@ function registerIpc() {
   ipcMain.handle('external:stageLifecycle',(_event,id:string,stage:Stage,operation:'review'|'correct'|'recheck',text:string)=>stageLifecycleResult(app.getAppPath(),rootFor(id),stage,operation,text));
   ipcMain.handle('external:confirmLifecycle',async(_event,id:string,token:string,options?:{previewSeconds?:number;allowSampleDraft?:boolean})=>{const root=rootFor(id);await confirmLifecycleResult(app.getAppPath(),root,token,options);return projectSnapshot(root,app.getAppPath())});
   ipcMain.handle('external:pendingMedia', (_event, id: string) => getPendingMedia(app.getAppPath(), rootFor(id)));
-  ipcMain.handle('external:fulfillMedia', (_event, id: string, token:string, key:string, relative:string, rights:string) => fulfillMedia(app.getAppPath(), rootFor(id), token, key, relative, rights));
+  ipcMain.handle('external:fulfillMedia', (_event, id: string, token:string, key:string, relative:string, rights:string,ownerReviewed?:true) => fulfillMedia(app.getAppPath(), rootFor(id), token, key, relative, rights,{ownerReviewed,decode:decodeGlabsImage}));
   ipcMain.handle('voice:captionReview', (_event, id: string) => getCaptionReview(rootFor(id)));
   ipcMain.handle('voice:captionAuto',(_event,id:string)=>autoCaptionReview(rootFor(id)));
   ipcMain.handle('voice:captionAuthorFreeze',(_event,id:string)=>freezeCaptionAuthorTask(rootFor(id)));

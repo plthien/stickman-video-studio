@@ -7,11 +7,12 @@ import {readState} from '../services.js';
 import {verifyReferenceFile} from './referencePublication.js';
 import {validateNativeBindingPayload} from './nativeBinding.js';
 import {contentHash} from './contracts.js';
+import {verifyOwnerImageApproval} from './ownerMediaAuthority.js';
 
 export interface ContinuityImage{
   sourceTargetKey:string;relation:string;path:string;sha256:string;
   mime:'image/png'|'image/jpeg'|'image/webp';
-  sourceJobId:string;sourceBindingSha:string;sourceSnapshotSha:string;
+  sourceJobId?:string;ownerApprovalId?:string;sourceBindingSha:string;sourceSnapshotSha:string;
   dependencySha:string;
 }
 export function createContinuityResolver(appPath:string,root:string){
@@ -55,17 +56,25 @@ export function createContinuityResolver(appPath:string,root:string){
       job.approved?.sha256===galleryRow.boundSha256&&
       job.targetCreativeSha256===galleryRow.creativeFingerprint&&
       job.identityTargetBindingSha===parent.targetBindingSha);
-    if(!job)throw Error('CONTINUITY_APPROVED_SOURCE_JOB_REQUIRED');
-    const media=state.media?.find(m=>m.kind==='image'&&
-      m.path===galleryRow.boundPath&&m.sha256===galleryRow.boundSha256&&
-      m.shotId===galleryRow.shotId&&m.layerId===galleryRow.layerId&&
-      m.rights?.trim()&&m.rights===job.approved?.rights);
-    if(!media)throw Error('CONTINUITY_SOURCE_RIGHTS_MISSING');
+    const owner=galleryRow.creativeFingerprint?verifyOwnerImageApproval(state,{
+      targetKey:sourceKey!,shotId:galleryRow.shotId,layerId:galleryRow.layerId,
+      imagePath:galleryRow.boundPath,imageSha:galleryRow.boundSha256,targetBindingSha:parent.targetBindingSha,
+      previousDependencySha:inherited?.dependencySha??null,draftToken:draft.token,
+      authorTaskId:draft.authorTaskId,targetCreativeSha:galleryRow.creativeFingerprint}):null;
+    if(!job&&!owner)throw Error('CONTINUITY_APPROVED_SOURCE_MEDIA_REQUIRED');
+    if(job){
+      const media=state.media?.find(m=>m.kind==='image'&&m.path===galleryRow.boundPath&&
+        m.sha256===galleryRow.boundSha256&&m.shotId===galleryRow.shotId&&m.layerId===galleryRow.layerId&&
+        m.rights?.trim()&&m.rights===job.approved?.rights);
+      if(!media)throw Error('CONTINUITY_SOURCE_RIGHTS_MISSING');
+      if((job.identityPreviousSourceSha??null)!==(inherited?.dependencySha??null))
+        throw Error('CONTINUITY_SOURCE_DEPENDENCY_CHANGED');
+    }
     const checked=verifyReferenceFile(root,galleryRow.boundPath,
       galleryRow.boundSha256);
     const base={sourceTargetKey:sourceKey!,relation:source.relation,
       path:galleryRow.boundPath,sha256:checked.sha,mime:checked.mime,
-      sourceJobId:job.id,sourceBindingSha:parent.targetBindingSha,
+      ...(job?{sourceJobId:job.id}:{ownerApprovalId:owner!.approvalId}),sourceBindingSha:parent.targetBindingSha,
       sourceSnapshotSha:parent.upstreamSnapshotSha,
       parentDependencySha:inherited?.dependencySha??null};
     // The current project-wide snapshot may change due to an unrelated

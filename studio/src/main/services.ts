@@ -24,7 +24,7 @@ export interface StudioState {
   render?: { path: string; sha256: string; reportPath: string; reportSha256: string; sourceFingerprint?: string; verifiedAt: string };
   nano?: { endpoint: string; profileId?: string };
   imports?: string[];
-  media?: Array<{ path:string; sha256:string; kind:'image'|'sfx'|'ambience'; shotId?:string; layerId?:string; track?:'sfx'|'dialogue'|'ambience'|'music'; trackIndex?:number; rights:string; importedAt:string }>;
+  media?: Array<{ path:string; sha256:string; kind:'image'|'sfx'|'ambience'; shotId?:string; layerId?:string; track?:'sfx'|'dialogue'|'ambience'|'music'; trackIndex?:number; rights:string; importedAt:string; ownerImageApproval?:import('./identity/ownerMediaAuthority.js').OwnerImageApproval }>;
   nativeReadiness?: { sampleReady:boolean; fullReady:boolean; previewSeconds:number; checkedSeconds?:number; validationSha256?:string; sourceFingerprint?:string; missingOutsideScope?:string[]; reviewedDraft:boolean; verifiedAt:string };
   longform?: { jobId:string; manifestPath:string; outputPath:string; status:'READY'|'RUNNING'|'UNCERTAIN'|'PASS'|'FAILED'; sourceSha256:string; profileId:string; profileVersion?:number; resume:boolean; updatedAt:string; detail?:string; completedParts?:number; totalParts?:number; currentPart?:number; mode?:'generate'|'regenerate'|'resume'|'retry' };
 }

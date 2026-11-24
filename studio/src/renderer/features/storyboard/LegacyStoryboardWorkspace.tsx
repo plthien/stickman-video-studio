@@ -152,7 +152,8 @@ export function LegacyStoryboardWorkspace(){
     try{
       const file=await window.studio.importMedia(scope.projectId,{kind:target.kind,rights:rights.trim()});
       if(!file||!isCurrentProjectSession(scope))return;
-      const result=await window.studio.fulfillMedia(scope.projectId,pending.token,target.key,file.path,rights.trim()) as PendingTargets;
+      if(target.kind==='image'&&!window.confirm('Approve this exact imported image, rights, and current target binding?'))return;
+      const result=await window.studio.fulfillMedia(scope.projectId,pending.token,target.key,file.path,rights.trim(),true) as PendingTargets;
       if(!isCurrentProjectSession(scope))return;
       const state=await window.studio.projectState(scope.projectId);
       if(!setNativeIfSessionCurrent(scope,state))return;

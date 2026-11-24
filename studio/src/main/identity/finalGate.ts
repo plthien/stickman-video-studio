@@ -7,10 +7,11 @@ import {readApprovedNativeIdentity,validateNativeBindingPayload} from './nativeB
 import {createContinuityResolver} from './continuityGraph.js';
 import {verifyReferenceFile} from './referencePublication.js';
 import {contentHash} from './contracts.js';
+import {verifyOwnerImageApproval} from './ownerMediaAuthority.js';
 
 export interface NativeIdentityReceiptRow{
   targetKey:string;shotId:string;layerId:string;imagePath:string;imageSha:string;
-  sourceJobId:string;targetBindingSha:string;referenceSetSha:string;
+  sourceJobId?:string;ownerApprovalId?:string;targetBindingSha:string;referenceSetSha:string;
   previousDependencySha:string|null;
 }
 export interface NativeIdentityReceipt{
@@ -76,19 +77,25 @@ export function currentDraftIdentityReceipt(root:string,appPath:string,
       job.status==='APPROVED'&&job.approved?.path===target.boundPath&&
       job.approved?.sha256===target.boundSha256&&
       job.identityTargetBindingSha===plan.targetBindingSha);
-    if(!source)throw Error('IDENTITY_NATIVE_APPROVED_JOB_REQUIRED: '+plan.targetKey);
-    const stored=readState(root).media?.find(m=>m.kind==='image'&&
-      m.path===target.boundPath&&m.sha256===target.boundSha256&&
-      m.shotId===target.shotId&&m.layerId===target.layerId&&
-      m.rights===source.approved?.rights);
-    if(!stored)throw Error('IDENTITY_NATIVE_BINDING_RIGHTS_CHANGED');
-    verifyReferenceFile(root,target.boundPath,target.boundSha256);
     const previous=continuity!.resolve(plan.targetKey);
-    if((source.identityPreviousSourceSha??null)!==(previous?.dependencySha??null))
-      throw Error('IDENTITY_NATIVE_CONTINUITY_CHANGED: '+plan.targetKey);
+    const previousDependencySha=previous?.dependencySha??null;
+    const owner=target.creativeFingerprint?verifyOwnerImageApproval(state,{
+      targetKey:plan.targetKey,shotId:plan.shotId,layerId:plan.layerId,
+      imagePath:target.boundPath,imageSha:target.boundSha256,targetBindingSha:plan.targetBindingSha,
+      previousDependencySha,draftToken:draft.token,authorTaskId:draft.authorTaskId,
+      targetCreativeSha:target.creativeFingerprint}):null;
+    if(!source&&!owner)throw Error('IDENTITY_NATIVE_APPROVED_MEDIA_REQUIRED: '+plan.targetKey);
+    if(source){
+      const stored=state.media?.find(m=>m.kind==='image'&&m.path===target.boundPath&&m.sha256===target.boundSha256&&
+        m.shotId===target.shotId&&m.layerId===target.layerId&&m.rights===source.approved?.rights&&m.rights.trim());
+      if(!stored)throw Error('IDENTITY_NATIVE_BINDING_RIGHTS_CHANGED');
+      if((source.identityPreviousSourceSha??null)!==previousDependencySha)
+        throw Error('IDENTITY_NATIVE_CONTINUITY_CHANGED: '+plan.targetKey);
+    }
+    verifyReferenceFile(root,target.boundPath,target.boundSha256);
     rows.push({targetKey:plan.targetKey,shotId:plan.shotId,
       layerId:plan.layerId,imagePath:target.boundPath,
-      imageSha:target.boundSha256,sourceJobId:source.id,
+      imageSha:target.boundSha256,...(source?{sourceJobId:source.id}:{ownerApprovalId:owner!.approvalId}),
       targetBindingSha:plan.targetBindingSha,
       referenceSetSha:verified.identity.approvalSetSha,
       previousDependencySha:previous?.dependencySha??null});
@@ -177,6 +184,15 @@ export function assertPublishedIdentityCurrent(root:string,appPath:string,
     verifyReferenceFile(root,row.imagePath,row.imageSha);
     // Published output must retain its real original G-Labs approval journal,
     // not just a filename and a rehashed local receipt.
+    if(row.ownerApprovalId){
+      if(row.sourceJobId||!verifyOwnerImageApproval(state,{
+        approvalId:row.ownerApprovalId,targetKey:row.targetKey,shotId:row.shotId,layerId:row.layerId,
+        imagePath:row.imagePath,imageSha:row.imageSha,targetBindingSha:row.targetBindingSha,
+        previousDependencySha:row.previousDependencySha}))
+        throw Error('IDENTITY_PUBLISHED_OWNER_APPROVAL_STALE');
+      continue;
+    }
+    if(!row.sourceJobId)throw Error('IDENTITY_PUBLISHED_APPROVAL_MISSING');
     const source=readGlabsJob(root,row.sourceJobId);
     if(source.status!=='APPROVED'||source.projectId!==state.project.id||
       source.targetKey!==row.targetKey||
