@@ -20,7 +20,7 @@ import {referencePromptForCharacter} from './styleBible.js';
 import {importMediaFile} from '../externalTasks.js';
 import {previewReferenceSwitchImpact,assertNoIdentityBusyJobs} from './impact.js';
 import {readReferenceJob} from './referenceGeneration.js';
-import {ownerVisualDefinitionDigest,validateOwnerVisualDefinition,
+import {ownerVisualDefinitionDigest,validateOwnerVisualDefinition,resolveOwnerVisualDefinition,
   type OwnerVisualDefinition} from './visualDefinitions.js';
 
 type TaskState='FROZEN'|'IMPORTED'|'STALE';
@@ -46,7 +46,9 @@ export interface IdentityWorkflowStore{
   referenceApprovalSet:ReferenceApprovalSet|null;
   referenceApprovalHistory?:ReferenceApprovalSet[];
   publishedAuthority?:PublishedIdentityAuthority|null;
+  styleBibleHistory?:Array<{analysis:ScriptAnalysis;analysisApproved:NonNullable<IdentityWorkflowStore['analysisApproved']>;independentReview:AnalysisReview;bible:StyleBible;bibleTextApproved:NonNullable<IdentityWorkflowStore['bibleTextApproved']>}>;
   ownerVisualDefinitions?:OwnerVisualDefinition[];
+  ownerVisualDefinitionHistory?:OwnerVisualDefinition[];
   events:JournalEvent[];
 }
 const file=(root:string)=>resolveProjectFile(root,'.studio/identity/workflow-v1.json');
@@ -87,10 +89,13 @@ export function readIdentityWorkflow(root:string):IdentityWorkflowStore{
        data.referenceApprovalHistory.length>100))||
     (data.ownerVisualDefinitions!==undefined&&
       (!Array.isArray(data.ownerVisualDefinitions)||
-       data.ownerVisualDefinitions.length>100||
+       data.ownerVisualDefinitions.length>2000||
        data.ownerVisualDefinitions.some(v=>!v||typeof v.charId!=='string')||
-       new Set(data.ownerVisualDefinitions.map(v=>v.charId)).size!==
-         data.ownerVisualDefinitions.length)))
+       new Set(data.ownerVisualDefinitions.map(v=>JSON.stringify([v.charId,v.styleBibleSha]))).size!==
+         data.ownerVisualDefinitions.length))||
+    (data.ownerVisualDefinitionHistory!==undefined&&(!Array.isArray(data.ownerVisualDefinitionHistory)||
+      data.ownerVisualDefinitionHistory.length>2000||data.ownerVisualDefinitionHistory.some(v=>!v||typeof v.charId!=='string')||
+      new Set(data.ownerVisualDefinitionHistory.map(v=>v.definitionSha)).size!==data.ownerVisualDefinitionHistory.length)))
     throw Error('IDENTITY_WORKFLOW_CORRUPT');
   if(data.draftAnalysis&&data.draftSha256!==contentHash(data.draftAnalysis))
     throw Error('IDENTITY_DRAFT_ANALYSIS_TAMPERED');
@@ -505,6 +510,12 @@ export function importStyleBibleResult(root:string,appPath:string,text:string,ex
   }
   // Keep the published snapshot intact before replacing working authority.
   next.publishedAuthority=publishedSnapshot(prior);
+  if(prior.bible&&prior.bibleTextApproved&&prior.draftAnalysis&&prior.analysisApproved&&prior.independentReview&&
+    !(next.styleBibleHistory??[]).some(row=>row.bible.style_bible_sha256===prior.bible!.style_bible_sha256)){
+    if((next.styleBibleHistory??[]).length>=2000)throw Error('STYLE_BIBLE_HISTORY_LIMIT');
+    next.styleBibleHistory=[...(next.styleBibleHistory??[]),{analysis:clone(prior.draftAnalysis),analysisApproved:clone(prior.analysisApproved),
+      independentReview:clone(prior.independentReview),bible:clone(prior.bible),bibleTextApproved:clone(prior.bibleTextApproved)}];
+  }
   archiveReferenceSet(next);
   next.bible=null;next.bibleTextApproved=null;next.referenceApprovalSet=null;
   next.styleDesignTask={...entry,status:'IMPORTED'};
@@ -525,6 +536,12 @@ export function approveProjectStyleBible(root:string,appPath:string,
   const next=clone(prior);
   next.bible=bible;
   next.bibleTextApproved={sha256:bible.style_bible_sha256,approvedAt:new Date().toISOString()};
+  const history=next.styleBibleHistory??[];
+  if(!history.some(row=>row.bible.style_bible_sha256===bible.style_bible_sha256)){
+    if(history.length>=2000)throw Error('STYLE_BIBLE_HISTORY_LIMIT');
+    next.styleBibleHistory=[...history,{analysis:clone(analysis),analysisApproved:clone(prior.analysisApproved!),
+      independentReview:clone(prior.independentReview!),bible:clone(bible),bibleTextApproved:clone(next.bibleTextApproved)}];
+  }
   return save(root,prior,next,'approve:style-bible',next.bibleTextApproved);
 }
 /** Explicit visual traits at Style Bible stage. No automatically authored appearance.
@@ -550,14 +567,15 @@ export function approveOwnerVisualDefinition(root:string,appPath:string,input:{
   const definition:OwnerVisualDefinition={
     ...prepared,definitionSha:ownerVisualDefinitionDigest(prepared)};
   validateOwnerVisualDefinition(definition,script,bible);
-  const previous=prior.ownerVisualDefinitions?.find(v=>v.charId===input.anchorId);
+  const previous=resolveOwnerVisualDefinition(prior.ownerVisualDefinitions,script,bible,input.anchorId);
   if(previous&&previous.provenance===definition.provenance&&
     previous.evidence===definition.evidence&&
     JSON.stringify(previous.traits)===JSON.stringify(definition.traits))
     return prior;
   const next=clone(prior);
+  if(previous)next.ownerVisualDefinitionHistory=[...(next.ownerVisualDefinitionHistory??[]),previous];
   next.ownerVisualDefinitions=[
-    ...(next.ownerVisualDefinitions??[]).filter(v=>v.charId!==input.anchorId),
+    ...(next.ownerVisualDefinitions??[]).filter(v=>v.charId!==input.anchorId||v.styleBibleSha!==bible.style_bible_sha256),
     definition
   ];
   // A visual definition changes future generated reference prompts only.
@@ -567,11 +585,10 @@ export function approveOwnerVisualDefinition(root:string,appPath:string,input:{
 }
 export function currentOwnerVisualDefinition(root:string,appPath:string,charId:string){
   const prior=readIdentityWorkflow(root);
-  const found=prior.ownerVisualDefinitions?.find(v=>v.charId===charId);
-  if(!found)return null;
+  if(!prior.bible||!prior.ownerVisualDefinitions?.some(v=>v.charId===charId&&v.styleBibleSha===prior.bible!.style_bible_sha256))return null;
   const {script,analysis}=validApproved(root,prior);
-  return validateOwnerVisualDefinition(found,script,
-    checkedStyleBible(prior,analysis,script,pinned(appPath,root),true));
+  return resolveOwnerVisualDefinition(prior.ownerVisualDefinitions,script,
+    checkedStyleBible(prior,analysis,script,pinned(appPath,root),true),charId)??null;
 }
 /** Promote a real previously imported owner image as an unapproved candidate.
  * Import alone never asserts a four-view presentation or visual correctness. */
@@ -675,8 +692,7 @@ export function registerValidatedGeneratedReference(root:string,appPath:string,
       throw Error('REFERENCE_GENERATION_JOURNAL_CONFLICT');
     return prior;
   }
-  const owner=prior.ownerVisualDefinitions?.find(d=>d.charId===job.anchorId);
-  if(owner)validateOwnerVisualDefinition(owner,script,bible);
+  const owner=resolveOwnerVisualDefinition(prior.ownerVisualDefinitions,script,bible,job.anchorId);
   if(owner?.definitionSha!==job.ownerVisualDefinitionSha)
     throw Error('REFERENCE_GENERATION_VISUAL_DEFINITION_STALE');
   const prompt=historicalKind?
@@ -722,8 +738,7 @@ export function approveOwnerReference(root:string,appPath:string,input:{
   const verified=approveCandidate(candidate,bible,root,input.ownerInspected,decode);
   let approved=verified;
   if(verified.source==='GLABS_GENERATED'){
-    const owner=prior.ownerVisualDefinitions?.find(d=>d.charId===verified.anchor_id);
-    if(owner)validateOwnerVisualDefinition(owner,script,bible);
+    const owner=resolveOwnerVisualDefinition(prior.ownerVisualDefinitions,script,bible,verified.anchor_id);
     if(verified.visual_definition_sha256!==owner?.definitionSha)
       throw Error('REFERENCE_GENERATED_VISUAL_DEFINITION_STALE');
     const match=/^assets\/images\/identity-ref-([a-f0-9-]{36})\.png$/i.exec(verified.media_path);

@@ -41,3 +41,22 @@ export function validateOwnerVisualDefinition(value:OwnerVisualDefinition,
     throw Error('OWNER_VISUAL_DEFINITION_SHA_INVALID');
   return value;
 }
+
+/** Current definitions are optional; only a matching Bible may confer authority.
+ * A definition claiming that Bible must pass all Script/owner/digest checks.
+ * Frozen jobs resolve their exact historical digest, including explicit absence. */
+export function resolveOwnerVisualDefinition(definitions:readonly OwnerVisualDefinition[]|undefined,
+  script:ApprovedScriptSnapshot,bible:StyleBible,charId:string,
+  frozen?:{definitionSha:string|undefined;history?:readonly OwnerVisualDefinition[]}):OwnerVisualDefinition|undefined{
+  if(frozen){
+    if(frozen.definitionSha===undefined)return undefined;
+    const found=[...(definitions??[]),...(frozen.history??[])].find(row=>
+      row.charId===charId&&row.definitionSha===frozen.definitionSha);
+    if(!found)throw Error('OWNER_VISUAL_DEFINITION_FROZEN_MISSING');
+    return validateOwnerVisualDefinition(found,script,bible);
+  }
+  const matches=(definitions??[]).filter(row=>row.charId===charId&&
+    row.styleBibleSha===bible.style_bible_sha256);
+  if(matches.length>1)throw Error('OWNER_VISUAL_DEFINITION_DUPLICATE_AUTHORITY');
+  return matches[0]?validateOwnerVisualDefinition(matches[0],script,bible):undefined;
+}

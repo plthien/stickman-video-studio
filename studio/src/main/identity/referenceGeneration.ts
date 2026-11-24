@@ -13,7 +13,7 @@ import {isFrozenLegacyAnalysis,validateHistoricalPublishedBible,
   type FrozenReferenceFormat} from './legacyStorage.js';
 import {currentApprovedSource,readIdentityWorkflow,publishedIdentityView,identityPolicy} from './identityWorkflow.js';
 import {verifyIndependentReview} from './scriptAnalysis.js';
-import {validateOwnerVisualDefinition} from './visualDefinitions.js';
+import {resolveOwnerVisualDefinition} from './visualDefinitions.js';
 import {loadImageStyleProfile} from '../imagePreparation.js';
 import type {IdentityDecoder} from './referencePublication.js';
 
@@ -85,7 +85,11 @@ function ready(root:string,appPath:string,anchorId:string,
   const archivedMatches=Boolean(frozenJob&&published.draftAnalysis&&published.bible&&
     published.bible.style_bible_sha256===frozenJob.styleBibleSha&&
     contentHash(published.draftAnalysis)===frozenJob.analysisSha);
-  const journal=archivedMatches?published:candidateReady?working:published;
+  const historical=frozenJob?working.styleBibleHistory?.find(row=>row.bible.style_bible_sha256===frozenJob.styleBibleSha&&
+    contentHash(row.analysis)===frozenJob.analysisSha):undefined;
+  const journal=archivedMatches?published:historical?{...working,draftAnalysis:historical.analysis,
+    analysisApproved:historical.analysisApproved,independentReview:historical.independentReview,
+    bible:historical.bible,bibleTextApproved:historical.bibleTextApproved}:candidateReady?working:published;
   const analysis=journal.draftAnalysis,approved=journal.analysisApproved;
   if(!analysis||!approved||approved.sha256!==contentHash(analysis)||
     !journal.independentReview||
@@ -110,8 +114,8 @@ function ready(root:string,appPath:string,anchorId:string,
     throw Error('REFERENCE_STYLE_BIBLE_NOT_APPROVED');
   const row=bible.characters.find(char=>char.char_id===anchorId);
   if(!row)throw Error('REFERENCE_CHARACTER_NOT_FOUND');
-  const owner=journal.ownerVisualDefinitions?.find(value=>value.charId===anchorId);
-  if(owner)validateOwnerVisualDefinition(owner,source,bible);
+  const owner=resolveOwnerVisualDefinition(journal.ownerVisualDefinitions,source,bible,anchorId,
+    frozenJob?{definitionSha:frozenJob.ownerVisualDefinitionSha,history:journal.ownerVisualDefinitionHistory}:undefined);
   if(row.visual_readiness!=='READY_FOR_REFERENCE'&&!owner)
     throw Error('REFERENCE_CHARACTER_NOT_READY');
   const prompt=legacyKind?
