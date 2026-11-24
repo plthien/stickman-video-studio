@@ -2,7 +2,9 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { useAppState } from '../../app/AppState';
 import { Badge, Button, Card, CardHeader, Field, Input, Select, Textarea } from '../../components/ui';
-const tabNames = ['Script', 'Native'] as const; type PromptTab = (typeof tabNames)[number]; type SyntaxResult = 'idle' | 'valid' | 'invalid';
+import { IdentityAnalysisPanel } from './IdentityAnalysisPanel';
+import { readExternalJsonFile } from './readExternalJsonFile';
+const tabNames = ['Script', 'Script Analysis', 'Native'] as const; type PromptTab = (typeof tabNames)[number]; type SyntaxResult = 'idle' | 'valid' | 'invalid';
 const operations=['Author','Review','Correct','Recheck'] as const;type Operation=(typeof operations)[number];
 type History=import('../../../shared/externalHistory').ExternalHistoryRecord;
 interface TabValues {
@@ -37,9 +39,21 @@ export function ExternalSessionProvider({children}:{children:ReactNode}){
 }
 const useSession=()=>{const value=useContext(Context);if(!value)throw new Error('ExternalSessionProvider missing');return value;};
 export function ExternalWorkspace(){
-  const {tab,setTab,tabs,patch}=useSession();
-  const {native,captureProjectSession,isCurrentProjectSession,setNativeIfSessionCurrent,showNotice}=useAppState();
+  const {tab,setTab}=useSession();
   const [operation,setOperation]=useState<Operation>('Author');
+  const stageTabs=<div className="tabs" role="group" aria-label="External stage">{tabNames.map(item=><button key={item} type="button" aria-pressed={tab===item} className={tab===item?'active':''} onClick={()=>setTab(item)}>{item}</button>)}</div>;
+  return <>
+    <IdentityAnalysisPanel active={tab==='Script Analysis'} stageTabs={stageTabs}/>
+    {tab!=='Script Analysis'&&<ScriptNativeWorkspace tab={tab} stageTabs={stageTabs}
+      operation={operation} setOperation={setOperation}/>}
+  </>;
+}
+function ScriptNativeWorkspace({tab,stageTabs,operation,setOperation}:{
+  tab:Exclude<PromptTab,'Script Analysis'>;stageTabs:ReactNode;
+  operation:Operation;setOperation:Dispatch<SetStateAction<Operation>>;
+}){
+  const {tabs,patch}=useSession();
+  const {native,captureProjectSession,isCurrentProjectSession,setNativeIfSessionCurrent,showNotice}=useAppState();
   const stage=tab.toLowerCase();
   const lifecycleOperation=operation.toLowerCase() as 'review'|'correct'|'recheck';
   const projectId=native?.project.id;
@@ -113,7 +127,13 @@ export function ExternalWorkspace(){
     // a newly selected project, stage, operation or Native target.
     for(const name of ['freeze','validate','pending','confirm','export','jsonFile','history'] as const)
       requests.current[name]+=1;
+    activeKey.current=sessionKey;
     if(jsonFilePicker.current)jsonFilePicker.current.value='';
+    return()=>{
+      activeKey.current='';
+      for(const name of ['freeze','validate','pending','confirm','export','jsonFile','history'] as const)
+        requests.current[name]+=1;
+    };
   },[projectId,projectEpoch,stage,operation,effectiveNativeTarget]);
   const suggested=stage==='native'&&effectiveNativeTarget==='PUBLISHED'?
     native?.suggestedCorrectScope?.nativePublished:native?.suggestedCorrectScope?.[stage as 'script'|'native'];
@@ -217,66 +237,18 @@ export function ExternalWorkspace(){
   const importJsonFile=(file:File)=>{
     const session=captureProjectSession(),sequence=++requests.current.jsonFile;
     if(!native||!session){setError('Open a native project before importing JSON.');return;}
-    if(!/\.json$/i.test(file.name)){setError('Choose a .json file.');return;}
-    const reader=new FileReader();
-    // Do not clear the input before FileReader has consumed its File. Some
-    // DOM/Electron bridges invalidate the pending blob read when selection
-    // is reset synchronously in the change handler.
-    const selectedPicker=jsonFilePicker.current;
-    let accepted=false,selectionCleared=false;
+    const picker=jsonFilePicker.current;
     const current=()=>sequence===requests.current.jsonFile&&
       activeKey.current===sessionKey&&isCurrentProjectSession(session);
-    const clearSelection=()=>{
-      if(selectionCleared)return;
-      selectionCleared=true;
-      // A prior async read must never clear the new project's file selection,
-      // or a later selection in this same tab.
-      if(selectedPicker&&selectedPicker===jsonFilePicker.current&&
-        activeKey.current===sessionKey&&isCurrentProjectSession(session)&&
-        (requests.current.jsonFile===sequence||
-          (accepted&&requests.current.jsonFile===sequence+1)))
-        selectedPicker.value='';
-    };
-    const acceptRead=()=>{
-      // FileReader normally emits both load and loadend. Some Electron test
-      // bridges emit only one: one valid file selection is committed once.
-      if(accepted||!current())return;
-      const contents=reader.result;
-      if(typeof contents!=='string'){
-        // loadend may follow an error; never overwrite existing user JSON.
-        return;
+    readExternalJsonFile(file,{
+      current,clearSelection:()=>{if(picker&&picker===jsonFilePicker.current)picker.value='';},
+      error:setError,
+      accept:contents=>{
+        patch(sessionKey,{json:contents,result:'idle',pending:null,
+          nativeMediaStatus:null,draftConsent:false,error:''});
+        showNotice('JSON loaded from '+file.name+'. Review the content, then select Validate import.');
       }
-      try{JSON.parse(contents)}catch{
-        accepted=true;setError('Selected file is not valid JSON.');return;
-      }
-      accepted=true;
-      requests.current.jsonFile+=1;
-      // One atomic tab update prevents later async history/frozen callbacks
-      // from observing a partially cleared editor during FileReader events.
-      patch(sessionKey,{json:contents,result:'idle',pending:null,
-        nativeMediaStatus:null,draftConsent:false,error:''});
-      showNotice('JSON loaded from '+file.name+'. Review the content, then select Validate import.');
-    };
-    reader.onload=()=>{
-      acceptRead();
-      if(accepted)clearSelection();
-    };
-    reader.onloadend=()=>{
-      acceptRead();
-      // Loadend is the completion boundary even when onload was omitted.
-      clearSelection();
-    };
-    reader.onerror=()=>{
-      if(!accepted&&current()){
-        accepted=true;setError('Unable to read the selected JSON file.');
-      }
-      clearSelection();
-    };
-    try{reader.readAsText(file);}
-    catch(reason){
-      if(current())setError('Unable to read the selected JSON file: '+String(reason));
-      clearSelection();
-    }
+    });
   };
   const refreshPending=async()=>{if(!native||!window.studio||stage!=='native')return;const scope=captureProjectSession(),expectedStage=stage,expectedOperation=operation,sequence=++requests.current.pending;if(!scope)return;try{const value=await window.studio.pendingMedia(native.project.id);if(!isCurrentProjectSession(scope)||expectedStage!==stage||expectedOperation!==operation||sequence!==requests.current.pending||activeKey.current!==sessionKey)return;if(operation==='Author')setPending(value);else setNativeMediaStatus(value);setError('');}catch(reason){if(isCurrentProjectSession(scope)&&expectedStage===stage&&expectedOperation===operation&&sequence===requests.current.pending&&activeKey.current===sessionKey)setError(String(reason));}};
   const validate=async()=>{const scope=captureProjectSession(),expectedStage=stage,expectedOperation=operation,sequence=++requests.current.validate;try{if(!native||!scope||!window.studio||!canImport||scopeDirty)throw new Error('A current FROZEN task is required to validate an import.');const value=operation==='Author'?await window.studio.stageImport(native.project.id,expectedStage,json):await window.studio.stageLifecycle(native.project.id,expectedStage,lifecycleOperation,json);if(!isCurrentProjectSession(scope)||expectedStage!==stage||expectedOperation!==operation||sequence!==requests.current.validate||activeKey.current!==sessionKey)return;setPending(value);setNativeMediaStatus(null);setResult('valid');if(expectedStage==='native'&&expectedOperation==='Author'){const current=await window.studio.projectState(scope.projectId);if(activeKey.current===sessionKey&&sequence===requests.current.validate)setNativeIfSessionCurrent(scope,current);}}catch(reason){if(scope&&(!isCurrentProjectSession(scope)||expectedStage!==stage||sequence!==requests.current.validate||activeKey.current!==sessionKey))return;setResult('invalid');setError(reason instanceof Error?reason.message:String(reason));}};
@@ -284,7 +256,7 @@ export function ExternalWorkspace(){
   const exportFile=async()=>{if(!native||!window.studio||!canImport||scopeDirty)return;const scope=captureProjectSession(),expectedStage=stage,sequence=++requests.current.export;if(!scope)return;try{const file=await window.studio.exportPrompt(native.project.id,expectedStage,operation==='Author'?'author':lifecycleOperation);if(file&&isCurrentProjectSession(scope)&&expectedStage===stage&&sequence===requests.current.export&&activeKey.current===sessionKey)showNotice('Prompt exported: '+file);}catch(reason){if(isCurrentProjectSession(scope)&&expectedStage===stage&&sequence===requests.current.export&&activeKey.current===sessionKey)setError(String(reason));}};
   const taskReadOnly=Boolean(visibleHistory&&(visibleHistory.status!=='FROZEN'||visibleHistory.id!==frozenTaskId));
   const displayedStatus=showingHistory?(visibleHistory?.status??'EMPTY'):(frozenTaskId?'FROZEN':'EMPTY');
-  return <div className="grid wide-left"><Card><CardHeader title="External task prompt" hint="Copy to ChatGPT manually · no embedded API" action={<Badge tone={native&&visiblePrompt?'mint':'amber'}>{native?displayedStatus:'EMPTY'}</Badge>}/><div className="tabs">{tabNames.map(item=><button key={item} className={tab===item?'active':''} onClick={()=>setTab(item)}>{item}</button>)}</div><div className="tabs">{operations.map(item=><button key={item} className={operation===item?'active':''} onClick={()=>setOperation(item)}>{item}</button>)}</div>{staleNativeDraft&&<div className="info error" role="alert" data-testid="stale-native-draft-recovery">A previous Native Author DRAFT belongs to a replaced frozen Author task. The previous pending file and original response are preserved; this DRAFT cannot be Reviewed, Corrected, Confirmed, or mapped to G-Labs. Open Native → Author, use the current frozen task (or Build Task if missing), and import a JSON response bound to its current task ID/revision/input hash. Do not manually edit or delete project files.</div>}{stage==='native'&&operation!=='Author'&&native&&<div className="stack" data-testid="native-lifecycle-target">
+  return <div className="grid wide-left"><Card><CardHeader title="External task prompt" hint="Copy to ChatGPT manually · no embedded API" action={<Badge tone={native&&visiblePrompt?'mint':'amber'}>{native?displayedStatus:'EMPTY'}</Badge>}/>{stageTabs}<div className="tabs">{operations.map(item=><button key={item} className={operation===item?'active':''} onClick={()=>setOperation(item)}>{item}</button>)}</div>{staleNativeDraft&&<div className="info error" role="alert" data-testid="stale-native-draft-recovery">A previous Native Author DRAFT belongs to a replaced frozen Author task. The previous pending file and original response are preserved; this DRAFT cannot be Reviewed, Corrected, Confirmed, or mapped to G-Labs. Open Native → Author, use the current frozen task (or Build Task if missing), and import a JSON response bound to its current task ID/revision/input hash. Do not manually edit or delete project files.</div>}{stage==='native'&&operation!=='Author'&&native&&<div className="stack" data-testid="native-lifecycle-target">
       <Field label="Native review target"><Select value={effectiveNativeTarget} onChange={event=>{
         for(const key of ['freeze','validate','confirm','export'] as const)requests.current[key]+=1;
         patch(sessionKey,{nativeTarget:event.target.value as 'DRAFT'|'PUBLISHED',scopeTouched:true});
