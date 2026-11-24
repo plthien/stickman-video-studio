@@ -550,8 +550,11 @@ describe('RF01 — Native Correct subset authorization and confirmed lineage',()
     const reused=rf01Freeze(root,['RF-B']);
     expect(reused.id).toBe(first.id);
     expect(reused.inputSha256).toBe(first.inputSha256);
-    expect(reused.editableIds).toEqual(['shot-2']);
-    expect(reused.editablePaths).toEqual([]);
+    expect(first.editableIds).toEqual([]);
+    expect(first.editablePaths).toEqual(['/manifest/shots/1/layers/0/text']);
+    expect(reused.editableIds).toEqual(first.editableIds);
+    expect(reused.editablePaths).toEqual(first.editablePaths);
+    expect(reused.findingIds).toEqual(['RF-B']);
     expect(()=>rf01Freeze(root,['RF-A'])).toThrow(/FROZEN_TASK_REBUILD_REQUIRED/);
     expect(readState(root).lifecycle!.tasks['native:correct'].id).toBe(first.id);
     const rebuilt=freezeLifecycleTask(appPath,root,'native','correct',{
@@ -591,7 +594,7 @@ describe('RF01 — Native Correct subset authorization and confirmed lineage',()
     expect(fs.readFileSync(path.join(root,'project.json'))).toEqual(prior);
     expect(readNativeDraft(root)!.artifact).toEqual(corrected);
   });
-  it('RF01-12 Published Shot-only Correct retains original native CLI validation',async()=>{
+  it('RF01-12 Published exact-path Correct retains original native CLI validation',async()=>{
     const {root,staged}=stageFixture();
     await confirmImport(appPath,root,staged.response.token,{validator:validator().run,previewSeconds:30});
     const before=fs.readFileSync(path.join(root,'project.json'));
@@ -599,8 +602,8 @@ describe('RF01 — Native Correct subset authorization and confirmed lineage',()
     const task=freezeLifecycleTask(appPath,root,'native','correct',{
       targetContext:'PUBLISHED',findingIds:['RF-B']}) as Task;
     expect(readState(root).lifecycle!.tasks['native:correct'].sourceReviewTaskId).toBe(review.id);
-    expect(task.editableIds).toEqual(['shot-2']);
-    expect(task.editablePaths).toEqual([]);
+    expect(task.editableIds).toEqual([]);
+    expect(task.editablePaths).toEqual(['/manifest/shots/1/layers/0/text']);
     const manifest=JSON.parse(before.toString('utf8')) as {shots:Array<{layers:Array<{text?:string}>}>};
     manifest.shots[1].layers[0].text='An explicit Shot-2 correction';
     const current=readState(root).external.native!.artifact as {shotLedger?:unknown[];soundScript?:unknown[];assetNeeds?:unknown[]};
