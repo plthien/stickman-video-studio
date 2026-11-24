@@ -87,6 +87,8 @@ export function readIdentityWorkflow(root:string):IdentityWorkflowStore{
     (data.referenceApprovalHistory!==undefined&&
       (!Array.isArray(data.referenceApprovalHistory)||
        data.referenceApprovalHistory.length>100))||
+    (data.styleBibleHistory!==undefined&&(!Array.isArray(data.styleBibleHistory)||data.styleBibleHistory.length>2000||
+      data.styleBibleHistory.some(row=>!row?.bible||!row.analysis||!row.analysisApproved||!row.independentReview||!row.bibleTextApproved)))||
     (data.ownerVisualDefinitions!==undefined&&
       (!Array.isArray(data.ownerVisualDefinitions)||
        data.ownerVisualDefinitions.length>2000||
@@ -225,7 +227,17 @@ export function identityWorkflowSnapshot(root:string,appPath:string){
       }
     }catch(error){readiness=error instanceof Error?error.message:'IDENTITY_INTEGRITY_ERROR';}
   }
-  return{policy,readiness,journal:record};
+  const currentOwnerVisualDefinitions:OwnerVisualDefinition[]=[];
+  if(record.bible&&record.bibleTextApproved?.sha256===record.bible.style_bible_sha256){
+    try{
+      const script=currentApprovedSource(root);
+      for(const row of record.bible.characters){
+        const definition=resolveOwnerVisualDefinition(record.ownerVisualDefinitions,script,record.bible,row.char_id);
+        if(definition)currentOwnerVisualDefinitions.push(definition);
+      }
+    }catch(error){readiness=error instanceof Error?error.message:'OWNER_VISUAL_DEFINITION_INVALID';currentOwnerVisualDefinitions.length=0;}
+  }
+  return{policy,readiness,journal:record,currentOwnerVisualDefinitions};
 }
 /** No implicit migration of historical candidates, Core output or reference identity. */
 export function previewIdentityUpgrade(root:string){
@@ -573,7 +585,11 @@ export function approveOwnerVisualDefinition(root:string,appPath:string,input:{
     JSON.stringify(previous.traits)===JSON.stringify(definition.traits))
     return prior;
   const next=clone(prior);
-  if(previous)next.ownerVisualDefinitionHistory=[...(next.ownerVisualDefinitionHistory??[]),previous];
+  if(previous){
+    if((next.ownerVisualDefinitionHistory??[]).length>=2000)throw Error('OWNER_VISUAL_DEFINITION_HISTORY_LIMIT');
+    next.ownerVisualDefinitionHistory=[...(next.ownerVisualDefinitionHistory??[]),previous];
+  }
+  if(!previous&&(next.ownerVisualDefinitions??[]).length>=2000)throw Error('OWNER_VISUAL_DEFINITION_LIMIT');
   next.ownerVisualDefinitions=[
     ...(next.ownerVisualDefinitions??[]).filter(v=>v.charId!==input.anchorId||v.styleBibleSha!==bible.style_bible_sha256),
     definition

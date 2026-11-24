@@ -128,9 +128,9 @@ function ready(root:string,appPath:string,anchorId:string,
     analysisSha:bible.analysis_sha256,scriptSha:bible.source_script_sha256,
     ...(owner?{ownerVisualDefinitionSha:owner.definitionSha}:{})};
 }
-function isCurrent(root:string,appPath:string,job:ReferenceJob){
+function isCurrent(root:string,appPath:string,job:ReferenceJob,allowFrozen=true){
   try{
-    const snapshot=ready(root,appPath,job.anchorId,job);
+    const snapshot=ready(root,appPath,job.anchorId,allowFrozen?job:undefined);
     return job.projectId===readState(root).project.id&&
       job.styleBibleSha===snapshot.bible.style_bible_sha256&&
       job.sourceDefinitionHash===snapshot.sourceDefinitionHash&&
@@ -212,7 +212,7 @@ export async function submitReferenceJob(appPath:string,root:string,userData:str
         ownerVisualDefinitionSha:definition.ownerVisualDefinitionSha}:{}),
       model:config.model,aspectRatio:'1:1',
       status:'QUEUED',createdAt:stamp(),updatedAt:stamp()
-    }))throw Error('REFERENCE_SOURCE_STALE_BEFORE_POST');
+    },false))throw Error('REFERENCE_SOURCE_STALE_BEFORE_POST');
     const live=listReferenceJobs(root).filter(row=>row.anchorId===input.anchorId);
     if(live.some(row=>['QUEUED','SUBMITTED','RUNNING'].includes(row.status)))
       throw Error('REFERENCE_ACTIVE_ATTEMPT_EXISTS');
@@ -229,7 +229,7 @@ export async function submitReferenceJob(appPath:string,root:string,userData:str
         ownerVisualDefinitionSha:definition.ownerVisualDefinitionSha}:{}),
       model:config.model,aspectRatio:'1:1',status:'QUEUED',createdAt:created,updatedAt:created};
     write(root,job);
-    if(!isCurrent(root,appPath,job))return markStale(root,job);
+    if(!isCurrent(root,appPath,job,false))return markStale(root,job);
     // Durable uncertain marker precedes the ONE paid POST, exactly as Shot G-Labs.
     job.status='SUBMITTED';write(root,job);
     try{

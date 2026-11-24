@@ -79,7 +79,7 @@ function artifactFor(root:string,state:StudioState,stage:Stage,operation:Externa
     const value=state.scriptCandidate??state.approvedScript;if(!value)throw new Error('REVIEW_REQUIRED: no Script candidate or approved Script exists.');
     return{value,sha256:sha(JSON.stringify(value)),id:`script-${value.revision}`};
   }
-  const draft=readNativeDraft(root,state),published=Boolean(state.external.native);
+  const draft=requested==='PUBLISHED'?null:readNativeDraft(root,state),published=Boolean(state.external.native);
   if(draft&&published&&!requested)
     throw new Error('NATIVE_TARGET_SELECTION_REQUIRED: explicitly choose DRAFT or PUBLISHED before reviewing.');
   const context=requested??(draft?'DRAFT':'PUBLISHED');
@@ -886,7 +886,7 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   state.lifecycle.tasks[key]={id,stage,operation,revision,inputSha256,artifactSha256:artifact.sha256,
     ...(stage==='native'&&(operation==='review'||operation==='recheck')?{structuredReviewScope:true}:{}),
     ...(identityEvidenceSha?{identityEvidenceSha}:{}),
-    artifactContext:artifact.context,draftToken:artifact.draftToken,draftAuthorTaskId:artifact.authorTaskId,draftRevision:artifact.draftRevision,promptPath:relative,promptSha256:sha(prompt),status:'FROZEN',createdAt:new Date().toISOString(),editableIds,editablePaths,targetIds,findingIds,sourceReviewTaskId:operation==='correct'?reviewSource?.taskId:undefined,originalTaskSha256:sha(originalTask),sourceContextSha256,authorityFingerprint,evidenceSha256,mediaTransferAttested,mediaKind:scope.media,mediaSha256s,mediaDuration,mediaBaseline:structuredClone(state.media??[])};
+    artifactContext:artifact.context,draftToken:artifact.draftToken,draftAuthorTaskId:artifact.authorTaskId,draftRevision:artifact.draftRevision,promptPath:relative,promptSha256:sha(prompt),status:'FROZEN',createdAt:new Date().toISOString(),editableIds,editablePaths,targetIds,findingIds,sourceReviewTaskId:operation==='correct'?reviewSource?.taskId:undefined,sourceCorrectTaskId:lineage?.correctTaskId,originalTaskSha256:sha(originalTask),sourceContextSha256,authorityFingerprint,evidenceSha256,mediaTransferAttested,mediaKind:scope.media,mediaSha256s,mediaDuration,mediaBaseline:structuredClone(state.media??[])};
   writeState(root,state);
   return{...state.lifecycle.tasks[key],prompt};
 }
@@ -1220,6 +1220,7 @@ function finalizeLifecycle(root:string,pending:Record<string,unknown>,task:NonNu
   const payload=pending.payload as Record<string,unknown>;
   state.lifecycle.artifacts[task.id]={taskId:task.id,stage:task.stage,operation:task.operation,
     artifactContext:task.artifactContext,draftAuthorTaskId:task.draftAuthorTaskId,draftToken:task.draftToken,
+    draftRevision:task.draftRevision,sourceCorrectTaskId:task.sourceCorrectTaskId,
     ...(task.identityEvidenceSha?{identityEvidenceSha:task.identityEvidenceSha}:{}),
     artifactSha256:sha(JSON.stringify(payload)),value:payload,status:String(payload.status??'CORRECTION_STAGED'),
     createdAt:new Date().toISOString()};
@@ -1416,7 +1417,11 @@ export function confirmLifecycleResult(appPathOrRoot:string,rootOrToken:string,m
   if(pending.operation==='correct'&&pending.stage==='native'&&state.identityPolicy==='v1'){
     const corrected=(pending.payload as {artifact:Record<string,unknown>}).artifact;
     validateLocks('native',original.value,corrected,task.editableIds??[],task.editablePaths??[]);
-    if(!task.sourceReviewTaskId||!task.identityEvidenceSha)throw Error('NATIVE_CREATIVE_REVIEW_REQUIRED');
+    const source=task.sourceReviewTaskId?state.lifecycle?.artifacts[task.sourceReviewTaskId]:undefined;
+    if(!source||!task.identityEvidenceSha||source.identityEvidenceSha!==task.identityEvidenceSha||
+      source.status!=='REVIEWED_WITH_FINDINGS'||source.artifactContext!=='PUBLISHED'||
+      (source.value as {artifact_sha256?:string})?.artifact_sha256!==task.artifactSha256||
+      source.artifactSha256!==sha(JSON.stringify(source.value)))throw Error('NATIVE_CREATIVE_REVIEW_REQUIRED');
     stagePublishedNativeCorrection(appPath,root,corrected,{correctTaskId:task.id,reviewTaskId:task.sourceReviewTaskId,
       editableIds:task.editableIds??[],editablePaths:task.editablePaths??[],findingIds:task.findingIds??[],
       baselineSha256:task.artifactSha256,responseSha256:String(pending.responseSha256)});

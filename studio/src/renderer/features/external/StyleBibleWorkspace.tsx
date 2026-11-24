@@ -166,9 +166,8 @@ export function StyleBibleWorkspace(){
       <h3>Source-grounded Visual Reference catalog</h3>
       {!bible.characters.length&&<p>Empty approved cast. No invented anchors are required.</p>}
       <div className="identity-bible-grid">{bible.characters.map(character=>{
-        const visualDefinition=journal.ownerVisualDefinitions?.find(value=>
-          value.charId===character.char_id&&
-          value.styleBibleSha===bible.style_bible_sha256);
+        const visualDefinition=snapshot.currentOwnerVisualDefinitions?.find(value=>
+          value.charId===character.char_id);
         const candidates=journal.referenceCandidates.filter(candidate=>
           candidate.anchor_id===character.char_id&&
           candidate.source_definition_hash===character.source_definition_hash);

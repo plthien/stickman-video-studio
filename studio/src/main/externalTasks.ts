@@ -472,6 +472,9 @@ export function readNativeDraft(root:string,state=readState(root)){
   if(pending.projectId!==state.project.id||!author||author.status!=='FROZEN'||
     author.id!==pending.taskId||author.revision!==pending.revision||author.inputSha256!==pending.inputSha256)
     throw new Error('NATIVE_DRAFT_STALE_AUTHOR_TASK');
+  if(pending.publishedCorrection&&(readNativeIdentityReceipt(root)?.receiptSha!==pending.publishedCorrection.receiptSha||
+    sha(JSON.stringify(publishedNativeCreativeArtifact(root,state)))!==pending.publishedCorrection.baselineSha256))
+    throw Error('NATIVE_PUBLISHED_CORRECTION_BASELINE_STALE');
   const artifact=nativeDraftValue(pending);
   return{context:'DRAFT' as const,token:pending.token,authorTaskId:pending.taskId,
     revision:1+(pending.draftHistory?.length??0),artifact,sha256:sha(JSON.stringify(artifact)),
@@ -483,6 +486,7 @@ export function requireReviewedNativeDraft(state:StudioState,draft:NonNullable<R
   const rows=Object.values(state.lifecycle?.artifacts??{}).filter(row=>
     row.stage==='native'&&(row.operation==='review'||row.operation==='recheck')&&
     row.artifactContext==='DRAFT'&&row.draftToken===draft.token&&row.draftAuthorTaskId===draft.authorTaskId&&
+    (!draft.publishedCorrectionTaskId||(row.draftRevision===draft.revision&&row.sourceCorrectTaskId===draft.history.at(-1)?.correctTaskId))&&
     (row.value as {artifact_sha256?:string})?.artifact_sha256===draft.sha256)
     .sort((a,b)=>b.createdAt.localeCompare(a.createdAt)||b.taskId.localeCompare(a.taskId));
   const latest=rows[0];
@@ -660,9 +664,9 @@ export function publishedNativeCreativeArtifact(root:string,state:StudioState){
   }
   return{manifest,shot_ledger:existing.shotLedger??[],sound_script:existing.soundScript??[],asset_needs};
 }
-function pruneUnfulfilledContinuity(root:string,appPath:string,artifact:{manifest:Record<string,unknown>;asset_needs:unknown[]},
+function pruneUnfulfilledContinuity(root:string,appPath:string,artifact:{manifest:Record<string,unknown>;asset_needs:unknown},
   kept:PendingImport['fulfillments']){
-  const plans=validateNativeBindingPayload(root,appPath,artifact.manifest,artifact.asset_needs).plans;
+  const plans=validateNativeBindingPayload(root,appPath,artifact.manifest,artifact.asset_needs as unknown[]).plans;
   const byLayer=new Map(plans.map(plan=>[plan.shotId+'/'+plan.layerId,plan.targetKey]));
   for(const plan of plans){
     const source=plan.continuitySource;
@@ -682,7 +686,10 @@ export function stagePublishedNativeCorrection(appPath:string,root:string,
     const active=readPending(root);
     if(active.publishedCorrection?.correctTaskId===proof.correctTaskId){
       const task=state.tasks?.native;
-      if(!task||task.id!==active.taskId)throw Error('NATIVE_PUBLISHED_CORRECTION_RECOVERY_REQUIRED');
+      if(!task||task.id!==active.taskId||active.responseSha256!==proof.responseSha256||
+        active.publishedCorrection.baselineSha256!==proof.baselineSha256||
+        readNativeIdentityReceipt(root)?.receiptSha!==active.publishedCorrection.receiptSha)
+        throw Error('NATIVE_PUBLISHED_CORRECTION_RECOVERY_REQUIRED');
       if(task.status==='IMPORTED'){
         task.status='FROZEN';task.sourceFingerprint=sourceFingerprint(appPath,root,'native');
         task.assetBaseline=assetSnapshot(root);task.mediaBaseline=mediaSnapshot(state);writeState(root,state);
@@ -735,7 +742,7 @@ export function stagePublishedNativeCorrection(appPath:string,root:string,
     kept[key]={relative:row.imagePath,sha256:row.imageSha,rights:item.rights,kind:'image'};
   }
   // Previously fulfilled audio is already present at its exact licensed path.
-  pruneUnfulfilledContinuity(root,appPath,artifact as {manifest:Record<string,unknown>;asset_needs:unknown[]},kept);
+  pruneUnfulfilledContinuity(root,appPath,artifact,kept);
   const responsePath='.studio/external/lifecycle/results/'+proof.correctTaskId+'.json';
   if(sha(fs.readFileSync(resolveProjectFile(root,responsePath)))!==proof.responseSha256)
     throw Error('NATIVE_PUBLISHED_CORRECTION_RESPONSE_STALE');
