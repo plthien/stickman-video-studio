@@ -418,7 +418,7 @@ export function StoryboardWorkspace(){
       recoveryEpoch.current+=1;
       const result=await studio.glabsGenerate(scope.projectId,{
         targetKey,prompt:spec.prompt,model:config.model,
-        aspectRatio:config.aspectRatio,references:[...spec.references],
+        aspectRatio:spec.requestedOrientation??config.aspectRatio,references:[...spec.references],
         authorized:true,regenerate:true,acknowledgeUnknown:true,
         preparedFingerprint:spec.draftIdentity.creativeFingerprint
       });
@@ -480,7 +480,7 @@ export function StoryboardWorkspace(){
         }
         const response=await window.studio.glabsGenerate(scope.projectId,{
           targetKey:item.targetKey,prompt:item.prompt,model:selectedConfig.model,
-          aspectRatio:selectedConfig.aspectRatio,references:[...item.references],
+          aspectRatio:item.requestedOrientation??selectedConfig.aspectRatio,references:[...item.references],
           authorized:true,regenerate:item.regenerate,acknowledgeUnknown:false,
           preparedFingerprint:item.draftIdentity.creativeFingerprint
         });
@@ -551,7 +551,7 @@ export function StoryboardWorkspace(){
     try{
       const result=await window.studio.glabsGenerate(scope.projectId,{
         targetKey:entry.targetKey,prompt:entry.prompt,model:config.model,
-        aspectRatio:config.aspectRatio,references:[...entry.references],
+        aspectRatio:entry.requestedOrientation??config.aspectRatio,references:[...entry.references],
         authorized:true,regenerate:attempts.length>0,acknowledgeUnknown:false,
         preparedFingerprint:entry.draftIdentity.creativeFingerprint
       });

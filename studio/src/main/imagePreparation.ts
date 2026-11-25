@@ -14,6 +14,8 @@ export interface ImageJobSpec {
   assetKey:string;targetKeys:string[];expectedPaths:string[];
   shotId:string;layerId:string;targetKey:string;path:string;assetKind:string;
   state:PreparedState;reason:string;prompt:string;promptSha256:string;
+  /** Exact supported ratio in the frozen asset requirement, not inferred from art kind. */
+  requestedOrientation?:string;
   effectivePrompt:string;effectivePromptSha256:string;
   sourceDescription:string;sourceLedger:string;sourceRows:unknown[];
   styleProfileRef:{id:Style;path:string;sha256:string};
@@ -154,6 +156,8 @@ export function compileImageJobSpecs(input:{
       new Set(declaredKinds).size>1
     );
     const dimensions=[...new Set(matching.map(row=>row.orientation).filter(Boolean))];
+    const explicitRatios=[...new Set(declaredOrientations.filter(value=>['1:1','3:4','4:3','9:16','16:9'].includes(value)))];
+    const requestedOrientation=explicitRatios.length===1?explicitRatios[0]:undefined;
     const continuity=[...new Set(matching.map(row=>row.continuity).filter(Boolean))];
     const ledger=ledgers.find(value=>object(value)&&(value.shot_id===target.shotId||value.shotId===target.shotId));
     const composition=object(ledger)?field(ledger,['composition']):'';
@@ -164,6 +168,7 @@ export function compileImageJobSpecs(input:{
     else if(missingGlobalInstruction){
       state='BLOCKED';reason='An explicitly global asset_needs row has no expressible creative instruction. Correct the Native Author source; this global fingerprint cannot be silently omitted from a prompt.';
     }
+    else if(explicitRatios.length>1){state='BLOCKED';reason='Conflicting explicit asset ratios. Correct Native asset_needs.';}
     else if(globalFieldConflict){
       state='BLOCKED';reason='Conflicting global versus target-specific output orientation or asset kind in Native asset_needs. Correct the source before image generation.';
     }
@@ -230,6 +235,7 @@ export function compileImageJobSpecs(input:{
       assetKey:target.key,targetKeys:[target.key],expectedPaths:[target.path],
       targetKey:target.key,shotId:target.shotId??'',layerId:target.layerId??'',path:target.path,assetKind:declaredKind,
       state,reason,prompt,promptSha256:prompt?sha(prompt):'',
+      ...(requestedOrientation?{requestedOrientation}:{}),
       effectivePrompt,effectivePromptSha256:effectivePrompt?sha(effectivePrompt):'',
       sourceDescription,sourceLedger,sourceRows:requirements.effective.map(row=>row.source),
       styleProfileRef:{id:style,path:profile.path,sha256:profile.sha256},

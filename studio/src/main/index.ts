@@ -76,7 +76,7 @@ function registerIpc() {
   const recent = () => fs.existsSync(recentPath) ? strictJson(fs.readFileSync(recentPath, 'utf8')) as { projects?: StudioState['project'][] } : { projects: [] };
   const saveRecent = (project: StudioState['project']) => { const projects = [project, ...(recent().projects ?? []).filter(item => item.id !== project.id)].slice(0, 12); fs.mkdirSync(path.dirname(recentPath), { recursive: true }); fs.writeFileSync(recentPath, JSON.stringify({ projects }, null, 2)); roots.set(project.id, project.root); const pending=path.join(project.root,'.studio','recent-registration-pending.json');if(fs.existsSync(pending))fs.unlinkSync(pending); };
   ipcMain.handle('project:listRecent', () => { const projects = recent().projects ?? []; for (const project of projects) if (fs.existsSync(project.root)) registerRoot(project.root); return projects; });
-  ipcMain.handle('project:create', async (_event, input: { parent: string; folder: string; title: string; topic: string; style: string; language: string; targetDuration?: number }) => {
+  ipcMain.handle('project:create', async (_event, input: { parent: string; folder: string; title: string; topic: string; style: string; language: string; targetDuration?: number; audience?:string; purpose?:string }) => {
     const created=await createProjectStaged(app.getAppPath(),input,{publishRecent:saveRecent});registerRoot(created.root);return{...(await projectSnapshot(created.root,app.getAppPath())),registrationWarning:created.registrationWarning};
   });
   ipcMain.handle('project:browseParent', async () => {

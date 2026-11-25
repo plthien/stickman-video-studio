@@ -7,7 +7,7 @@
     "layer_id": {"type": "string", "minLength": 1, "maxLength": 100},
     "expected_path": {"type": "string", "pattern": "^assets/images/[A-Za-z0-9_./-]+\\.(png|jpg|jpeg|webp)$"},
     "content": {"type": "string", "minLength": 1, "maxLength": 12000},
-    "orientation": {"enum": ["9:16", "16:9", "1:1"]},
+    "orientation": {"enum": ["9:16", "16:9", "1:1", "3:4", "4:3"]},
     "asset_kind": {"enum": ["background", "character", "pose", "prop", "object", "other"]},
     "character_ids": {"type": "array", "maxItems": 50, "uniqueItems": true, "items": {"type": "string", "pattern": "^char_[0-9]{3}$"}},
     "continuity_source": {"type": "object", "additionalProperties": false, "required": ["shot_id", "layer_id", "relation"], "properties": {

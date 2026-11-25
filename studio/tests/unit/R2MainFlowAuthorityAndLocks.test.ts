@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {compileAuthority,nativeAnimationDirection,nativeReferenceInventory} from '../../src/main/externalAuthority';
 import {nativeSkillRoot,sha} from '../../src/main/services';
+import {matchesExplicitAssetRatio} from '../../src/main/glabs';
 import {validateLocks} from '../../src/main/externalLifecycle';
 
 describe('R2 original-artifact scoped correction regression',()=>{
@@ -132,5 +133,18 @@ describe('Original Native production authority',()=>{
     expect(nativeAnimationDirection('B1')).toContain('2.5-second');
     expect(nativeAnimationDirection('B3')).toContain('group-local coordinates');
     expect(nativeAnimationDirection('B4')).toContain('Do not impose B1–B3 inactivity quota');
+  });
+});
+
+
+describe('Explicit Native asset ratios',()=>{
+  it('checks all supported explicit ratios, allowing integer-pixel rounding only',()=>{
+    expect(matchesExplicitAssetRatio(1024,1024,'1:1')).toBe(true);
+    expect(matchesExplicitAssetRatio(1080,1920,'9:16')).toBe(true);
+    expect(matchesExplicitAssetRatio(1920,1080,'16:9')).toBe(true);
+    expect(matchesExplicitAssetRatio(768,1024,'3:4')).toBe(true);
+    expect(matchesExplicitAssetRatio(1024,768,'4:3')).toBe(true);
+    expect(matchesExplicitAssetRatio(1024,1024,'9:16')).toBe(false);
+    expect(matchesExplicitAssetRatio(0,1024,'1:1')).toBe(false);
   });
 });

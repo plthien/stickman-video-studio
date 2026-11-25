@@ -1,7 +1,7 @@
 import type { VisualStyleId } from '../features/project/styles';
 export type StatusTone = 'mint' | 'blue' | 'amber' | 'neutral';
 export interface Shot { id: string; title: string; duration: number; start?: number; end?: number; caption: string; captions?:Array<{start:number;end:number;text:string}>; status: string; color: string; layers?:unknown[] }
-export interface ProjectState { title: string; topic: string; style: VisualStyleId; duration: number; language: string; ratio: string }
+export interface ProjectState { title: string; topic: string; style: VisualStyleId; duration: number; language: string; ratio: string; audience?:string; purpose?:string }
 export interface NativeProjectSummary { id: string; root: string; title: string; style: VisualStyleId; updatedAt: string; projectFile: string }
 export interface NativeStudioState { lifecycle?:{tasks:Record<string,unknown>;artifacts?:Record<string,{taskId:string;stage:string;operation:string;artifactSha256:string;value:unknown;status:string;createdAt:string}>};scriptCandidate?:{sections:Array<{id:string;text:string}>;text:string;sha256:string;revision:number;importedAt:string;taskId:string;authoring?:Record<string,unknown>} }
 export interface NativeStudioState { identityPolicy?:'legacy'|'v1';identityReadiness?:{

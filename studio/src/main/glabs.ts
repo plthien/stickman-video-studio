@@ -17,6 +17,8 @@ export interface GLabsJob {
   authorTaskId?:string;draftRevisionAtSubmission?:number;targetCreativeSha256?:string;
   styleProfileId?:'B1'|'B2'|'B3'|'B4';styleProfileSha256?:string;
   prompt:string;promptSha256:string;references:Array<{path:string;sha256:string;mime:string;name:string;rightsSha256:string}>;model:string;aspectRatio:string;status:JobStatus;
+  /** Present only for jobs with an explicit frozen asset orientation. */
+  requestedOrientation?:string;
   identityBindingSnapshotSha?:string;identityTargetBindingSha?:string;identityApprovalSetSha?:string;
   identityStyleBibleSha?:string;identityCharacterIds?:string[];
   identityRequiredReferences?:string[];identityPreviousSourceSha?:string;
@@ -37,10 +39,13 @@ export interface GLabsJob {
   }};createdAt:string;updatedAt:string;
 }
 const MAX_RESPONSE=262_144,MAX_REQUEST=5_242_880,MAX_IMAGE=16*1024*1024;
-// Keep the owner's requested aspect ratio in the G-Labs provider request.
-// The provider's returned image dimensions are not an approval constraint:
-// decoded PNG integrity, SHA, rights, frozen Native identity and image inspection
-// remain mandatory.
+// Legacy targets without an explicit ratio retain their historical dimensional policy.
+// An explicit Native orientation is authoritative: allow only integer-pixel rounding.
+export function matchesExplicitAssetRatio(width:number,height:number,ratio:string){
+  if(!(GLABS_RATIOS as readonly string[]).includes(ratio)||!Number.isSafeInteger(width)||!Number.isSafeInteger(height)||width<1||height<1)return false;
+  const [w,h]=ratio.split(':').map(Number);
+  return Math.abs(width*h-height*w)<=Math.max(w,h);
+}
 const active=new Set<string>();
 const defaultSettings:GLabsSettings={endpoint:'http://127.0.0.1:8765',contract:'legacy',model:'nano_banana_2',aspectRatio:'9:16'};
 const settingsFile=(userData:string)=>path.join(userData,'glabs-config-r3.json');
@@ -252,6 +257,9 @@ function assertJobTarget(appPath:string,root:string,job:GLabsJob){
   if(state.identityPolicy==='v1'){
     const prepared=prepareNativeImageTarget(appPath,root,job.targetKey,{historicalJob:true});
     if(!prepared||prepared.state!=='READY'||
+      (prepared.requestedOrientation!==undefined&&job.aspectRatio!==prepared.requestedOrientation)||
+      (job.requestedOrientation!==undefined&&job.requestedOrientation!==prepared.requestedOrientation)||
+      (prepared.requestedOrientation!==undefined&&job.staged!==undefined&&!matchesExplicitAssetRatio(job.staged.width,job.staged.height,prepared.requestedOrientation))||
       !prepared.identityBindingSnapshotSha||
       job.identityBindingSnapshotSha!==prepared.identityBindingSnapshotSha||
       job.identityTargetBindingSha!==prepared.identityTargetBindingSha||
@@ -318,7 +326,7 @@ export function invalidateGlabsJobsAfterNativeCorrection(appPath:string,root:str
  */
 function recoverLegacyRatioFailures(appPath:string,root:string){
   for(const job of listGlabsJobs(root)){
-    if(job.status!=='FAILED'||job.reason!=='GLABS_IMAGE_ASPECT_RATIO_MISMATCH'||!job.staged)
+    if(job.requestedOrientation||job.status!=='FAILED'||job.reason!=='GLABS_IMAGE_ASPECT_RATIO_MISMATCH'||!job.staged)
       continue;
     try{
       assertJobTarget(appPath,root,job);
@@ -385,8 +393,10 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
   if(providerPrompt.length>18000)
     throw new Error('GLABS_EFFECTIVE_PROMPT_OVERSIZE');
   const config=glabsSettings(userData);
-  if(input.model!==config.model||input.aspectRatio!==config.aspectRatio)
-    throw new Error('GLABS_MODEL_CONFIG_MISMATCH: save exact chosen model/ratio in Settings.');
+  const requestedOrientation=prepared?.requestedOrientation;
+  if(input.model!==config.model||input.aspectRatio!==(requestedOrientation??config.aspectRatio)||
+    !(GLABS_RATIOS as readonly string[]).includes(input.aspectRatio))
+    throw new Error('GLABS_MODEL_CONFIG_MISMATCH: use the saved model and exact frozen asset ratio (Settings default only when unspecified).');
   const {pending,match}=pendingTarget(appPath,root,input.targetKey);
   const state=readState(root),creative=nativeImageTargetIdentity(root,input.targetKey),
     styleProfile=loadImageStyleProfile(appPath,state.project.style as 'B1'|'B2'|'B3'|'B4'),
@@ -448,7 +458,7 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
         identityPreviousSourceSha:prepared.identityPreviousSourceSha}:{})
     }:{}),
     prompt:providerPrompt,promptSha256:sha(providerPrompt),
-    references:referenceFiles,model:input.model,aspectRatio:input.aspectRatio,status:'QUEUED',createdAt:timestamp(),updatedAt:timestamp()};
+    references:referenceFiles,model:input.model,aspectRatio:input.aspectRatio,...(requestedOrientation?{requestedOrientation}:{}),status:'QUEUED',createdAt:timestamp(),updatedAt:timestamp()};
   const lock=job.projectId+':'+job.token+':'+job.targetKey;
   if(active.has(lock))throw new Error('GLABS_TARGET_ALREADY_RUNNING');
   active.add(lock);
@@ -466,7 +476,7 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
       throw new Error('GLABS_NEW_ATTEMPT_REQUIRES_EXPLICIT_REGENERATE');
     const refreshedSettings=glabsSettings(userData);
     if(refreshedSettings.endpoint!==config.endpoint||refreshedSettings.model!==job.model||
-      refreshedSettings.aspectRatio!==job.aspectRatio)
+      (!job.requestedOrientation&&refreshedSettings.aspectRatio!==job.aspectRatio))
       throw new Error('GLABS_CONFIG_CHANGED_DURING_PREFLIGHT');
     writeJob(root,job);
     // All deterministic input validation must finish before the paid/uncertain marker.
@@ -654,6 +664,9 @@ export async function pollGlabsImage(appPath:string,root:string,userData:string,
     if(fs.existsSync(file)&&sha(fs.readFileSync(file))!==sha(decoded.png))throw new Error('GLABS_STAGING_FILE_TAMPERED');
     if(!fs.existsSync(file)){const temporary=file+'.'+randomUUID()+'.tmp';try{fs.writeFileSync(temporary,decoded.png,{flag:'wx'});fs.renameSync(temporary,file);}finally{if(fs.existsSync(temporary))fs.unlinkSync(temporary);}}
     job.staged={path:relative,sha256:sha(decoded.png),mime:'image/png',width:decoded.width,height:decoded.height};
+    if(job.requestedOrientation&&!matchesExplicitAssetRatio(decoded.width,decoded.height,job.requestedOrientation)){
+      job.status='FAILED';job.reason='GLABS_EXPLICIT_ASSET_RATIO_MISMATCH: expected '+job.requestedOrientation+'; actual '+decoded.width+'x'+decoded.height+'. No automatic retry.';delete job.lastSyncError;writeJob(root,job);return job;
+    }
     job.status='VALIDATED';job.syncPhase='validated';delete job.lastSyncError;
     writeJob(root,job);
     return job;
@@ -809,6 +822,7 @@ export function approveGlabsImage(appPath:string,root:string,id:string,rights:st
       decoded.width!==job.staged.width||decoded.height!==job.staged.height||
       decoded.width<1||decoded.height<1||decoded.width>8192||decoded.height>8192)
       throw new Error('GLABS_IMAGE_APPROVAL_DECODE_MISMATCH');
+    if(job.requestedOrientation&&!matchesExplicitAssetRatio(decoded.width,decoded.height,job.requestedOrientation))throw new Error('GLABS_EXPLICIT_ASSET_RATIO_MISMATCH');
     assertJobReferences(appPath,root,job,decode);
     const provenance=generatedApprovalProvenance(job);
     // Media core still requires a nonempty rights string. This is a factual
