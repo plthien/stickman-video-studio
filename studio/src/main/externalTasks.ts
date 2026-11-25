@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { atomicJson, nativeSkillRoot, readState, resolveProjectFile, runProcess, safeImportedFile, sha, strictJson, writeState, type Stage, type StudioState } from './services.js';
+import { assertB4NarratorBinding, atomicJson, nativeSkillRoot, readState, resolveProjectFile, runProcess, safeImportedFile, sha, strictJson, writeState, type Stage, type StudioState } from './services.js';
 import { approvedCaptionCues, nativeVoiceTiming } from './captionReview.js';
 import { rejectNativeUnsafePaths, validateAuthoring } from './sourceCitations.js';
 import { compileAuthority,nativeAnimationDirection,nativeReferenceInventory,nativeReferenceInstructions } from './externalAuthority.js';
@@ -55,6 +55,7 @@ const projectContext = (state: StudioState, root: string, stage:Stage) => {
     if(!state.approvedScript||sha(state.approvedScript.text)!==state.approvedScript.sha256)throw new Error('Native task BLOCKED: current approved script evidence is missing or corrupt.');
     if(!state.voice||state.voice.stale)throw new Error('Native task BLOCKED: current accepted narration is missing or stale.');
     const audio=fs.readFileSync(resolveProjectFile(root,state.voice.path));if(sha(audio)!==state.voice.sha256)throw new Error('Native task BLOCKED: accepted narration bytes changed.');
+    assertB4NarratorBinding(state.project.style,state.voice,manifest.voice);
     if(!state.alignment)throw new Error('Native task BLOCKED: real word alignment is missing.');
     words=readJsonValue(resolveProjectFile(root,state.alignment.path));captionCues=readJsonValue(resolveProjectFile(root,state.alignment.captionsPath));
     approvedCues=approvedCaptionCues(root);
@@ -355,6 +356,7 @@ export function validateManifest(state: StudioState, root: string,
   if(!state.voice||state.voice.stale||(manifest.voice as Record<string,unknown>).path!==state.voice.path||!fs.existsSync(resolveProjectFile(root,state.voice.path))||sha(fs.readFileSync(resolveProjectFile(root,state.voice.path)))!==state.voice.sha256)throw new Error('Manifest voice does not bind actual current accepted WAV bytes.');
   const approved=approvedCaptionCues(root);
   if(JSON.stringify(manifest.captions)!==JSON.stringify(approved))throw new Error('Native captions must exactly match the current approved word-grounded revision (AUTO_VERIFIED or USER_APPROVED); rebuild after regroup.');
+  assertB4NarratorBinding(state.project.style,state.voice,manifest.voice);
   const timing=nativeVoiceTiming(root,state), candidateVoice=manifest.voice as Record<string,unknown>;
   const candidateLead=candidateVoice.lead??0,candidateTail=candidateVoice.tail??0,candidateTrim=candidateVoice.trim_start??0;
   if(candidateLead!==timing.lead||candidateTail!==timing.tail||candidateTrim!==timing.trimStart)throw new Error('Native voice timing must match the currently reviewed lead/tail/trim_start configuration.');

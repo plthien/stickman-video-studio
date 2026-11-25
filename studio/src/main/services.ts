@@ -82,6 +82,26 @@ export interface NarrationAcceptance {
   nano?:StudioState['nano'];longform?:StudioState['longform'];
   hooks?:{afterWav?:()=>void;afterManifest?:()=>void;afterState?:()=>void};
 }
+/** Native B4 identity must describe the accepted source, not the initializer's Brian default. */
+export function b4AcceptedNarrator(voice:NonNullable<StudioState['voice']>):Record<string,string>|null{
+  if(voice.origin==='NANO_GENERATED'||voice.origin==='NANO_LONGFORM'){
+    if(!voice.profileId?.trim()||!Number.isInteger(voice.profileVersion)||!voice.referenceBinding||!voice.receipt)
+      throw new Error('B4_NARRATOR_EVIDENCE_REQUIRED: verified Nano profile and accepted receipt required.');
+    return {name:'Nano profile '+voice.profileId,id:'nano:'+voice.profileId,
+      user_override:'Owner-selected Nano profile '+voice.profileId+' v'+voice.profileVersion+'; accepted WAV SHA256 '+voice.sha256};
+  }
+  if(voice.origin==='IMPORTED_WAV')return {name:'Owner-imported WAV (speaker unverified)',id:'imported-wav:'+voice.sha256,
+    user_override:'Owner imported this narration WAV; speaker identity not independently verified.'};
+  return null;
+}
+export function assertB4NarratorBinding(style:string,voice:StudioState['voice'],native:unknown){
+  if(style!=='B4'||!voice)return;
+  const expected=b4AcceptedNarrator(voice);
+  if(!expected)return; // legacy voice without recorded provenance is not silently rewritten
+  const actual=native as Record<string,unknown>|undefined;
+  if(!actual||Object.entries(expected).some(([key,value])=>actual[key]!==value))
+    throw new Error('B4_NARRATOR_METADATA_MISMATCH: accepted narration and Native identity differ; repair metadata without regenerating WAV.');
+}
 const restoreExact=(file:string,bytes:Buffer)=>{const temporary=file+'.'+randomUUID()+'.restore';fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(temporary,bytes,{flag:'wx'});fs.renameSync(temporary,file)};
 /** One rollback-safe publication boundary shared by short, long-form and imported narration. */
 export function acceptNarration(root:string,input:NarrationAcceptance){
@@ -91,13 +111,14 @@ export function acceptNarration(root:string,input:NarrationAcceptance){
   if(!current.approvedScript||current.approvedScript.sha256!==input.expectedScriptSha256||sha(current.approvedScript.text)!==current.approvedScript.sha256)throw new Error('Approved script changed before narration publication.');
   const project=strictJson(projectBytes.toString('utf8')) as Record<string,unknown>,voice=project.voice as Record<string,unknown>|undefined;
   if(!voice||typeof voice!=='object'||Array.isArray(voice))throw new Error('Native manifest voice is missing.');
+  const narrator=project.style==='B4'?b4AcceptedNarrator({path:'assets/audio/narration.wav',sha256:info.sha256,generatedAt:new Date().toISOString(),...input.voice}):null;
   const staged=path.join(path.dirname(target),`.narration-${randomUUID()}.wav`),backup=path.join(path.dirname(target),`.narration-${randomUUID()}.bak`);fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(staged,input.wav,{flag:'wx'});inspectWavBuffer(fs.readFileSync(staged));
   const next:StudioState=structuredClone(current);next.voice={path:'assets/audio/narration.wav',sha256:info.sha256,duration:info.duration,generatedAt:new Date().toISOString(),...input.voice,stale:false};
   if(input.nano)next.nano=input.nano;if(input.longform)next.longform=input.longform;next.alignment=undefined;if(next.tasks)next.tasks.native=undefined;next.nativeReadiness=undefined;next.preview=undefined;next.approval=undefined;next.render=undefined;
   let movedPrior=false,wavCommitted=false,manifestCommitted=false,stateCommitted=false;
   try{
     if(hadWav){fs.renameSync(target,backup);movedPrior=true}fs.renameSync(staged,target);wavCommitted=true;input.hooks?.afterWav?.();
-    atomicJson(projectFile,{...project,voice:{...voice,path:'assets/audio/narration.wav'}});manifestCommitted=true;input.hooks?.afterManifest?.();
+    atomicJson(projectFile,{...project,voice:{...voice,...narrator,path:'assets/audio/narration.wav'}});manifestCommitted=true;input.hooks?.afterManifest?.();
     writeState(projectRoot,next);stateCommitted=true;input.hooks?.afterState?.();
     if(movedPrior&&fs.existsSync(backup))fs.unlinkSync(backup);return next.voice;
   }catch(error){

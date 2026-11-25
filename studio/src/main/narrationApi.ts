@@ -315,6 +315,7 @@ export async function generateApiNarration(root:string,input:JobInput){
       mode:input.regenerate?'regenerate':input.retryUncertain?'retry':input.resume?'resume':'generate'};
     const accepted=readState(root).voice;
     if(accepted&&!accepted.stale&&accepted.sha256===info.sha256&&
+      (initial.project.style!=='B4'||(accepted.origin==='NANO_LONGFORM'&&accepted.profileId===voice&&accepted.profileVersion===version&&accepted.referenceBinding===binding))&&
       sha(fs.readFileSync(resolveProjectFile(root,accepted.path)))===info.sha256){
       // New attempt produced byte-identical audio: keep alignment/caption approvals.
       const state=readState(root);state.longform=longform;
