@@ -27,9 +27,15 @@ const cipher={isEncryptionAvailable:()=>true,
 const decode=(bytes:Buffer)=>({png:bytes,width:1,height:1});
 afterEach(()=>{cleanup();vi.restoreAllMocks();vi.unstubAllGlobals();
   for(const d of tmp.splice(0))fs.rmSync(d,{recursive:true,force:true});});
-function setup(underdescribed=false,fromAuthor=false,historical=false){
+function setup(underdescribed=false,fromAuthor=false,historical=false,
+  options:{preserveAlignedTranscript?:boolean}={}){
   const {root}=fixture(),state=readState(root);
-  const visualScript=underdescribed?'One walks.':'One has a scar and walks.';
+  // Native payloads require the original aligned WORDS and approved Caption
+  // receipt. The shared fixture already has an underdescribed actor, One.
+  if(options.preserveAlignedTranscript&&!underdescribed)
+    throw Error('Aligned fixture does not establish the scar trait.');
+  const visualScript=options.preserveAlignedTranscript?state.approvedScript!.text:
+    underdescribed?'One walks.':'One has a scar and walks.';
   if(fromAuthor)state.approvedScript!.authoring={
     characters:[{name:'One',appearance:'One wears a red coat.'}]
   };
@@ -496,7 +502,7 @@ describe('SB automatic reference authority and verified provider model contracts
     expect(readReferenceJob(root,job.id).prompt).toBe(job.prompt);
   });
   it('SB09/SB11–12/SB14–15 explicit approval publishes the first complete set; Native receives exact verified bytes',async()=>{
-    const {root,dir}=setup(true,false,true),mock=provider();
+    const {root,dir}=setup(true,false,true,{preserveAlignedTranscript:true}),mock=provider();
     const job=await submitReferenceJob(appPath,root,dir,cipher,{
       anchorId:'char_001',authorized:true,model:'gpt_image_2'
     });
