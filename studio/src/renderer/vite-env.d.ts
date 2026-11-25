@@ -16,6 +16,7 @@ interface Window { studio?: Readonly<{
     revision:number)=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
   identityImport:(id:string,json:string,revision:number)=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
   identityApproveAnalysis:(id:string,revision:number)=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
+  identityPrepareAutomaticGallery:(id:string,revision:number)=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
   identityPrepareBible:(id:string,revision:number)=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
   identityFreezeStyleBible:(id:string,operation:import('../main/identity/contracts').IdentityReviewOperation,revision:number)=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
   identityImportStyleBible:(id:string,json:string,revision:number)=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
@@ -33,7 +34,7 @@ interface Window { studio?: Readonly<{
   identityPreviewReferenceImpact:(id:string,selectedIds:string[])=>Promise<ReturnType<typeof import('../main/identity/impact').previewReferenceSwitchImpact>>;
   identityPublishReferences:(id:string,revision:number,selectedIds:string[],impactSha256?:string)=>Promise<import('../main/identity/identityWorkflow').IdentityWorkflowStore>;
   identityReferenceJobs:(id:string)=>Promise<import('../main/identity/referenceGeneration').ReferenceJob[]>;
-  identityGenerateReference:(id:string,input:{anchorId:string;authorized:true;regenerate?:boolean;acknowledgeUnknown?:boolean})=>Promise<import('../main/identity/referenceGeneration').ReferenceJob>;
+  identityGenerateReference:(id:string,input:{anchorId:string;authorized:true;regenerate?:boolean;acknowledgeUnknown?:boolean;model?:import('../main/glabs').GLabsReferenceModel})=>Promise<import('../main/identity/referenceGeneration').ReferenceJob>;
   identitySyncReference:(id:string,jobId:string)=>Promise<import('../main/identity/referenceGeneration').ReferenceJob>;
   galleryImages?:(id:string)=>Promise<{token:string|null;styleProfileSha256?:string;shots:Array<{id:string;index:number;imageCount:number}>;targets:Array<{
     key:string;shotId:string;layerId:string;path:string;boundPath:string;boundSha256?:string;creativeFingerprint?:string;fulfilled:boolean;managed:boolean

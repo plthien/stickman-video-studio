@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('studio', Object.freeze({
   identityFreeze:(id:string,operation:string,revision:number)=>invoke('identity:freeze',id,operation,revision),
   identityImport:(id:string,text:string,revision:number)=>invoke('identity:importResult',id,text,revision),
   identityApproveAnalysis:(id:string,revision:number)=>invoke('identity:approveAnalysis',id,revision),
+  identityPrepareAutomaticGallery:(id:string,revision:number)=>invoke('identity:prepareAutomaticGallery',id,revision),
   identityPrepareBible:(id:string,revision:number)=>invoke('identity:prepareBible',id,revision),
   identityFreezeStyleBible:(id:string,operation:string,revision:number)=>invoke('identity:freezeStyleBible',id,operation,revision),
   identityImportStyleBible:(id:string,text:string,revision:number)=>invoke('identity:importStyleBible',id,text,revision),

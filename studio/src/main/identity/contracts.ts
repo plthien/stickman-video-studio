@@ -54,6 +54,7 @@ export interface StyleBible {
   analysis_sha256:string;style_profile_id:'B1'|'B2'|'B3'|'B4';
   style_profile_sha256:string;style_guidance_sha256:string;
   characters:BibleCharacter[];style_bible_sha256:string;
+  automatic_authority?:{version:'automatic-reference-authority-v1'};
   design_authority?:{version:'ai-style-design-v1';candidate_sha256:string;review:StyleDesignReview};
 }
 export interface NativeImageNeedV2 {

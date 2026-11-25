@@ -20,11 +20,11 @@ const makeSnapshot=(projectId:string)=>({
     bibleTextApproved:{sha256:'current-bible'},
     analysisApproved:{sha256:'reviewed'},referenceCandidates:[
       {candidate_id:'published-A',anchor_id:'char_001',
-        source_definition_hash:'fixed-definition',status:'APPROVED',
+        source_definition_hash:'fixed-definition',style_bible_sha256:'current-bible',status:'APPROVED',
         media_path:'assets/images/a.png',media_sha256:'a'.repeat(64),
         width:1,height:1,source:'OWNER_IMPORTED'},
       {candidate_id:'unpublished-B',anchor_id:'char_001',
-        source_definition_hash:'fixed-definition',status:'APPROVED',
+        source_definition_hash:'fixed-definition',style_bible_sha256:'current-bible',status:'APPROVED',
         media_path:'assets/images/b.png',media_sha256:'b'.repeat(64),
         width:1,height:1,source:'OWNER_IMPORTED'}
     ],

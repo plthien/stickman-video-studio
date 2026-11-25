@@ -2,6 +2,7 @@
 import {readState,sha} from '../services.js';
 import {readIdentityWorkflow,publishedIdentityView,currentApprovedSource,
   validatedPublishedBible} from './identityWorkflow.js';
+import {hasReferenceAuthority} from './styleBible.js';
 import {verifyIndependentReview} from './scriptAnalysis.js';
 import {loadImageStyleProfile} from '../imagePreparation.js';
 import {contentHash,type NativeImageNeedV2,type StyleBible} from './contracts.js';
@@ -39,7 +40,7 @@ export function readApprovedNativeIdentity(root:string,appPath:string):ApprovedN
   const bible=validatedPublishedBible(root,appPath);
   if(!store.bible||contentHash(store.bible)!==contentHash(bible)||
     store.bible.style_bible_sha256!==bible.style_bible_sha256||
-    store.bibleTextApproved?.sha256!==bible.style_bible_sha256)
+    !hasReferenceAuthority(bible,store.bibleTextApproved))
     throw Error('IDENTITY_NATIVE_STYLE_BIBLE_STALE');
   const set=store.referenceApprovalSet;
   if(!set||set.project_id!==state.project.id||

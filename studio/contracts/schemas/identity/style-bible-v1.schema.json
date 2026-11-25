@@ -117,6 +117,18 @@
           }
         }
       }
+    },
+    "automatic_authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version"
+      ],
+      "properties": {
+        "version": {
+          "const": "automatic-reference-authority-v1"
+        }
+      }
     }
   },
   "$defs": {

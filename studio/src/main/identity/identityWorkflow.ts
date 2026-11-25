@@ -10,7 +10,7 @@ import {analysisLineage,freezeAnalysisTask,validateAnalysisEnvelope,
   analysisAuthorContract,analysisReviewContract,
   validateScriptAnalysis,verifyIndependentReview,type ApprovedScriptSnapshot,
   type AnalysisTask,type AnalysisReview} from './scriptAnalysis.js';
-import {compileStyleBible,validateStyleBibleCurrent,type PinnedStyle} from './styleBible.js';
+import {compileStyleBible,compileAutomaticStyleBible,hasReferenceAuthority,validateStyleBibleCurrent,type PinnedStyle} from './styleBible.js';
 import {designSourceSha,validateStyleDesign,validateStyleDesignReview,type StyleDesignTask} from './styleBibleAuthoring.js';
 import {isFrozenLegacyAnalysis,validateHistoricalPublishedBible,
   frozenLegacyReferencePrompt,frozenRequestedReferencePrompt} from './legacyStorage.js';
@@ -31,7 +31,7 @@ interface JournalEvent{
 export interface PublishedIdentityAuthority{
   analysis:ScriptAnalysis;analysisApproved:NonNullable<IdentityWorkflowStore['analysisApproved']>;
   independentReview:AnalysisReview;bible:StyleBible;
-  bibleTextApproved:NonNullable<IdentityWorkflowStore['bibleTextApproved']>;
+  bibleTextApproved:IdentityWorkflowStore['bibleTextApproved'];
   referenceApprovalSet:ReferenceApprovalSet;snapshotSha:string;
 }
 export interface IdentityWorkflowStore{
@@ -46,7 +46,7 @@ export interface IdentityWorkflowStore{
   referenceApprovalSet:ReferenceApprovalSet|null;
   referenceApprovalHistory?:ReferenceApprovalSet[];
   publishedAuthority?:PublishedIdentityAuthority|null;
-  styleBibleHistory?:Array<{analysis:ScriptAnalysis;analysisApproved:NonNullable<IdentityWorkflowStore['analysisApproved']>;independentReview:AnalysisReview;bible:StyleBible;bibleTextApproved:NonNullable<IdentityWorkflowStore['bibleTextApproved']>}>;
+  styleBibleHistory?:Array<{analysis:ScriptAnalysis;analysisApproved:NonNullable<IdentityWorkflowStore['analysisApproved']>;independentReview:AnalysisReview;bible:StyleBible;bibleTextApproved:IdentityWorkflowStore['bibleTextApproved']}>;
   ownerVisualDefinitions?:OwnerVisualDefinition[];
   ownerVisualDefinitionHistory?:OwnerVisualDefinition[];
   events:JournalEvent[];
@@ -88,7 +88,7 @@ export function readIdentityWorkflow(root:string):IdentityWorkflowStore{
       (!Array.isArray(data.referenceApprovalHistory)||
        data.referenceApprovalHistory.length>100))||
     (data.styleBibleHistory!==undefined&&(!Array.isArray(data.styleBibleHistory)||data.styleBibleHistory.length>2000||
-      data.styleBibleHistory.some(row=>!row?.bible||!row.analysis||!row.analysisApproved||!row.independentReview||!row.bibleTextApproved)))||
+      data.styleBibleHistory.some(row=>!row?.bible||!row.analysis||!row.analysisApproved||!row.independentReview||!hasReferenceAuthority(row.bible,row.bibleTextApproved))))||
     (data.ownerVisualDefinitions!==undefined&&
       (!Array.isArray(data.ownerVisualDefinitions)||
        data.ownerVisualDefinitions.length>2000||
@@ -122,7 +122,7 @@ function publishedSnapshot(journal:IdentityWorkflowStore):PublishedIdentityAutho
       record.analysisApproved.reviewSha256!==contentHash(record.independentReview)||
       !verifyIndependentReview(record.independentReview,record.analysis)||
       record.bible.analysis_sha256!==contentHash(record.analysis)||
-      record.bibleTextApproved.sha256!==record.bible.style_bible_sha256||
+      !hasReferenceAuthority(record.bible,record.bibleTextApproved)||
       record.referenceApprovalSet.style_bible_sha256!==record.bible.style_bible_sha256)
       throw Error('IDENTITY_PUBLISHED_AUTHORITY_STALE');
     const {approval_set_sha256,...setBody}=record.referenceApprovalSet;
@@ -134,7 +134,7 @@ function publishedSnapshot(journal:IdentityWorkflowStore):PublishedIdentityAutho
   const {draftAnalysis:analysis,analysisApproved,independentReview,bible,
     bibleTextApproved,referenceApprovalSet}=journal;
   if(!analysis||!analysisApproved||!independentReview||!bible||
-    !bibleTextApproved||!referenceApprovalSet)
+    !hasReferenceAuthority(bible,bibleTextApproved)||!referenceApprovalSet)
     throw Error('IDENTITY_LEGACY_PUBLISHED_AUTHORITY_INCOMPLETE');
   const record={analysis:clone(analysis),analysisApproved:clone(analysisApproved),
     independentReview:clone(independentReview),bible:clone(bible),
@@ -218,7 +218,7 @@ export function identityWorkflowSnapshot(root:string,appPath:string){
         if(published.bible.style_bible_sha256!==current.style_bible_sha256||
           contentHash(published.bible)!==contentHash(current))
           readiness='STYLE_BIBLE_STALE';
-        else if(published.bibleTextApproved?.sha256!==current.style_bible_sha256)
+        else if(!hasReferenceAuthority(current,published.bibleTextApproved))
           readiness='STYLE_BIBLE_TEXT_REVIEW_REQUIRED';
         else{
           readiness=published.referenceApprovalSet?.style_bible_sha256===
@@ -229,7 +229,7 @@ export function identityWorkflowSnapshot(root:string,appPath:string){
   }
   const currentOwnerVisualDefinitions:OwnerVisualDefinition[]=[];
   let currentOwnerVisualDefinitionError:string|null=null;
-  if(record.bible&&record.bibleTextApproved?.sha256===record.bible.style_bible_sha256){
+  if(record.bible&&hasReferenceAuthority(record.bible,record.bibleTextApproved)){
     try{
       const script=currentApprovedSource(root);
       for(const row of record.bible.characters){
@@ -399,6 +399,7 @@ export function importIdentityResult(root:string,text:string,expectedRevision:nu
     next.independentReview=null;next.analysisApproved=null;
     next.publishedAuthority=publishedSnapshot(prior);
     archiveReferenceSet(next);
+    archiveBible(next,prior);
     next.bible=null;next.bibleTextApproved=null;next.referenceApprovalSet=null;
     next.styleDesign=null;next.styleDesignReview=null;next.styleDesignTask=null;
   }
@@ -419,11 +420,69 @@ export function approveScriptAnalysis(root:string,expectedRevision:number){
 }
 /** Verify the persisted approved authority; never reconstruct creative text
  * from narration. Old compiled Bible bytes remain readable. */
+/** Preserve a prior exact Bible and its real receipt (or automatic authority) for frozen job recovery. */
+function archiveBible(next:IdentityWorkflowStore,prior:IdentityWorkflowStore){
+  if(!prior.bible||!prior.draftAnalysis||!prior.analysisApproved||!prior.independentReview||
+    !hasReferenceAuthority(prior.bible,prior.bibleTextApproved))return;
+  if(next.styleBibleHistory?.some(row=>row.bible.style_bible_sha256===prior.bible!.style_bible_sha256))return;
+  next.styleBibleHistory=[...(next.styleBibleHistory??[]),{
+    analysis:clone(prior.draftAnalysis),analysisApproved:clone(prior.analysisApproved),
+    independentReview:clone(prior.independentReview),bible:clone(prior.bible),
+    bibleTextApproved:clone(prior.bibleTextApproved)}];
+}
+/** New default workflow: compile only from current approved Analysis and exact pinned style.
+ * Existing valid published Bibles stay usable; no historical artifacts are rewritten. */
+export function ensureAutomaticReferenceBible(root:string,appPath:string,expectedRevision:number){
+  const prior=readIdentityWorkflow(root);
+  if(prior.revision!==expectedRevision)throw Error('IDENTITY_REVISION_CONFLICT');
+  const {script,analysis}=validApproved(root,prior),style=pinned(appPath,root);
+  if(prior.bible&&hasReferenceAuthority(prior.bible,prior.bibleTextApproved)&&
+    (prior.bible.automatic_authority||prior.bible.design_authority)){
+    try{validateStyleBibleCurrent(prior.bible,analysis,script,style);return prior;}
+    catch{/* Recompile from current approved source only. */}
+  }
+  const publication=publishedSnapshot(prior);
+  if(publication&&publication.bible.analysis_sha256===contentHash(analysis)){
+    let current=false;
+    try{current=validateStyleBibleCurrent(publication.bible,analysis,script,style);}
+    catch{/* Stale publication remains retained, not active candidate authority. */}
+    if(current){
+      if(prior.bible?.style_bible_sha256===publication.bible.style_bible_sha256&&
+        hasReferenceAuthority(prior.bible,prior.bibleTextApproved)&&
+        prior.referenceApprovalSet?.approval_set_sha256===publication.referenceApprovalSet.approval_set_sha256)return prior;
+      const next=clone(prior);
+      archiveBible(next,prior);archiveReferenceSet(next);
+      next.bible=clone(publication.bible);next.bibleTextApproved=clone(publication.bibleTextApproved);
+      next.referenceApprovalSet=clone(publication.referenceApprovalSet);
+      return save(root,prior,next,'restore:published-reference-authority',publication.bible);
+    }
+  }
+  const bible=compileAutomaticStyleBible(analysis,script,style),next=clone(prior);
+  next.publishedAuthority=publishedSnapshot(prior);
+  archiveBible(next,prior);archiveReferenceSet(next);
+  next.bible=bible;next.bibleTextApproved=null;next.referenceApprovalSet=null;
+  return save(root,prior,next,'compile:automatic-reference-authority-v1',bible);
+}
+/** Initial publication is derived from actual explicit approvals, including the valid empty set.
+ * Replacements always use the existing owner impact-confirmation flow. */
+function publishInitialAutomaticSet(root:string,appPath:string,journal:IdentityWorkflowStore,decode:IdentityDecoder){
+  const bible=journal.bible;
+  if(!bible||(!bible.automatic_authority&&!bible.design_authority)||
+    !hasReferenceAuthority(bible,journal.bibleTextApproved)||publishedSnapshot(journal))return journal;
+  const ids=bible.characters.map(row=>journal.referenceCandidates.find(c=>
+    c.anchor_id===row.char_id&&c.source_definition_hash===row.source_definition_hash&&
+    c.style_bible_sha256===bible.style_bible_sha256&&c.status==='APPROVED')?.candidate_id);
+  if(ids.some(id=>!id))return journal;
+  return publishStyleBibleReferences(root,appPath,journal.revision,ids as string[],decode);
+}
+export function prepareAutomaticReferenceGallery(root:string,appPath:string,expectedRevision:number,decode:IdentityDecoder){
+  return publishInitialAutomaticSet(root,appPath,ensureAutomaticReferenceBible(root,appPath,expectedRevision),decode);
+}
 function checkedStyleBible(journal:IdentityWorkflowStore,analysis:ScriptAnalysis,
   script:ApprovedScriptSnapshot,style:PinnedStyle,requireDesign=false):StyleBible{
   const bible=journal.bible;
   if(!bible)throw Error('STYLE_BIBLE_TEXT_APPROVAL_REQUIRED');
-  if(requireDesign&&!bible.design_authority)throw Error('STYLE_DESIGN_REAPPROVAL_REQUIRED');
+  if(requireDesign&&!bible.design_authority&&!bible.automatic_authority)throw Error('STYLE_DESIGN_REAPPROVAL_REQUIRED');
   validateStyleBibleCurrent(bible,analysis,script,style);
   return bible;
 }
@@ -523,6 +582,7 @@ export function importStyleBibleResult(root:string,appPath:string,text:string,ex
   }
   // Keep the published snapshot intact before replacing working authority.
   next.publishedAuthority=publishedSnapshot(prior);
+  if(prior.bible?.automatic_authority)archiveBible(next,prior);
   if(prior.bible&&prior.bibleTextApproved&&prior.draftAnalysis&&prior.analysisApproved&&prior.independentReview&&
     !(next.styleBibleHistory??[]).some(row=>row.bible.style_bible_sha256===prior.bible!.style_bible_sha256)){
     if((next.styleBibleHistory??[]).length>=2000)throw Error('STYLE_BIBLE_HISTORY_LIMIT');
@@ -568,7 +628,7 @@ export function approveOwnerVisualDefinition(root:string,appPath:string,input:{
   if(input.ownerInspected!==true)throw Error('OWNER_VISUAL_DEFINITION_APPROVAL_REQUIRED');
   const {script,analysis}=validApproved(root,prior);
   const bible=checkedStyleBible(prior,analysis,script,pinned(appPath,root),true);
-  if(prior.bibleTextApproved?.sha256!==bible.style_bible_sha256)
+  if(!hasReferenceAuthority(bible,prior.bibleTextApproved))
     throw Error('STYLE_BIBLE_TEXT_APPROVAL_REQUIRED');
   const prepared={
     charId:input.anchorId,styleBibleSha:bible.style_bible_sha256,
@@ -616,7 +676,7 @@ export function registerOwnerReference(root:string,appPath:string,input:{
   if(prior.revision!==input.expectedRevision)throw Error('IDENTITY_REVISION_CONFLICT');
   const {script,analysis}=validApproved(root,prior);
   const bible=checkedStyleBible(prior,analysis,script,pinned(appPath,root),true);
-  if(prior.bibleTextApproved?.sha256!==bible.style_bible_sha256)
+  if(!hasReferenceAuthority(bible,prior.bibleTextApproved))
     throw Error('STYLE_BIBLE_TEXT_APPROVAL_REQUIRED');
   const row=bible.characters.find(c=>c.char_id===input.anchorId);
   // An explicitly owned real reference image may supply visual appearance
@@ -669,7 +729,8 @@ export function registerValidatedGeneratedReference(root:string,appPath:string,
     job.projectId!==readState(root).project.id)
     throw Error('REFERENCE_GENERATION_NOT_VALIDATED');
   const persisted=readReferenceJob(root,job.id);
-  if(persisted.status!=='VALIDATED'||persisted.projectId!==job.projectId||
+  if(contentHash(persisted)!==contentHash(job)||sha(job.prompt)!==job.promptSha||
+    persisted.status!=='VALIDATED'||persisted.projectId!==job.projectId||
     persisted.anchorId!==job.anchorId||
     persisted.providerTaskId!==job.providerTaskId||
     persisted.styleBibleSha!==job.styleBibleSha||
@@ -688,7 +749,7 @@ export function registerValidatedGeneratedReference(root:string,appPath:string,
   const bible=historicalKind?
     validateHistoricalPublishedBible(analysis,script,pinnedStyle,prior.bible!):
     checkedStyleBible(prior,analysis,script,pinnedStyle);
-  if(prior.bibleTextApproved?.sha256!==bible.style_bible_sha256||
+  if(!hasReferenceAuthority(bible,prior.bibleTextApproved)||
     job.styleBibleSha!==bible.style_bible_sha256||
     job.styleProfileSha!==bible.style_profile_sha256||
     job.analysisSha!==bible.analysis_sha256||
@@ -712,9 +773,16 @@ export function registerValidatedGeneratedReference(root:string,appPath:string,
       referencePromptForCharacter(bible,job.anchorId,pinnedStyle,owner);
   if(prompt.prompt_sha256!==job.promptSha)
     throw Error('REFERENCE_GENERATION_PROMPT_STALE');
-  const existing=prior.referenceCandidates.find(c=>c.media_path===job.staged?.path);
+  const rights='OWNER_AUTHORIZED_GLABS_GENERATED | job='+job.id+
+      ' | provider_license_not_independently_verified';
+  // Approving imports the staged image into the media ledger and can change
+  // its path. The immutable job ID in its rights provenance remains stable.
+  const existing=prior.referenceCandidates.find(c=>c.media_path===job.staged?.path||
+    (c.source==='GLABS_GENERATED'&&c.rights===rights));
   if(existing){
-    if(existing.media_sha256!==job.staged.sha256||
+    if(existing.media_sha256!==job.staged.sha256||existing.anchor_id!==job.anchorId||
+      existing.style_bible_sha256!==job.styleBibleSha||existing.provider_job_id!==job.providerTaskId||
+      existing.model!==job.model||existing.rights!==rights||
       existing.source_definition_hash!==row.source_definition_hash||
       existing.visual_definition_sha256!==owner?.definitionSha||existing.prompt_sha256!==job.promptSha)
       throw Error('REFERENCE_GENERATION_JOURNAL_CONFLICT');
@@ -729,8 +797,7 @@ export function registerValidatedGeneratedReference(root:string,appPath:string,
     ...(owner?{visual_definition_sha256:owner.definitionSha}:{}),
     aspect_ratio:'1:1',media_path:job.staged.path,media_sha256:job.staged.sha256,
     media_mime:'image/png',width:actual.width,height:actual.height,
-    rights:'OWNER_AUTHORIZED_GLABS_GENERATED | job='+job.id+
-      ' | provider_license_not_independently_verified',
+    rights,
     source:'GLABS_GENERATED',status:'VALIDATED',
     approval_event_id:null,approved_at:null
   };
@@ -746,7 +813,7 @@ export function approveOwnerReference(root:string,appPath:string,input:{
   if(prior.revision!==input.expectedRevision)throw Error('IDENTITY_REVISION_CONFLICT');
   const {script,analysis}=validApproved(root,prior);
   const bible=checkedStyleBible(prior,analysis,script,pinned(appPath,root),true);
-  if(prior.bibleTextApproved?.sha256!==bible.style_bible_sha256)
+  if(!hasReferenceAuthority(bible,prior.bibleTextApproved))
     throw Error('STYLE_BIBLE_TEXT_APPROVAL_REQUIRED');
   const candidate=prior.referenceCandidates.find(c=>c.candidate_id===input.candidateId);
   if(!candidate)throw Error('REFERENCE_CANDIDATE_NOT_FOUND');
@@ -767,7 +834,8 @@ export function approveOwnerReference(root:string,appPath:string,input:{
       source.providerTaskId!==verified.provider_job_id||
       source.sourceDefinitionHash!==verified.source_definition_hash||
       source.styleBibleSha!==verified.style_bible_sha256||
-      source.promptSha!==verified.prompt_sha256||
+      source.promptSha!==verified.prompt_sha256||sha(source.prompt)!==source.promptSha||
+      source.model!==verified.model||
       source.ownerVisualDefinitionSha!==verified.visual_definition_sha256||
       source.staged?.path!==verified.media_path||
       source.staged?.sha256!==verified.media_sha256)
@@ -782,7 +850,8 @@ export function approveOwnerReference(root:string,appPath:string,input:{
   next.referenceCandidates=next.referenceCandidates.map(c=>
     c.candidate_id===approved.candidate_id?approved:c);
   // Reviewing an alternative candidate does NOT republish or revoke canonical authority.
-  return save(root,prior,next,'approve:reference',approved);
+  const updated=save(root,prior,next,'approve:reference',approved);
+  return bible.automatic_authority?publishInitialAutomaticSet(root,appPath,updated,decode):updated;
 }
 export function publishStyleBibleReferences(root:string,appPath:string,
   expectedRevision:number,selectedIds:string[],decode:IdentityDecoder,
@@ -791,21 +860,22 @@ export function publishStyleBibleReferences(root:string,appPath:string,
   if(prior.revision!==expectedRevision)throw Error('IDENTITY_REVISION_CONFLICT');
   const {script,analysis}=validApproved(root,prior);
   const bible=checkedStyleBible(prior,analysis,script,pinned(appPath,root),true);
-  if(prior.bibleTextApproved?.sha256!==bible.style_bible_sha256)
+  if(!hasReferenceAuthority(bible,prior.bibleTextApproved))
     throw Error('STYLE_BIBLE_TEXT_APPROVAL_REQUIRED');
   const selected=selectedIds.map(id=>prior.referenceCandidates.find(c=>
     c.candidate_id===id&&c.status==='APPROVED'));
   if(selected.some(x=>!x))throw Error('REFERENCE_APPROVAL_SET_MISSING_CANDIDATE');
   const impact=previewReferenceSwitchImpact(root,selectedIds);
   const oldActiveSet=publishedSnapshot(prior)?.referenceApprovalSet;
-  if(oldActiveSet&&impact.changedCharacterIds.length){
+  const authorityChanged=Boolean(oldActiveSet&&oldActiveSet.style_bible_sha256!==bible.style_bible_sha256);
+  if(oldActiveSet&&(impact.changedCharacterIds.length||authorityChanged)){
     if(reviewedImpactSha256!==impact.impactSha256)
       throw Error('REFERENCE_CANONICAL_IMPACT_REVIEW_REQUIRED');
     assertNoIdentityBusyJobs(root,impact.affectedTargetKeys);
   }
   // Re-publishing the very same approved source must be idempotent; a synthetic
   // revision bump would incorrectly stale every already-generated image.
-  if(oldActiveSet&&!impact.changedCharacterIds.length)
+  if(oldActiveSet&&!impact.changedCharacterIds.length&&!authorityChanged)
     return prior;
   const oldPublished=publishedSnapshot(prior);
   const approvalSet=publishApprovalSet(root,bible,selected as ReferenceCandidate[],
@@ -820,7 +890,7 @@ export function publishStyleBibleReferences(root:string,appPath:string,
   const candidate={analysis:clone(analysis),
     analysisApproved:clone(prior.analysisApproved!),
     independentReview:clone(prior.independentReview!),
-    bible:clone(bible),bibleTextApproved:clone(prior.bibleTextApproved!),
+    bible:clone(bible),bibleTextApproved:clone(prior.bibleTextApproved),
     referenceApprovalSet:clone(approvalSet)};
   next.publishedAuthority={...candidate,snapshotSha:contentHash(candidate)};
   return save(root,prior,next,'publish:reference-set',next.publishedAuthority);
@@ -831,7 +901,7 @@ export function assertIdentityUpstreamCurrent(root:string,appPath:string,
   if(identityPolicy(state)==='legacy')return null;
   const journal=publishedIdentityView(readIdentityWorkflow(root));
   const bible=validatedPublishedBible(root,appPath);
-  if(journal.bibleTextApproved?.sha256!==bible.style_bible_sha256||
+  if(!hasReferenceAuthority(bible,journal.bibleTextApproved)||
     !journal.referenceApprovalSet)
     throw Error('IDENTITY_UPSTREAM_NOT_PUBLISHED');
   const selected=journal.referenceApprovalSet.entries.map(entry=>

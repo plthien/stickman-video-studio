@@ -4,14 +4,14 @@ import fs from 'node:fs';
 import {randomUUID} from 'node:crypto';
 import type {CredentialCipher} from '../elevenlabsCredentials.js';
 import {glabsProbe,glabsReferenceSettings,glabsReferenceSubmit,
-  glabsReferenceStatus,glabsReferenceResult,glabsReferenceDownload} from '../glabs.js';
+  glabsReferenceStatus,glabsReferenceResult,glabsReferenceDownload,buildReferenceProviderRequest,isReferenceModel,type GLabsReferenceModel} from '../glabs.js';
 import {atomicJson,readState,resolveProjectFile,strictJson,sha} from '../services.js';
 import {contentHash,type StyleBible} from './contracts.js';
-import {validateStyleBibleCurrent,referencePromptForCharacter} from './styleBible.js';
+import {validateStyleBibleCurrent,referencePromptForCharacter,hasReferenceAuthority} from './styleBible.js';
 import {isFrozenLegacyAnalysis,validateHistoricalPublishedBible,
   frozenLegacyReferencePrompt,frozenRequestedReferencePrompt,
   type FrozenReferenceFormat} from './legacyStorage.js';
-import {currentApprovedSource,readIdentityWorkflow,publishedIdentityView,identityPolicy} from './identityWorkflow.js';
+import {currentApprovedSource,readIdentityWorkflow,publishedIdentityView,identityPolicy,ensureAutomaticReferenceBible} from './identityWorkflow.js';
 import {verifyIndependentReview} from './scriptAnalysis.js';
 import {resolveOwnerVisualDefinition} from './visualDefinitions.js';
 import {loadImageStyleProfile} from '../imagePreparation.js';
@@ -28,6 +28,8 @@ export interface ReferenceJob{
   referenceFormat?:FrozenReferenceFormat;
   ownerVisualDefinitionSha?:string;
   model:string;aspectRatio:'1:1';status:ReferenceJobStatus;
+  /** New jobs pin exact provider endpoint and wire body. Historical jobs omit both. */
+  providerEndpoint?:string;providerRequestSha?:string;providerRequestVersion?:'glabs-reference-wire-v1';
   providerTaskId?:string;providerCompletedAt?:string;
   staged?:{path:string;sha256:string;width:number;height:number;mime:'image/png'};
   reason?:string;createdAt:string;updatedAt:string;
@@ -51,6 +53,10 @@ export function readReferenceJob(root:string,id:string):ReferenceJob{
     !['QUEUED','SUBMITTED','RUNNING','UNKNOWN',
       'VALIDATED','FAILED','STALE','CANCELLED'].includes(value.status))
     throw Error('REFERENCE_JOB_JOURNAL_INVALID');
+  if(value.providerEndpoint!==undefined||value.providerRequestSha!==undefined||value.providerRequestVersion!==undefined){
+    if(value.providerRequestVersion!=='glabs-reference-wire-v1'||!value.providerEndpoint||value.providerRequestSha!==contentHash({endpoint:value.providerEndpoint,
+      ...buildReferenceProviderRequest(value)}))throw Error('REFERENCE_JOB_REQUEST_TAMPERED');
+  }
   return value;
 }
 function write(root:string,job:ReferenceJob){
@@ -76,9 +82,10 @@ function ready(root:string,appPath:string,anchorId:string,
   // and Style Bible text review. During an unapproved Author/Correct, the
   // old published canonical remains usable and cannot be replaced implicitly.
   const candidateReady=Boolean(working.draftAnalysis&&working.analysisApproved&&
-    working.bible&&working.bibleTextApproved&&
+    working.bible&&
     working.analysisApproved.sha256===contentHash(working.draftAnalysis)&&
-    working.bibleTextApproved.sha256===working.bible.style_bible_sha256);
+    hasReferenceAuthority(working.bible,working.bibleTextApproved));
+  if(!frozenJob&&!candidateReady)throw Error('REFERENCE_SCRIPT_ANALYSIS_NOT_CURRENT');
   const published=publishedIdentityView(working);
   // A frozen pre-removal paid job belongs to its original authority even
   // when a newer draft has passed review but was never owner-published.
@@ -107,8 +114,8 @@ function ready(root:string,appPath:string,anchorId:string,
   const bible=journal.bible;
   if(legacyKind)validateHistoricalPublishedBible(analysis,source,pinned,bible);
   else validateStyleBibleCurrent(bible,analysis,source,pinned);
-  if(!frozenJob&&!bible.design_authority)throw Error('STYLE_DESIGN_REAPPROVAL_REQUIRED');
-  if(journal.bibleTextApproved?.sha256!==bible.style_bible_sha256||
+  if(!frozenJob&&!bible.design_authority&&!bible.automatic_authority)throw Error('STYLE_DESIGN_REAPPROVAL_REQUIRED');
+  if(!hasReferenceAuthority(bible,journal.bibleTextApproved)||
     !journal.bible||contentHash(journal.bible)!==contentHash(bible)||
     journal.bible.style_bible_sha256!==bible.style_bible_sha256)
     throw Error('REFERENCE_STYLE_BIBLE_NOT_APPROVED');
@@ -160,7 +167,7 @@ function markStale(root:string,job:ReferenceJob){
   return job;
 }
 export interface NewReferenceGenerateInput{
-  anchorId:string;authorized:true;regenerate?:boolean;acknowledgeUnknown?:boolean;
+  anchorId:string;authorized:true;regenerate?:boolean;acknowledgeUnknown?:boolean;model?:GLabsReferenceModel;
 }
 /** IPC payloads are untrusted even when the renderer type-checks. Reject
  * obsolete modes and ALL unknown keys before health probes or paid POST. */
@@ -168,10 +175,11 @@ export function validateNewReferenceGenerateInput(raw:unknown):NewReferenceGener
   if(!raw||typeof raw!=='object'||Array.isArray(raw))
     throw Error('REFERENCE_GENERATION_REQUEST_INVALID');
   const input=raw as Record<string,unknown>;
-  const allowed=['anchorId','authorized','regenerate','acknowledgeUnknown'];
+  const allowed=['anchorId','authorized','regenerate','acknowledgeUnknown','model'];
   if(Object.keys(input).some(key=>!allowed.includes(key)))
     throw Error('REFERENCE_GENERATION_REQUEST_UNKNOWN_FIELD');
   if(typeof input.anchorId!=='string'||!/^char_[0-9]{3}$/.test(input.anchorId)||
+    (input.model!==undefined&&!isReferenceModel(input.model))||
     (input.regenerate!==undefined&&typeof input.regenerate!=='boolean')||
     (input.acknowledgeUnknown!==undefined&&typeof input.acknowledgeUnknown!=='boolean'))
     throw Error('REFERENCE_GENERATION_REQUEST_INVALID');
@@ -181,6 +189,9 @@ export function validateNewReferenceGenerateInput(raw:unknown):NewReferenceGener
 export async function submitReferenceJob(appPath:string,root:string,userData:string,
   cipher:CredentialCipher,input:NewReferenceGenerateInput):Promise<ReferenceJob>{
   const request=validateNewReferenceGenerateInput(input);
+  // Explicit new-workflow request compiles automatically; legacy API callers
+  // keep their original reviewed-Bible semantics for compatibility.
+  if(request.model)ensureAutomaticReferenceBible(root,appPath,readIdentityWorkflow(root).revision);
   const definition=ready(root,appPath,request.anchorId);
   const older=listReferenceJobs(root).filter(row=>row.anchorId===input.anchorId);
   if(older.some(row=>['QUEUED','SUBMITTED','RUNNING'].includes(row.status)))
@@ -190,14 +201,16 @@ export async function submitReferenceJob(appPath:string,root:string,userData:str
   if(older.length&&!input.regenerate&&!older.every(row=>
     ['FAILED','CANCELLED','STALE'].includes(row.status)))
     throw Error('REFERENCE_REGENERATE_EXPLICIT_AUTH_REQUIRED');
-  const config=glabsReferenceSettings(userData);
+  const config=glabsReferenceSettings(userData,request.model);
+  const providerRequestSha=contentHash({endpoint:config.endpoint,
+    ...buildReferenceProviderRequest({prompt:definition.prompt,model:config.model})});
   const lock=readState(root).project.id+'|'+input.anchorId;
   if(locks.has(lock))throw Error('REFERENCE_SUBMISSION_BUSY');
   locks.add(lock);
   try{
     const probe=await glabsProbe(userData,cipher);
     if(!probe.authVerified)throw Error('REFERENCE_PROVIDER_HEALTH_AUTH_UNVERIFIED');
-    const refreshed=glabsReferenceSettings(userData);
+    const refreshed=glabsReferenceSettings(userData,request.model);
     if(refreshed.model!==config.model||refreshed.endpoint!==config.endpoint)
       throw Error('REFERENCE_PROVIDER_SETTINGS_CHANGED');
     if(!isCurrent(root,appPath,{
@@ -227,14 +240,16 @@ export async function submitReferenceJob(appPath:string,root:string,userData:str
       prompt:definition.prompt,promptSha:definition.promptSha,
       ...(definition.ownerVisualDefinitionSha?{
         ownerVisualDefinitionSha:definition.ownerVisualDefinitionSha}:{}),
-      model:config.model,aspectRatio:'1:1',status:'QUEUED',createdAt:created,updatedAt:created};
+      model:config.model,aspectRatio:'1:1',providerEndpoint:config.endpoint,providerRequestSha,
+      providerRequestVersion:'glabs-reference-wire-v1',
+      status:'QUEUED',createdAt:created,updatedAt:created};
     write(root,job);
     if(!isCurrent(root,appPath,job,false))return markStale(root,job);
     // Durable uncertain marker precedes the ONE paid POST, exactly as Shot G-Labs.
     job.status='SUBMITTED';write(root,job);
     try{
       const response=await glabsReferenceSubmit(userData,cipher,{
-        model:job.model,prompt:job.prompt});
+        model:job.model,prompt:job.prompt,endpoint:job.providerEndpoint});
       const result=response as Record<string,unknown>;
       if(!result||typeof result.task_id!=='string'||
         !/^[a-f0-9]{8}$/i.test(result.task_id)||
@@ -267,8 +282,8 @@ export async function syncReferenceJob(appPath:string,root:string,userData:strin
     return job;
   }
   const task=job.providerTaskId;
-  const response=await glabsReferenceStatus(userData,cipher,task) as Record<string,unknown>;
-  if(!response||response.task_id!==task||
+  const response=await glabsReferenceStatus(userData,cipher,task,job.providerEndpoint) as Record<string,unknown>;
+  if(!response||typeof response.task_id!=='string'||response.task_id.toLowerCase()!==task||
     !['pending','running','failed','completed'].includes(String(response.status)))
     throw Error('REFERENCE_PROVIDER_STATUS_INVALID');
   if(!isCurrent(root,appPath,job))return markStale(root,job);
@@ -279,12 +294,12 @@ export async function syncReferenceJob(appPath:string,root:string,userData:strin
     job.status='RUNNING';write(root,job);return job;
   }
   job.providerCompletedAt??=stamp();write(root,job);
-  const result=await glabsReferenceResult(userData,cipher,task) as Record<string,unknown>;
+  const result=await glabsReferenceResult(userData,cipher,task,job.providerEndpoint) as Record<string,unknown>;
   if(!isCurrent(root,appPath,job))return markStale(root,job);
-  if(!result||result.task_id!==task||result.status!=='completed'||
+  if(!result||typeof result.task_id!=='string'||result.task_id.toLowerCase()!==task||result.status!=='completed'||
     !Array.isArray(result.results)||typeof result.results[0]!=='string')
     throw Error('REFERENCE_PROVIDER_RESULT_INVALID');
-  const downloaded=await glabsReferenceDownload(userData,cipher,result.results[0]);
+  const downloaded=await glabsReferenceDownload(userData,cipher,result.results[0],job.providerEndpoint);
   if(!isCurrent(root,appPath,job))return markStale(root,job);
   const decoded=decode(downloaded.data);
   if(!decoded||!Buffer.isBuffer(decoded.png)||decoded.png.length<24||

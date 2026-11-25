@@ -1,6 +1,7 @@
 /** F24 canonical-switch impact preview. No image writes, POST or automatic regen. */
 import fs from 'node:fs';
 import {readState,resolveProjectFile,strictJson} from '../services.js';
+import {hasReferenceAuthority} from './styleBible.js';
 import {contentHash} from './contracts.js';
 import {readIdentityWorkflow} from './identityWorkflow.js';
 import {readNativeDraft,nativeImageTargetsFromManifest} from '../externalTasks.js';
@@ -9,8 +10,7 @@ import {validateNativeIdentityNeeds} from './nativeNeeds.js';
 export function previewReferenceSwitchImpact(root:string,selectedIds:string[]){
   const state=readState(root),journal=readIdentityWorkflow(root);
   const bible=journal.bible;
-  if(state.identityPolicy!=='v1'||!bible||!journal.bibleTextApproved||
-    journal.bibleTextApproved.sha256!==bible.style_bible_sha256)
+  if(state.identityPolicy!=='v1'||!bible||!hasReferenceAuthority(bible,journal.bibleTextApproved))
     throw Error('REFERENCE_IMPACT_UPSTREAM_NOT_READY');
   if(selectedIds.length!==bible.characters.length||
     new Set(selectedIds).size!==selectedIds.length)
@@ -22,6 +22,8 @@ export function previewReferenceSwitchImpact(root:string,selectedIds:string[]){
   const activeSet=journal.publishedAuthority?.referenceApprovalSet??
     journal.referenceApprovalSet;
   const before=activeSet?.entries??[];
+  const previousStyle=journal.publishedAuthority?.bible.style_profile_sha256;
+  const styleChanged=Boolean(previousStyle&&previousStyle!==bible.style_profile_sha256);
   const changed=[...new Set<string>([
     ...bible.characters.filter(char=>{
       const selected=chosen.find(candidate=>candidate?.anchor_id===char.char_id);
@@ -63,7 +65,7 @@ export function previewReferenceSwitchImpact(root:string,selectedIds:string[]){
     if(fs.existsSync(resolveProjectFile(root,'.studio/external/pending.json')))
       throw Error('REFERENCE_IMPACT_NATIVE_DRAFT_UNVERIFIED');
   }
-  for(const target of sourceTargets)if(target.characters.some(id=>changedIds.has(id)))
+  for(const target of sourceTargets)if(styleChanged||target.characters.some(id=>changedIds.has(id)))
     affected.add(target.targetKey);
   let grow=true;
   while(grow){
@@ -80,7 +82,8 @@ export function previewReferenceSwitchImpact(root:string,selectedIds:string[]){
   const evidence={projectId:state.project.id,sourceSetSha:activeSet?.approval_set_sha256??null,
     revision:journal.revision,selectedIds:[...selectedIds],changedCharacterIds:changed.sort(),
     affectedTargetKeys:targetKeys,
-    publishedNativeAffected:Boolean(state.external.native&&changed.length)};
+    publishedNativeAffected:Boolean(state.external.native&&(changed.length||styleChanged||
+      (activeSet&&activeSet.style_bible_sha256!==bible.style_bible_sha256)))};
   return{...evidence,impactSha256:contentHash(evidence)};
 }
 export function assertNoIdentityBusyJobs(root:string,affectedTargetKeys:string[]){

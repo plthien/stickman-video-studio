@@ -3,20 +3,22 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {afterEach,describe,expect,it,vi} from 'vitest';
-import {appPath,cleanup,fixture,png} from './SixIssueFixtures';
+import {appPath,cleanup,fixture,png,nativePayload} from './SixIssueFixtures';
 import {readState,writeState,atomicJson,sha} from '../../src/main/services';
 import {loadImageStyleProfile} from '../../src/main/imagePreparation';
-import {compileStyleBible} from '../../src/main/identity/styleBible';
+import {compileStyleBible,compileAutomaticStyleBible,validateStyleBibleCurrent,referencePromptForCharacter} from '../../src/main/identity/styleBible';
 import {compileReviewedBible,aiDesignFixture} from './AIIdentityFixtures';
 import {frozenLegacyReferencePrompt,frozenRequestedReferencePrompt} from '../../src/main/identity/legacyStorage';
 import {contentHash,hash} from '../../src/main/identity/contracts';
 import {readIdentityWorkflow,registerValidatedGeneratedReference,
-  approveOwnerReference,currentApprovedSource,
+  approveOwnerReference,currentApprovedSource,prepareAutomaticReferenceGallery,
   approveOwnerVisualDefinition,currentOwnerVisualDefinition,prepareProjectStyleBible,freezeStyleBibleTask,
   importStyleBibleResult,approveProjectStyleBible,publishStyleBibleReferences,publishedIdentityView} from '../../src/main/identity/identityWorkflow';
 import {readReferenceJob,submitReferenceJob,syncReferenceJob,
   validateNewReferenceGenerateInput} from '../../src/main/identity/referenceGeneration';
-import {saveGlabsKey} from '../../src/main/glabs';
+import {saveGlabsKey,glabsSettings,buildReferenceProviderRequest} from '../../src/main/glabs';
+import {readApprovedNativeIdentity,validateNativeBindingPayload} from '../../src/main/identity/nativeBinding';
+import {previewReferenceSwitchImpact} from '../../src/main/identity/impact';
 
 const tmp:string[]=[];
 const cipher={isEncryptionAvailable:()=>true,
@@ -73,7 +75,7 @@ function setup(underdescribed=false,fromAuthor=false,historical=false){
   return{root,dir};
 }
 function provider(failPost=false){
-  const calls:string[]=[];
+  const calls:string[]=[],payloads:Record<string,unknown>[]=[];
   vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
     const url=new URL(String(input)),route=url.pathname,
       method=init?.method??'GET';
@@ -82,11 +84,12 @@ function provider(failPost=false){
       status,headers:{'Content-Type':'application/json'}});
     if(route==='/api/health')return json({version:'test'});
     if(route==='/api/tasks')return json({tasks:[]});
-    if(route==='/api/image/generate'&&method==='POST'){
+    if(['/api/image/generate','/api/openai/generate'].includes(route)&&method==='POST'){
       if(failPost)throw Error('simulated uncertain paid submit');
       const request=JSON.parse(String(init?.body)) as {
         aspect_ratio:string;reference_images:unknown[]
       };
+      payloads.push(request);
       expect(request.aspect_ratio).toBe('1:1');
       expect(request.reference_images).toEqual([]);
       return json({task_id:'ab12cd34',status:'pending'},202);
@@ -101,7 +104,7 @@ function provider(failPost=false){
         status:200,headers:{'Content-Type':'image/png'}});
     throw Error('Unexpected GET-only reference transport '+method+' '+route);
   }));
-  return{calls,posts:()=>calls.filter(s=>s==='POST /api/image/generate')};
+  return{calls,payloads,posts:()=>calls.filter(s=>s.startsWith('POST '))};
 }
 describe('F24 isolated 1:1 reference generation with explicit billing/approval boundaries',()=>{
   it('R05/R07 VALIDATED provider image remains unapproved until owner inspects, then enters real media ledger',async()=>{
@@ -431,5 +434,176 @@ describe('AF02 — optional owner definition exact authority',()=>{
     expect(after.publishedAuthority).toEqual(original);
     expect(publishedIdentityView(after).referenceApprovalSet).toEqual(published.referenceApprovalSet);
     expect(after.referenceCandidates[0]).toEqual(published.referenceCandidates[0]);
+  });
+});
+
+describe('SB automatic reference authority and verified provider model contracts',()=>{
+  const prepare=(root:string)=>prepareAutomaticReferenceGallery(root,appPath,readIdentityWorkflow(root).revision,decode);
+  const approve=(root:string,candidateId:string)=>approveOwnerReference(root,appPath,{
+    expectedRevision:readIdentityWorkflow(root).revision,candidateId,ownerInspected:true
+  },decode);
+  const materialize=async(root:string,dir:string,jobId:string)=>{
+    const validated=await syncReferenceJob(appPath,root,dir,cipher,jobId,decode);
+    expect(validated.status).toBe('VALIDATED');
+    const journal=registerValidatedGeneratedReference(root,appPath,{
+      expectedRevision:readIdentityWorkflow(root).revision,job:validated
+    },decode);
+    return{validated,candidate:journal.referenceCandidates.at(-1)!};
+  };
+  it('SB01–05/SB08/SB19 compiles an underdescribed approved catalog without filtering or a fabricated review',()=>{
+    const {root}=setup(true,false,true),prior=readIdentityWorkflow(root),source=currentApprovedSource(root);
+    const profile=loadImageStyleProfile(appPath,'B1');
+    const pinned={id:'B1' as const,guidance:profile.guidance,sha256:profile.sha256};
+    const updated=prepare(root),bible=updated.bible!;
+    expect(bible.automatic_authority).toEqual({version:'automatic-reference-authority-v1'});
+    expect(bible.design_authority).toBeUndefined();
+    expect(updated.bibleTextApproved).toBeNull();
+    expect(updated.independentReview).toEqual(prior.independentReview);
+    expect(updated.analysisApproved).toEqual(prior.analysisApproved);
+    expect(bible.characters[0]).toMatchObject(prior.draftAnalysis!.continuity_catalog.characters[0]);
+    expect(bible.characters[0].visual_readiness).toBe('READY_FOR_REFERENCE');
+    expect(bible.characters[0].ai_design).toBeUndefined();
+    expect(bible.style_profile_sha256).toBe(pinned.sha256);
+    expect(bible).toEqual(compileAutomaticStyleBible(prior.draftAnalysis!,source,pinned));
+    const prompt=referencePromptForCharacter(bible,'char_001',pinned);
+    expect(prompt.prompt).toContain(JSON.stringify(prior.draftAnalysis!.continuity_catalog.characters[0]));
+    expect(prompt.prompt).toContain(pinned.guidance);
+    expect(prompt.prompt).toContain('Where appearance is unspecified');
+    expect(prompt.prompt).toContain('Exactly FOUR edge-to-edge panels');
+    expect(prompt.aspect_ratio).toBe('1:1');
+    expect(prompt.prompt_sha256).toBe(hash(prompt.prompt));
+    expect(validateStyleBibleCurrent(bible,prior.draftAnalysis!,source,pinned)).toBe(true);
+    const forged={...bible,characters:bible.characters.map(row=>({...row,description:'fabricated'}))};
+    const {style_bible_sha256:discarded,...body}=forged;
+    expect(discarded).toBe(bible.style_bible_sha256);
+    expect(()=>validateStyleBibleCurrent({...body,style_bible_sha256:contentHash(body)},prior.draftAnalysis!,source,pinned)).toThrow();
+    expect(prepare(root).revision).toBe(updated.revision);
+  });
+  it.each(['nano_banana_2','nano_banana_pro','gpt_image_2'] as const)('SB06–08 exact model-specific wire body for %s with unchanged Storyboard settings',async model=>{
+    const {root,dir}=setup(true,false,true),mock=provider(),global=glabsSettings(dir);
+    const job=await submitReferenceJob(appPath,root,dir,cipher,{anchorId:'char_001',authorized:true,model});
+    expect(job.status).toBe('RUNNING');expect(job.model).toBe(model);
+    expect(job.aspectRatio).toBe('1:1');expect(mock.posts()).toHaveLength(1);
+    const expected=model==='gpt_image_2'?{
+      prompt:job.prompt,aspect_ratio:'1:1',reference_images:[],quality:'high',
+      prompt_mode:'direct',reasoning:'none',web_search:false
+    }:{prompt:job.prompt,model,aspect_ratio:'1:1',reference_images:[],upscale:[]};
+    expect(mock.payloads[0]).toEqual(expected);
+    expect(mock.posts()[0]).toBe(model==='gpt_image_2'?'POST /api/openai/generate':'POST /api/image/generate');
+    expect(glabsSettings(dir)).toEqual(global);
+    expect(job.providerRequestVersion).toBe('glabs-reference-wire-v1');
+    expect(job.providerRequestSha).toBe(contentHash({endpoint:global.endpoint,...buildReferenceProviderRequest(job)}));
+    expect(readReferenceJob(root,job.id).prompt).toBe(job.prompt);
+  });
+  it('SB09/SB11–12/SB14–15 explicit approval publishes the first complete set; Native receives exact verified bytes',async()=>{
+    const {root,dir}=setup(true,false,true),mock=provider();
+    const job=await submitReferenceJob(appPath,root,dir,cipher,{
+      anchorId:'char_001',authorized:true,model:'gpt_image_2'
+    });
+    const {validated,candidate}=await materialize(root,dir,job.id);
+    expect(candidate.status).toBe('VALIDATED');
+    expect(readIdentityWorkflow(root).referenceApprovalSet).toBeNull();
+    const approved=approve(root,candidate.candidate_id);
+    expect(approved.referenceApprovalSet?.entries).toHaveLength(1);
+    expect(approved.publishedAuthority?.bibleTextApproved).toBeNull();
+    expect(approved.publishedAuthority?.bible.automatic_authority?.version).toBe('automatic-reference-authority-v1');
+    const identity=readApprovedNativeIdentity(root,appPath);
+    expect(identity.anchors[0].sha256).toBe(validated.staged?.sha256);
+    expect(identity.anchors[0].charId).toBe('char_001');
+    expect(sha(fs.readFileSync(path.join(root,identity.anchors[0].path)))).toBe(identity.anchors[0].sha256);
+    const native=nativePayload(root,{image:'both'});
+    const needs=[
+      {shot_id:'shot-1',layer_id:'image-1',expected_path:'assets/images/missing.png',
+        content:'One in first frame',asset_kind:'character',character_ids:['char_001']},
+      {shot_id:'shot-2',layer_id:'image-2',expected_path:'assets/images/late.png',
+        content:'Empty background',asset_kind:'background',character_ids:[]}
+    ];
+    const binding=validateNativeBindingPayload(root,appPath,native.manifest,needs);
+    expect(binding.plans[0].canonicalAnchors).toEqual(identity.anchors);
+    expect(binding.plans[1].canonicalAnchors).toEqual([]);
+    const again=registerValidatedGeneratedReference(root,appPath,{
+      expectedRevision:approved.revision,job:validated
+    },decode);
+    expect(again.referenceCandidates).toHaveLength(1);
+    expect(again.revision).toBe(approved.revision);
+    expect(mock.posts()).toHaveLength(1);
+  });
+  it('SB13 publishes an empty automatic catalog without provider activity',()=>{
+    const {root}=setup(true,false,true),prior=readIdentityWorkflow(root),mock=provider();
+    const analysis={...prior.draftAnalysis!,continuity_catalog:{characters:[]}};
+    const review={...prior.independentReview!,analysis_sha256:contentHash(analysis)};
+    atomicJson(path.join(root,'.studio/identity/workflow-v1.json'),{
+      ...prior,draftAnalysis:analysis,draftSha256:contentHash(analysis),independentReview:review,
+      analysisApproved:{...prior.analysisApproved!,sha256:contentHash(analysis),reviewSha256:contentHash(review)},
+      bible:null,bibleTextApproved:null
+    });
+    const updated=prepare(root);
+    expect(updated.bible?.characters).toEqual([]);
+    expect(updated.referenceApprovalSet?.entries).toEqual([]);
+    expect(readApprovedNativeIdentity(root,appPath).anchors).toEqual([]);
+    expect(mock.calls).toEqual([]);
+  });
+  it('SB16 preserves last-good automatic publication during regeneration and requires exact replacement impact',async()=>{
+    const {root,dir}=setup(true,false,true),mock=provider();
+    const first=await submitReferenceJob(appPath,root,dir,cipher,{anchorId:'char_001',authorized:true,model:'nano_banana_2'});
+    const initial=approve(root,(await materialize(root,dir,first.id)).candidate.candidate_id);
+    const old=initial.publishedAuthority!.snapshotSha;
+    const second=await submitReferenceJob(appPath,root,dir,cipher,{anchorId:'char_001',authorized:true,model:'nano_banana_pro',regenerate:true});
+    expect(readIdentityWorkflow(root).publishedAuthority!.snapshotSha).toBe(old);
+    const candidate=(await materialize(root,dir,second.id)).candidate;
+    const reviewed=approve(root,candidate.candidate_id);
+    expect(reviewed.publishedAuthority!.snapshotSha).toBe(old);
+    expect(()=>publishStyleBibleReferences(root,appPath,reviewed.revision,[candidate.candidate_id],decode)).toThrow('REFERENCE_CANONICAL_IMPACT_REVIEW_REQUIRED');
+    const impact=previewReferenceSwitchImpact(root,[candidate.candidate_id]);
+    const replaced=publishStyleBibleReferences(root,appPath,reviewed.revision,[candidate.candidate_id],decode,impact.impactSha256);
+    expect(replaced.referenceApprovalSet?.entries[0].candidate_id).toBe(candidate.candidate_id);
+    expect(mock.posts()).toHaveLength(2);
+  });
+  it('SB16 retains historical reviewed published authority and original receipt without regeneration',async()=>{
+    const {root,dir}=setup(),mock=provider();
+    const job=await submitReferenceJob(appPath,root,dir,cipher,{anchorId:'char_001',authorized:true});
+    const candidate=(await materialize(root,dir,job.id)).candidate;
+    const approved=approve(root,candidate.candidate_id);
+    const original=publishStyleBibleReferences(root,appPath,approved.revision,[candidate.candidate_id],decode);
+    const prepared=prepare(root);
+    expect(prepared).toEqual(original);
+    expect(prepared.bibleTextApproved).not.toBeNull();
+    expect(prepared.bible?.design_authority).toBeDefined();
+    expect(mock.posts()).toHaveLength(1);
+  });
+  it('SB17 an uncertain new model POST stays UNKNOWN and GET sync cannot send another paid request',async()=>{
+    const {root,dir}=setup(true,false,true),mock=provider(true);
+    const job=await submitReferenceJob(appPath,root,dir,cipher,{anchorId:'char_001',authorized:true,model:'gpt_image_2'});
+    expect(job.status).toBe('UNKNOWN');
+    await expect(submitReferenceJob(appPath,root,dir,cipher,{anchorId:'char_001',authorized:true,model:'nano_banana_2',regenerate:true})).rejects.toThrow('REFERENCE_UNKNOWN_MAY_HAVE_CHARGED');
+    expect((await syncReferenceJob(appPath,root,dir,cipher,job.id,decode)).status).toBe('UNKNOWN');
+    expect(mock.posts()).toHaveLength(1);
+  });
+  it('SB18 stale approved Script blocks new automatic generation before network',async()=>{
+    const {root,dir}=setup(true,false,true),mock=provider();
+    const state=readState(root);state.approvedScript!.text='New source.';
+    state.approvedScript!.sections=[{id:'opening',text:'New source.'}];
+    state.approvedScript!.sha256=sha('New source.');writeState(root,state);
+    await expect(submitReferenceJob(appPath,root,dir,cipher,{anchorId:'char_001',authorized:true,model:'gpt_image_2'})).rejects.toThrow();
+    expect(mock.calls).toEqual([]);
+  });
+  it('SB18 a style change during health probe blocks POST from the old prompt',async()=>{
+    const {root,dir}=setup(true,false,true),mock=provider();
+    const original=fetch;
+    vi.stubGlobal('fetch',async(input:RequestInfo|URL,init?:RequestInit)=>{
+      const response=await original(input,init);
+      if(new URL(String(input)).pathname==='/api/tasks'){
+        const state=readState(root);state.project.style='B2';writeState(root,state);
+      }
+      return response;
+    });
+    await expect(submitReferenceJob(appPath,root,dir,cipher,{anchorId:'char_001',authorized:true,model:'nano_banana_2'})).rejects.toThrow('REFERENCE_SOURCE_STALE_BEFORE_POST');
+    expect(mock.posts()).toHaveLength(0);
+  });
+  it('SB06/SB18 tampered durable wire configuration cannot be resumed',async()=>{
+    const {root,dir}=setup(true,false,true);provider();
+    const job=await submitReferenceJob(appPath,root,dir,cipher,{anchorId:'char_001',authorized:true,model:'gpt_image_2'});
+    atomicJson(path.join(root,'.studio/identity/reference-jobs',job.id+'.json'),{...job,model:'nano_banana_pro'});
+    expect(()=>readReferenceJob(root,job.id)).toThrow('REFERENCE_JOB_REQUEST_TAMPERED');
   });
 });

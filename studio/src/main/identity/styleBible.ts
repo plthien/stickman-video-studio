@@ -57,6 +57,31 @@ export function compileStyleBible(analysis:ScriptAnalysis,script:ApprovedScriptS
   const bible={...base,style_bible_sha256:contentHash(base)};
   return validateWithSchema<StyleBible>(loadSchema('bible'),bible);
 }
+/** Explicit automatic authority: exact approved data, no generated text or review receipt. */
+export function compileAutomaticStyleBible(analysis:ScriptAnalysis,script:ApprovedScriptSnapshot,
+  pinned:PinnedStyle):StyleBible{
+  validateScriptAnalysis(analysis,script);
+  if(!pinned.guidance.trim()||!/^[a-f0-9]{64}$/.test(pinned.sha256)||
+    !['B1','B2','B3','B4'].includes(pinned.id))throw Error('STYLE_BIBLE_STYLE_PIN_INVALID');
+  const characters:BibleCharacter[]=analysis.continuity_catalog.characters.map(char=>({
+    ...structuredClone(char),
+    source_definition_hash:contentHash({version:'automatic-reference-authority-v1',
+      inherited:char,styleId:pinned.id,styleSha:pinned.sha256}),
+    visual_readiness:'READY_FOR_REFERENCE'
+  }));
+  const base={schema:'stickman-project-style-bible-v1' as const,
+    project_id:script.projectId,source_script_sha256:script.sha256,
+    source_authoring_sha256:contentHash(script.authoring),analysis_sha256:contentHash(analysis),
+    style_profile_id:pinned.id,style_profile_sha256:pinned.sha256,
+    style_guidance_sha256:hash(pinned.guidance),characters,
+    automatic_authority:{version:'automatic-reference-authority-v1' as const}};
+  return validateWithSchema<StyleBible>(loadSchema('bible'),{...base,style_bible_sha256:contentHash(base)});
+}
+/** Technical authority and historical text approval are distinct, never fabricated. */
+export function hasReferenceAuthority(bible:StyleBible,receipt:{sha256:string}|null|undefined){
+  return bible.automatic_authority?.version==='automatic-reference-authority-v1'?
+    !bible.design_authority&&!receipt:receipt?.sha256===bible.style_bible_sha256;
+}
 export function validateStyleBibleCurrent(bible:StyleBible,
   analysis:ScriptAnalysis,script:ApprovedScriptSnapshot,pinned:PinnedStyle){
   validateScriptAnalysis(analysis,script);
@@ -69,7 +94,11 @@ export function validateStyleBibleCurrent(bible:StyleBible,
     bible.style_profile_sha256!==pinned.sha256||bible.style_guidance_sha256!==hash(pinned.guidance)||
     bible.characters.length!==analysis.continuity_catalog.characters.length)
     throw Error('STYLE_BIBLE_SOURCE_STALE');
-  if(bible.design_authority){
+  if(bible.automatic_authority){
+    if(bible.design_authority||
+      canonical(compileAutomaticStyleBible(analysis,script,pinned))!==canonical(bible))
+      throw Error('AUTOMATIC_REFERENCE_AUTHORITY_STALE');
+  }else if(bible.design_authority){
     const design:StyleDesignCandidate={schema:'stickman-ai-style-design-v1',
       project_id:bible.project_id,analysis_sha256:bible.analysis_sha256,
       style_profile_sha256:bible.style_profile_sha256,
@@ -86,6 +115,11 @@ export function validateStyleBibleCurrent(bible:StyleBible,
     }
   }
   return true;
+}
+function bibleCharacterData(row:BibleCharacter){
+  const data:Partial<BibleCharacter>={...row};
+  delete data.source_definition_hash;delete data.visual_readiness;delete data.ai_design;
+  return data;
 }
 /** Print view labels only in prompt instructions; generated pixels must have NO text. */
 export function referencePromptForCharacter(bible:StyleBible,
@@ -110,7 +144,17 @@ export function referencePromptForCharacter(bible:StyleBible,
     'NO gutters, frames, captions,',
     'letters, labels, numbers, logos, watermark, cropping or extra people.'
   ].join('\n');
-  const lines=row.ai_design&&bible.design_authority?[
+  const lines=bible.automatic_authority?[
+    'Create a canonical character reference sheet for the following character from an approved story.',
+    'CHARACTER DATA (exact approved Script Analysis):',
+    JSON.stringify(bibleCharacterData(row)),
+    'VISUAL STYLE / '+pinned.id+' / SHA '+pinned.sha256,pinned.guidance,
+    ...(ownerDefinition?['Explicit owner-approved instructions: '+JSON.stringify(ownerDefinition.traits),
+      'Owner instruction provenance: '+ownerDefinition.provenance,
+      'Owner instruction SHA: '+ownerDefinition.definitionSha]:[]),
+    'Design one visually distinctive and coherent character consistent with the approved character information and visual style. Where appearance is unspecified, make appropriate creative visual decisions without contradicting explicitly established traits. Treat story occurrences as context, not additional subjects or separate scenes.',
+    format,'Maintain consistent identity, proportions, colors and markers across all four views. No text.'
+  ]:row.ai_design&&bible.design_authority?[
     'APPROVED AI CHARACTER REFERENCE PROMPT',
     'Character ID: '+row.char_id,row.ai_design.visual_design,row.ai_design.reference_prompt,
     ...(ownerDefinition?['Explicit owner-approved override: '+JSON.stringify(ownerDefinition.traits),

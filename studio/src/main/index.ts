@@ -17,7 +17,7 @@ import { importAlignedWords, importApprovedWav, longformStatus, runLongform, nar
 import { projectSnapshot } from './projectSnapshot.js';
 import {createProjectStaged} from './projectCreation.js';
 import {identityWorkflowSnapshot,freezeIdentityTask,importIdentityResult,
-  approveScriptAnalysis,prepareProjectStyleBible,approveProjectStyleBible,freezeStyleBibleTask,importStyleBibleResult,
+  approveScriptAnalysis,prepareAutomaticReferenceGallery,prepareProjectStyleBible,approveProjectStyleBible,freezeStyleBibleTask,importStyleBibleResult,
   registerOwnerReference,approveOwnerReference,publishStyleBibleReferences,
   previewIdentityUpgrade,upgradeIdentityPolicy,registerValidatedGeneratedReference,
   readIdentityWorkflow,approveOwnerVisualDefinition} from './identity/identityWorkflow.js';
@@ -105,6 +105,8 @@ function registerIpc() {
     importIdentityResult(rootFor(id),result,revision));
   ipcMain.handle('identity:approveAnalysis',(_event,id:string,revision:number)=>
     approveScriptAnalysis(rootFor(id),revision));
+  ipcMain.handle('identity:prepareAutomaticGallery',(_event,id:string,revision:number)=>
+    prepareAutomaticReferenceGallery(rootFor(id),app.getAppPath(),revision,decodeGlabsImage));
   ipcMain.handle('identity:prepareBible',(_event,id:string,revision:number)=>
     prepareProjectStyleBible(rootFor(id),app.getAppPath(),revision));
   ipcMain.handle('identity:freezeStyleBible',(_event,id:string,operation:IdentityReviewOperation,revision:number)=>
