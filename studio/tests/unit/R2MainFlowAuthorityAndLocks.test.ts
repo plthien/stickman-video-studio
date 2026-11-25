@@ -2,7 +2,7 @@
 import {describe,it,expect} from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import {compileAuthority} from '../../src/main/externalAuthority';
+import {compileAuthority,nativeAnimationDirection,nativeReferenceInventory} from '../../src/main/externalAuthority';
 import {nativeSkillRoot,sha} from '../../src/main/services';
 import {validateLocks} from '../../src/main/externalLifecycle';
 
@@ -108,5 +108,29 @@ describe('R2 source-exact creative authority',()=>{
     for(const needed of ['references/autopilot-runtime.md','references/autopilot-production-qa.md','references/autopilot-sound-system.md']){
       expect(pack.sources.find(source=>source.path===needed)?.text.length).toBeGreaterThan(1000);
     }
+  });
+});
+
+
+describe('Original Native production authority',()=>{
+  it('includes selected-style production supplement and actual reference inventory for Native operations',()=>{
+    const appPath=path.resolve('.');
+    for(const operation of ['author','review','correct','recheck'] as const){
+      for(const style of ['B1','B2','B3','B4']){
+        const compiled=compileAuthority(appPath,style,'native',operation);
+        expect(compiled.sources.some(row=>row.path==='references/b1-production-qa.md')).toBe(style==='B1');
+        expect(compiled.referenceMedia?.length).toBeGreaterThan(0);
+        expect(compiled.referenceMedia?.every(row=>row.style===style&&row.transferStatus==='LOCAL_ONLY_NOT_TRANSFERRED')).toBe(true);
+      }
+    }
+    expect(compileAuthority(appPath,'B1','script','author').sources.some(row=>row.path==='references/b1-production-qa.md')).toBe(false);
+    const media=nativeReferenceInventory(appPath,'B3');
+    expect(media.some(row=>row.path.endsWith('accepted-dog-motion.mp4'))).toBe(true);
+    for(const row of media)expect(row.sha256).toBe(sha(fs.readFileSync(path.join(nativeSkillRoot(appPath).root,row.path))));
+  });
+  it('keeps B3-specific mechanisms and B4 deliberate-hold exception explicit',()=>{
+    expect(nativeAnimationDirection('B1')).toContain('2.5-second');
+    expect(nativeAnimationDirection('B3')).toContain('group-local coordinates');
+    expect(nativeAnimationDirection('B4')).toContain('Do not impose B1–B3 inactivity quota');
   });
 });

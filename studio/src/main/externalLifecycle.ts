@@ -3,7 +3,7 @@ import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {atomicJson,inspectWavBuffer,readState,resolveProjectFile,sha,strictJson,writeState,type ExternalOperation,type Stage,type StudioState} from './services.js';
 import {readApprovedNativeIdentity} from './identity/nativeBinding.js';
-import {compileAuthority} from './externalAuthority.js';
+import {compileAuthority,nativeAnimationDirection,nativeReferenceInstructions} from './externalAuthority.js';
 import {getCaptionReview,nativeVoiceTiming} from './captionReview.js';
 import {alignmentText} from './alignment.js';
 import {invalidateGlabsJobsAfterNativeCorrection} from './glabs.js';
@@ -294,7 +294,7 @@ function lifecycleSourceContext(state:StudioState,stage:Stage,operation:External
   }));
 }
 const authorityIdentity=(authority:ReturnType<typeof compileAuthority>)=>
-  sha(JSON.stringify(authority.sources.map(source=>[source.path,source.sha256,source.extractionSha256,source.extractionRevision])));
+  sha(JSON.stringify(authority.stage==='native'?{sources:authority.sources.map(source=>[source.path,source.sha256,source.extractionSha256,source.extractionRevision]),referenceMedia:authority.referenceMedia}:authority.sources.map(source=>[source.path,source.sha256,source.extractionSha256,source.extractionRevision])));
 function assertLifecycleFresh(appPath:string,root:string,state:StudioState,task:NonNullable<StudioState['lifecycle']>['tasks'][string],journalResume=false){
   if(!task.sourceContextSha256||task.sourceContextSha256!==lifecycleSourceContext(state,task.stage,task.operation))
     throw new Error('STALE: lifecycle brief, approved creative source or voice/alignment was changed.');
@@ -621,6 +621,7 @@ Return the complete corrected artifact, not a partial patch.`
   return [
     '# MODE B EXTERNAL '+stage.toUpperCase()+' '+operation.toUpperCase()+(kind?' — '+kind.toUpperCase():''),
     '## A — OPERATION-SPECIFIC MISSION',...missions,
+    ...(stage==='native'?[nativeAnimationDirection(authority.style),nativeReferenceInstructions(authority.referenceMedia??[])]:[]),
     '## B — PROJECT BRIEF',JSON.stringify(brief,null,2),
     ...(stage==='native'?['## B2 — NATIVE SOURCE EVIDENCE (VERIFIED, READ-ONLY)',
       'Complete approved narration and real word-level timestamps. No character timings, second Author appendix or false media playback claims.',

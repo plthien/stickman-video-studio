@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { atomicJson, nativeSkillRoot, readState, resolveProjectFile, runProcess, safeImportedFile, sha, strictJson, writeState, type Stage, type StudioState } from './services.js';
 import { approvedCaptionCues, nativeVoiceTiming } from './captionReview.js';
 import { rejectNativeUnsafePaths, validateAuthoring } from './sourceCitations.js';
-import { compileAuthority } from './externalAuthority.js';
+import { compileAuthority,nativeAnimationDirection,nativeReferenceInventory,nativeReferenceInstructions } from './externalAuthority.js';
 import {imageRequirementFingerprintSources} from './imageRequirements.js';
 import {readApprovedNativeIdentity,validateNativeBindingPayload} from './identity/nativeBinding.js';
 import {currentDraftIdentityReceipt,publishNativeIdentityReceipt,assertPublishedIdentityCurrent,readNativeIdentityReceipt} from './identity/finalGate.js';
@@ -232,6 +232,10 @@ export function freezeTask(appPath: string, root: string, stage: Stage, rebuild 
 - If upstream_character_authority is present (F24), EVERY managed Native image target MUST have exactly ONE STRUCTURED asset_needs row with shot_id, layer_id, expected_path, content, REQUIRED asset_kind (background|character|pose|prop|object|other), character_ids (explicit array). For asset_kind character or pose, character_ids MUST be nonempty and contain only canonical character IDs; background/character-free object may use []. Omitting asset_kind is never a valid fallback. Declare optional typed continuity_source {shot_id,layer_id,relation} only for a real earlier managed image. Core @b1/ built-ins are not paid-image targets. Only use canonical char_id values supplied by upstream_character_authority. Do NOT invent characters, omit a target, add identity fields to manifest/project.json, or use legacy string asset_needs for F24 targets. Review exact owner-approved canonical source and identity lineage SHA.
 - Cross-check complete story coverage, temporal order, shot/layer ids, motion feasibility, character/object continuity and every G-Labs-compatible frozen image target. Only actual imported assets with rights and matching SHA may be described as present.
 - Return ONE COMPLETE Native candidate with manifest, shot_ledger, sound_script and asset_needs. Do not return Review/Correct/Recheck verdicts, a published project, fake CLI validation, media observations or a rendered film.
+
+${nativeAnimationDirection(state.project.style)}
+
+${nativeReferenceInstructions(nativeReferenceInventory(appPath,state.project.style))}
 
 ## ACTUAL AUTHORING SOURCE (COMPACT PROJECTION v1; SOURCE EVIDENCE UNCHANGED)
 ${JSON.stringify(nativePromptProjection(context,root,appPath), null, 2)}
