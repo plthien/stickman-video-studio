@@ -18,7 +18,7 @@ export function manifestAudioTracks(manifest:Record<string,unknown>){
   }
   return result;
 }
-export function structuredSoundCues(manifest:Record<string,unknown>,rows:unknown[]){
+export function structuredSoundCues(manifest:Record<string,unknown>,rows:unknown[],requireCoverage=false){
   const tracks=manifestAudioTracks(manifest),ids=new Set<string>(),keys=new Set<string>(),out:Array<SoundCue&{key:string}>=[];
   for(const value of rows){
     if(!value||typeof value!=='object'||Array.isArray(value)||!('source_kind'in value))continue; // historical prose retained
@@ -30,6 +30,7 @@ export function structuredSoundCues(manifest:Record<string,unknown>,rows:unknown
     if(row.reuse&& (target.sourceKind!=='file'||typeof row.reuse.path!=='string'||!row.reuse.path.startsWith('assets/sfx/')||row.reuse.path.split('/').includes('..')||! /^[a-f0-9]{64}$/.test(row.reuse.sha256)))throw Error('SOUND_REUSE_INVALID');
     ids.add(row.cue_id);keys.add(key);out.push({...row,key});
   }
+  if(requireCoverage){const missing=tracks.filter(t=>!keys.has(t.key));if(missing.length)throw Error('SOUND_CUE_COVERAGE_REQUIRED '+missing.map(t=>t.key).join(', '));}
   return out;
 }
 export function assertAudioReceipt(root:string,projectId:string,token:string,key:string,relative:string,hash:string,rights:string,cue:(SoundCue&{key:string})|undefined,r:AudioPreparationReceipt|undefined){

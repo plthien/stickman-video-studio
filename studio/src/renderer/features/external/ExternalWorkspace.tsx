@@ -61,7 +61,7 @@ function ScriptNativeWorkspace({tab,stageTabs,operation,setOperation}:{
   const sessionKey=[projectId??'none',stage,operation].join('|');
   const activeKey=useRef(sessionKey);activeKey.current=sessionKey;
   const local=tabs[sessionKey]??emptyTab();
-  const {json,result,prompt,pending,nativeMediaStatus,error,previewSeconds,draftConsent,
+  const {json,result,prompt,pending,nativeMediaStatus,error,previewSeconds,
     reviewTargets,editable,editablePaths,findingScope,nativeTarget,
     frozenScopeKey,frozenTaskId,history,historySelectedId,historyLoading}=local;
   const field=<K extends keyof TabValues,>(name:K)=>(value:TabValues[K])=>

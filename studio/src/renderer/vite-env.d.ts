@@ -5,6 +5,7 @@ interface Window { studio?: Readonly<{
   listRecent: () => Promise<import('./types/app').NativeProjectSummary[]>;
   createProject: (input: unknown) => Promise<import('./types/app').NativeStudioState>; browseProjectParent: () => Promise<string | null>;
   openProjectDialog: () => Promise<string | null>; openProject: (root: string) => Promise<import('./types/app').NativeStudioState>; projectState: (id: string) => Promise<import('./types/app').NativeStudioState>; saveBrief: (id: string, brief: unknown) => Promise<import('./types/app').NativeStudioState>; setNanoEndpoint: (id: string, endpoint: string) => Promise<import('./types/app').NativeStudioState>;
+  reuseApprovedAssets?:(id:string,input:Parameters<typeof import('../main/assetReuse').bindApprovedReuseBatch>[2])=>ReturnType<typeof import('../main/assetReuse').bindApprovedReuseBatch>;
   reuseApprovedAsset?:(id:string,input:{targetKey:string;token:string;candidateSha:string;sourceSha:string;ownerAuthorized:true})=>Promise<unknown>;
   importExternalResult?:(id:string,stage:string,op:string,text:string)=>Promise<import('./types/app').NativeStudioState>; approveScript?:(id:string,input:{sha256:string;revision:number;taskId:string;ownerAuthorized:true})=>Promise<import('./types/app').NativeStudioState>;
   captionApproveCurrent?:(id:string,input:{sha256:string;ownerAuthorized:true})=>Promise<import('./types/app').NativeStudioState>; generateAndAlign?:(id:string,input:{voice?:string;resume?:boolean;retryUncertain?:boolean;regenerate?:boolean;expectedScriptSha:string;ownerAuthorized:true})=>Promise<import('./types/app').NativeStudioState>; approveContinue?:(id:string,input:{reviewedSha256:string;ownerAuthorized:true;render:boolean})=>Promise<import('./types/app').NativeStudioState>;
@@ -60,6 +61,7 @@ interface Window { studio?: Readonly<{
   glabsPoll:(id:string,jobId:string)=>Promise<unknown>;glabsCancelQueued:(id:string,jobId:string)=>Promise<unknown>;
   glabsApprove:(id:string,jobId:string,rights?:string)=>Promise<unknown>;
   voicePlaybackUrl:(id:string)=>Promise<string>;
+  soundImportBatch?:(id:string,input:Omit<Parameters<typeof import('../main/soundAssets').importSoundBatch>[2],'files'>)=>Promise<Awaited<ReturnType<typeof import('../main/soundAssets').importSoundBatch>>|null>;
   soundInventory:(id:string)=>Promise<ReturnType<typeof import('../main/soundAssets').soundInventory>>;
   soundBindBatch:(id:string,input:Parameters<typeof import('../main/soundAssets').bindSoundAssets>[2])=>ReturnType<typeof import('../main/soundAssets').bindSoundAssets>;
   repairB4Narrator:(id:string,sha:string,confirmation?:{name:string;scriptSha:string;ownerConfirmed:true})=>Promise<unknown>;

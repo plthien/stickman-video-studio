@@ -16,10 +16,10 @@ import { cancelJob, nativeJob, reconcileJob } from './nativeJobs.js';
 import { importAlignedWords, importApprovedWav, longformStatus, runLongform, narrationAction } from './voiceMedia.js';
 import { projectSnapshot } from './projectSnapshot.js';
 import {advanceProduction} from './productionCoordinator.js';
-import {bindApprovedReuse} from './assetReuse.js';
+import {bindApprovedReuse,bindApprovedReuseBatch} from './assetReuse.js';
 import {createProjectStaged} from './projectCreation.js';
 import {exportNativeReferencePackage} from './externalAuthority.js';
-import {soundInventory,bindSoundAssets} from './soundAssets.js';
+import {soundInventory,bindSoundAssets,importSoundBatch} from './soundAssets.js';
 import {identityWorkflowSnapshot,freezeIdentityTask,importIdentityResult,
   approveScriptAnalysis,prepareAutomaticReferenceGallery,prepareProjectStyleBible,approveProjectStyleBible,freezeStyleBibleTask,importStyleBibleResult,
   registerOwnerReference,approveOwnerReference,publishStyleBibleReferences,
@@ -225,6 +225,8 @@ function registerIpc() {
   ipcMain.handle('external:pendingMedia', (_event, id: string) => getPendingMedia(app.getAppPath(), rootFor(id)));
   ipcMain.handle('external:fulfillMedia', async (_event, id: string, token:string, key:string, relative:string, rights:string,ownerReviewed?:true) => {const root=rootFor(id);await requireCurrentNativePlan(app.getAppPath(),root);if(key.startsWith('audio:')){const snapshot=soundInventory(app.getAppPath(),root);const source=readState(root).media?.find(row=>row.kind==='sfx'&&row.path===relative&&row.rights===rights.trim());if(!source)throw Error('SOUND_SOURCE_REQUIRED');const result=await bindSoundAssets(app.getAppPath(),root,{token,candidateSha:snapshot.candidateSha,ownerAuthorized:true,items:[{key,path:relative,sha256:source.sha256,rights:source.rights}]});if(result.results[0]?.status!=='BOUND')throw Error(result.results[0]?.detail??'Sound binding failed');return getPendingMedia(app.getAppPath(),root);}return fulfillMedia(app.getAppPath(),root,token,key,relative,rights,{ownerReviewed,decode:decodeGlabsImage});});
   ipcMain.handle('asset:reuse',(_event,id:string,input:Parameters<typeof bindApprovedReuse>[2])=>bindApprovedReuse(app.getAppPath(),rootFor(id),input,decodeGlabsImage));
+  ipcMain.handle('asset:reuseBatch',(_event,id:string,input:Parameters<typeof bindApprovedReuseBatch>[2])=>bindApprovedReuseBatch(app.getAppPath(),rootFor(id),input,decodeGlabsImage));
+  ipcMain.handle('sound:importBatch',async(_event,id:string,input:Omit<Parameters<typeof importSoundBatch>[2],'files'>)=>{const root=rootFor(id);if(input.ownerAuthorized!==true||!input.rights?.trim())throw Error('SOUND_BATCH_IMPORT_AUTHORITY_REQUIRED');const result=await dialog.showOpenDialog({properties:['openFile','multiSelections'],filters:[{name:'Audio',extensions:['wav','mp3','m4a','aac','ogg','flac']}]});return result.canceled?null:importSoundBatch(app.getAppPath(),root,{...input,files:result.filePaths});});
   ipcMain.handle('sound:inventory',(_event,id:string)=>soundInventory(app.getAppPath(),rootFor(id)));
   ipcMain.handle('sound:bindBatch',(_event,id:string,input:Parameters<typeof bindSoundAssets>[2])=>bindSoundAssets(app.getAppPath(),rootFor(id),input));
   ipcMain.handle('voice:captionReview', (_event, id: string) => getCaptionReview(rootFor(id)));

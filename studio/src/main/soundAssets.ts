@@ -11,10 +11,12 @@ export function soundInventory(appPath:string,root:string){
   if(!draft)return{token:'',candidateSha:'',cues:[],sources};
   const manifest=draft.artifact.manifest as Record<string,unknown>,pending=getPendingMedia(appPath,root)!;
   const cues=structuredSoundCues(manifest,draft.artifact.sound_script as unknown[]);
-  return{token:draft.token,candidateSha:draft.sha256,sources,
+  const verifiedSources=sources.filter(s=>{try{return sha(fs.readFileSync(resolveProjectFile(root,s.path)))===s.sha256;}catch{return false;}});
+  return{token:draft.token,candidateSha:draft.sha256,sources:verifiedSources,
     cues:manifestAudioTracks(manifest).map(row=>{
       const cue=cues.find(c=>c.key===row.key),missing=pending.missing.some(ref=>ref.key===row.key);
-      return{...row,cue:cue??null,status:row.sourceKind==='file'?(missing?'MISSING':'BOUND'):'ORIGINAL_CORE',path:typeof row.entry.path==='string'?row.entry.path:null};
+      const exact=cue?.reuse?verifiedSources.filter(s=>s.path===cue.reuse!.path&&s.sha256===cue.reuse!.sha256):verifiedSources.filter(s=>s.path===row.entry.path);
+      return{...row,cue:cue??null,status:row.sourceKind==='file'?(missing?'MISSING':'BOUND'):'ORIGINAL_CORE',path:typeof row.entry.path==='string'?row.entry.path:null,exactSource:exact.length===1?exact[0]:null};
     })};
 }
 async function probeAudio(appPath:string,file:string){
@@ -70,4 +72,17 @@ export async function bindSoundAssets(appPath:string,root:string,input:{token:st
     }
     return{results,inventory:soundInventory(appPath,root)};
   }finally{active.delete(root);}
+}
+
+export async function importSoundBatch(appPath:string,root:string,input:{token:string;candidateSha:string;rights:string;files:string[];ownerAuthorized:true}){
+ if(input.ownerAuthorized!==true||!input.rights?.trim()||!Array.isArray(input.files)||!input.files.length)throw Error('SOUND_BATCH_IMPORT_AUTHORITY_REQUIRED');
+ const before=soundInventory(appPath,root);if(before.token!==input.token||before.candidateSha!==input.candidateSha)throw Error('SOUND_BATCH_STALE');
+ const results:Array<{file:string;status:'IMPORTED'|'FAILED';detail:string}>=[];
+ for(const file of [...new Set(input.files)]){
+   try{await probeAudio(appPath,file);const current=soundInventory(appPath,root);if(current.token!==input.token||current.candidateSha!==input.candidateSha)throw Error('SOUND_BATCH_STALE');
+     const source=importMediaFile(root,file,'sfx',input.rights.trim());if(source.rights!==input.rights.trim())throw Error('SOUND_SOURCE_RIGHTS_MISMATCH');
+     results.push({file,status:'IMPORTED',detail:source.path});
+   }catch(error){results.push({file,status:'FAILED',detail:error instanceof Error?error.message:String(error)});}
+ }
+ return{results,inventory:soundInventory(appPath,root)};
 }
