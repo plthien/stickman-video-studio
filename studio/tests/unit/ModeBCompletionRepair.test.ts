@@ -1,6 +1,7 @@
 // @vitest-environment node
 import fs from 'node:fs';
 import path from 'node:path';
+import {spawnSync} from 'node:child_process';
 import {deflateSync,inflateSync} from 'node:zlib';
 import {afterEach,describe,expect,it} from 'vitest';
 import {appPath,cleanup,fixture,stageNative,wav} from './SixIssueFixtures';
@@ -95,6 +96,103 @@ function testIdentity(root:string,style:'B1'|'B2'|'B3'|'B4',actor:boolean,actorP
   const review={schema:'stickman-analysis-review-v1',project_id:script.projectId,analysis_sha256:contentHash(analysis),independent_review:true,findings:[],approved:true};
   atomicJson(path.join(root,'.studio/identity/workflow-v1.json'),{schema:'stickman-identity-workflow-v1',projectId:script.projectId,revision:1,currentTask:null,draftAnalysis:analysis,draftSha256:contentHash(analysis),independentReview:review,analysisApproved:{sha256:contentHash(analysis),approvedAt:new Date().toISOString(),reviewSha256:contentHash(review)},bible,bibleTextApproved:{sha256:bible.style_bible_sha256,approvedAt:new Date().toISOString()},referenceCandidates:candidates,referenceApprovalSet:publishApprovalSet(root,bible,candidates,1,decode),events:[]});
 }
+// B3-only engineering oracle. The fixed reference path is a sibling of the
+// rotating group; the off-centre orange rectangle cannot satisfy this oracle
+// by translating, changing captions, fading, or rotating around the origin.
+const b3Width=360,b3Height=640,b3Fps=15,b3Scale=b3Width/1280;
+const b3Samples=[
+  {frame:0,time:0,center:[660,680],size:[240,80]},
+  {frame:18,time:1.2,center:[440,860],size:[80,240]},
+  {frame:36,time:2.4,center:[260,640],size:[240,80]}
+] as const;
+function b3PivotShot(){
+  return {id:'shot-1',start:0,end:3,layers:[{id:'group',type:'group',x:400,y:600,pivotX:80,pivotY:80,children:[
+    {id:'nested',type:'group',x:20,y:20,pivotX:40,pivotY:40,angle:0,
+      keys:[{t:0,angle:0},{t:1.2,angle:Math.PI/2},{t:2.4,angle:Math.PI}],
+      motion:{role:'prop',reason:'Rotate asymmetric numeric artwork about its fixed local attachment'},
+      children:[{id:'local',type:'rect',x:120,y:20,w:240,h:80,fill:'#ff5500'}]},
+    {id:'path',type:'path',commands:[['M',60,36],['L',84,60],['L',60,84],['L',36,60],['Z']],fill:'#e9eaea'}
+  ]}]};
+}
+function assertB3PivotManifest(value:unknown){
+  const m=value as Record<string,unknown>;
+  expect(m).toMatchObject({style:'B3',width:b3Width,height:b3Height,fps:b3Fps,television:{enabled:false}});
+  // Compare the entire authored hierarchy, transforms, keyframes and motion
+  // metadata against a fresh expected value, not against the imported object.
+  expect(m.shots).toEqual([b3PivotShot()]);
+}
+type B3Ink={cx:number;cy:number;w:number;h:number;count:number};
+function b3Ink(rgb:Buffer,kind:'orange'|'anchor'):B3Ink{
+  expect(rgb.length,'B3 decoded RGB frame size').toBe(b3Width*b3Height*3);
+  let x0=b3Width,y0=b3Height,x1=-1,y1=-1,count=0;
+  // The complete swept artwork is in the upper half, far from the caption band.
+  for(let y=0;y<b3Height/2;y++)for(let x=0;x<b3Width;x++){
+    const i=(y*b3Width+x)*3,r=rgb[i],g=rgb[i+1],b=rgb[i+2];
+    const match=kind==='orange'?r>150&&r-g>70&&g-b>30:Math.min(r,g,b)>150&&Math.max(r,g,b)-Math.min(r,g,b)<35;
+    if(match){x0=Math.min(x0,x);y0=Math.min(y0,y);x1=Math.max(x1,x);y1=Math.max(y1,y);count++;}
+  }
+  expect(count,'B3 pivot '+kind+' visible ink').toBeGreaterThan(kind==='orange'?800:40);
+  return {cx:(x0+x1+1)/2,cy:(y0+y1+1)/2,w:x1-x0+1,h:y1-y0+1,count};
+}
+function assertB3PivotFrames(frames:Buffer[]){
+  expect(frames).toHaveLength(b3Samples.length);
+  return frames.map((rgb,i)=>{
+    const sample=b3Samples[i],rect=b3Ink(rgb,'orange'),anchor=b3Ink(rgb,'anchor');
+    const near=(actual:number,expected:number,label:string)=>expect(Math.abs(actual-expected),'B3 pivot '+label+' at '+sample.time+'s').toBeLessThanOrEqual(4);
+    // Expected cardinal-angle geometry is calculated independently of the
+    // renderer: world pivot (460,660), initial centre offset (+200,+20).
+    // At 90 degrees the long axis must become vertical, not just move.
+    near(rect.w,sample.size[0]*b3Scale,'rectangle width');
+    near(rect.h,sample.size[1]*b3Scale,'rectangle height');
+    near(rect.cx,sample.center[0]*b3Scale,'rectangle centre x');
+    near(rect.cy,sample.center[1]*b3Scale,'rectangle centre y');
+    near(anchor.cx,460*b3Scale,'stationary anchor x');
+    near(anchor.cy,660*b3Scale,'stationary anchor y');
+    near(anchor.w,48*b3Scale,'stationary anchor width');
+    near(anchor.h,48*b3Scale,'stationary anchor height');
+    return {frame:sample.frame,time:sample.time,rect,anchor};
+  });
+}
+function verifyB3PivotVideo(file:string){
+  // Decode actual Studio-produced MP4s by frame index (no seek rounding,
+  // no reconstructed frames). The installed Core uses the same FFMPEG setting.
+  const select=b3Samples.map(s=>'eq(n\\,'+s.frame+')').join('+');
+  const result=spawnSync(process.env.FFMPEG||'ffmpeg',['-v','error','-i',file,'-map','0:v:0','-vf','select='+select,'-vsync','0','-frames:v',String(b3Samples.length),'-threads','1','-f','rawvideo','-pix_fmt','rgb24','pipe:1'],{windowsHide:true,timeout:30000,maxBuffer:8*1024*1024});
+  expect(result.error).toBeUndefined();
+  expect(result.status,result.stderr?.toString('utf8')).toBe(0);
+  const stride=b3Width*b3Height*3;
+  expect(result.stdout.length).toBe(stride*b3Samples.length);
+  const measured=assertB3PivotFrames(b3Samples.map((_,i)=>result.stdout.subarray(i*stride,(i+1)*stride)));
+  console.info('B3 actual decoded pivot evidence',JSON.stringify({file,samples:measured}));
+}
+function assertB3PivotDiagnostics(report:{local_motion:{intervals:Array<{id:string;changed_pixels:number}>;windows:Array<{id:string;changed_pixels:number}>}}){
+  expect(report.local_motion.intervals.some(w=>w.id==='nested'&&w.changed_pixels>=8)).toBe(true);
+  expect(report.local_motion.windows.every(w=>w.id==='nested'&&w.changed_pixels>=8)).toBe(true);
+}
+// Synthetic negative controls exercise the exact same pixel oracle, not a
+// fabricated observation of an actual encoded output. In particular the
+// translation-only control visits the intended centres but never turns.
+describe('B3 pivot-specific oracle negative controls',()=>{
+  for(const kind of ['constant angle','pivot only','translation only'] as const)it('rejects '+kind,()=>{
+    const shot=b3PivotShot(),nested=shot.layers[0].children[0] as {keys?:Array<{t:number;angle?:number;x?:number;y?:number}>};
+    if(kind==='constant angle')nested.keys=[{t:0,angle:0},{t:1.2,angle:0},{t:2.4,angle:0}];
+    else if(kind==='pivot only')delete nested.keys;
+    else nested.keys=[{t:0,x:20,y:20},{t:1.2,x:-200,y:200},{t:2.4,x:-380,y:-20}];
+    expect(()=>assertB3PivotManifest({style:'B3',width:b3Width,height:b3Height,fps:b3Fps,television:{enabled:false},shots:[shot]})).toThrow();
+    const frames=b3Samples.map(sample=>{
+      const rgb=Buffer.alloc(b3Width*b3Height*3);
+      const fill=(cx:number,cy:number,w:number,h:number,color:number[])=>{
+        for(let y=Math.round((cy-h/2)*b3Scale);y<Math.round((cy+h/2)*b3Scale);y++)
+          for(let x=Math.round((cx-w/2)*b3Scale);x<Math.round((cx+w/2)*b3Scale);x++)rgb.set(color,(y*b3Width+x)*3);
+      };
+      const center=kind==='translation only'?sample.center:b3Samples[0].center;
+      fill(460,660,48,48,[233,234,234]);
+      fill(center[0],center[1],240,80,[255,85,0]);
+      return rgb;
+    });
+    expect(()=>assertB3PivotFrames(frames)).toThrow(/B3 pivot rectangle width at 1\.2s/);
+  });
+});
 const runtimeSuite=process.env.MODE_B_PRODUCTION_FIXTURES==='1'?describe:describe.skip;
 runtimeSuite('RF07 Original Core production-interface B1–B4 fixtures',()=>{
  for(const style of ['B1','B2','B3','B4'] as const)it(style+' staged Author + independent Review + preflight + approved media + FULL_READY + actual preview/full render',async()=>{
@@ -128,7 +226,8 @@ runtimeSuite('RF07 Original Core production-interface B1–B4 fixtures',()=>{
       {id:'prop',type:'image',path:p,x:250,y:700,w:140,h:140,keys:[{t:0,y:700},{t:3,y:1040}],motion:{role:'prop',reason:'Independent visible prop translation'}},
       {id:'prop2',type:'image',path:p2,x:750,y:700,w:120,h:120},{id:'prop3',type:'image',path:p3,x:970,y:700,w:120,h:120}]}];
   }else if(style==='B3'){
-    manifest.shots=[{id:'shot-1',start:0,end:seconds,layers:[{id:'group',type:'group',x:400,y:600,pivotX:80,pivotY:80,children:[{id:'nested',type:'group',x:20,y:20,pivotX:40,pivotY:40,children:[{id:'local',type:'rect',x:0,y:0,w:180,h:140,fill:'#ff5500',keys:[{t:0,x:0},{t:3,x:350}],motion:{role:'prop',reason:'Numeric artwork local translation'}}]},{id:'path',type:'path',commands:[['M',0,0],['L',100,80],['L',200,0]],stroke:'#e9eaea',lineWidth:9}]}]}];
+    manifest.television={enabled:false}; // Clean rotation evidence, as recommended by B3 runtime documentation.
+    manifest.shots=[b3PivotShot()];
   }else{
     const opaque:AssetOutput={composition:'composed',background:'opaque',preparation:'preserve',registration:'Same full canvas'};
     const scene=(open:boolean)=>art(144,256,(x,y)=>x>=100&&x<125&&y>=60&&y<145?(open?[60,80,185,255]:[65,65,65,255]):[32,31,30,255]);
@@ -151,6 +250,10 @@ runtimeSuite('RF07 Original Core production-interface B1–B4 fixtures',()=>{
     sound.push({cue_id:'cut',track:'audio_cuts',track_index:0,source_kind:'cut',source_requirement:'Intentional fixture silence except voice'});
   }
   const {response}=stageNative(root,{manifest,shot_ledger:[],sound_script:sound,asset_needs:needs});
+  if(style==='B3'){
+    assertB3PivotManifest(readNativeDraft(root)!.artifact.manifest);
+    expect(needs).toEqual([]);expect(getNativeImageGallery(appPath,root).targets).toEqual([]);
+  }
   confirmCleanNativeReview(root,appPath);
   expect((await inspectCurrentNativePlan(appPath,root))?.plan).toBe('PASS');
   const token=response.token,draft=readNativeDraft(root)!;
@@ -180,12 +283,14 @@ runtimeSuite('RF07 Original Core production-interface B1–B4 fixtures',()=>{
   await confirmImport(appPath,root,token,{fullProduction:true,allowSampleDraft:false,previewSeconds:seconds});
   expect(readState(root).nativeReadiness?.fullReady).toBe(true);
   assertPublishedIdentityCurrent(root,appPath,'FULL');
+  if(style==='B3')assertB3PivotManifest(JSON.parse(fs.readFileSync(path.join(root,'project.json'),'utf8')));
   await nativeJob(appPath,root,'preview',{seconds,replace:true});
   const preview=readState(root).preview!;
   expect(preview.sha256).toBe(sha(fs.readFileSync(path.join(root,preview.path))));
   const report=JSON.parse(fs.readFileSync(path.join(root,preview.reportPath),'utf8'));
   if(style==='B4'){expect(report.opening_visual.status).toBe('diagnostic_pass');expect(report.opening_audio.status).toBe('diagnostic_pass');}
   else {expect(report.local_motion.windows.length).toBeGreaterThan(0);expect(report.local_motion.windows.every((w:{changed_pixels:number})=>w.changed_pixels>=8)).toBe(true);}
+  if(style==='B3'){assertB3PivotDiagnostics(report);verifyB3PivotVideo(path.join(root,preview.path));}
   await expect(nativeJob(appPath,root,'approve',{reviewedSha256:'0'.repeat(64),attested:true,note:'Negative stale synthetic fixture'})).rejects.toThrow();
   await nativeJob(appPath,root,'approve',{reviewedSha256:preview.sha256,attested:true,note:'Synthetic engineering test approval; not owner production acceptance'});
   await nativeJob(appPath,root,'render',{replace:true});
@@ -193,5 +298,6 @@ runtimeSuite('RF07 Original Core production-interface B1–B4 fixtures',()=>{
   const full=JSON.parse(fs.readFileSync(path.join(root,film.reportPath),'utf8'));
   if(style==='B4')expect(full.opening_visual.status).toBe('diagnostic_pass');
   else expect(full.local_motion.windows.every((w:{changed_pixels:number})=>w.changed_pixels>=8)).toBe(true);
+  if(style==='B3'){assertB3PivotDiagnostics(full);verifyB3PivotVideo(path.join(root,film.path));}
  },600000);
 });
