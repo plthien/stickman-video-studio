@@ -199,7 +199,7 @@ export function approveCaptionReview(root:string,note:string,expectedSha?:string
   alignment.captionReview={revision,path:relative,sha256:sha(fs.readFileSync(resolveProjectFile(root,relative))),sourceSha256,note:note.trim(),approvedAt:new Date().toISOString(),mode:'MANUAL',...(draft.authorTaskId?{authorTaskId:draft.authorTaskId}:{})};
   alignment.captionDraft=undefined;
   if(state.tasks?.native)state.tasks.native.status='STALE';
-  state.preview=undefined;state.approval=undefined;state.render=undefined;
+  state.nativeReadiness=undefined;state.preview=undefined;state.approval=undefined;state.render=undefined;
   writeState(root,state);
   return { ...alignment.captionReview,cues };
 }

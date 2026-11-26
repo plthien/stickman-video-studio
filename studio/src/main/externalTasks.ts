@@ -998,7 +998,7 @@ export function fulfillMedia(appPath:string,root:string,token:string,key:string,
   try{atomicJson(pendingPath(root),pending);hooks.afterPending?.();writeState(root,state);hooks.afterState?.();fs.unlinkSync(fulfillmentTxnPath(root));return pendingResult(root,pending)}catch(error){atomicJson(pendingPath(root),pendingBefore);const rollback=readState(root);rollback.media=withoutOwnedMapping(rollback.media,mapped);writeState(root,rollback);if(fs.existsSync(fulfillmentTxnPath(root)))fs.unlinkSync(fulfillmentTxnPath(root));throw error}
 }
 type Validator=(exe:string,args:string[],options:{cwd:string})=>Promise<{code:number;stdout:string;stderr:string}>;
-export interface ConfirmOptions { previewSeconds?:number; allowSampleDraft?:boolean; validator?:Validator }
+export interface ConfirmOptions { previewSeconds?:number; allowSampleDraft?:boolean; fullProduction?:true; validator?:Validator }
 const checkedSeconds=(result:{code:number;stdout:string;stderr:string},label:string)=>{
   if(result.code!==0)throw new Error(result.stderr.trim()||result.stdout.trim()||'Original native '+label+' validator failed.');
   let proof:Record<string,unknown>;
@@ -1036,7 +1036,7 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
     if(latest.token!==pending.token||latest.payloadSha256!==pending.payloadSha256||JSON.stringify(latest.fulfillments)!==JSON.stringify(pending.fulfillments))throw Error('NATIVE_PLAN_STALE_DURING_VALIDATION');
   }
   const resolved=resolvePendingCandidate(root,state,pending);
-  if(!options.allowSampleDraft&&resolved.missing.length)throw Error('FULL_PRODUCTION_MEDIA_REQUIRED: '+resolved.missing.map(ref=>ref.key).join(', '));
+  if(options.fullProduction&&resolved.missing.length)throw Error('FULL_PRODUCTION_MEDIA_REQUIRED: '+resolved.missing.map(ref=>ref.key).join(', '));
   const missingInside=resolved.missing.filter(ref=>ref.scopeStart<seconds);
   if(missingInside.length)throw new Error('Missing media inside the selected sample: '+missingInside.map(item=>item.key).join(', '));
   const identitySampleReceipt=state.identityPolicy==='v1'?
@@ -1064,7 +1064,7 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
     if(!resolved.missing.length){
       const result=await runner(process.execPath,[cli,'validate',candidate],{cwd});
       if(result.code===0)full=checkedSeconds(result,'full-film');
-      else if(!options.allowSampleDraft)throw Error('FULL_PRODUCTION_VALIDATION_FAILED: '+(result.stderr.trim()||result.stdout.trim()||'Original full validator failed.'));
+      else if(options.fullProduction)throw Error('FULL_PRODUCTION_VALIDATION_FAILED: '+(result.stderr.trim()||result.stdout.trim()||'Original full validator failed.'));
     }
     if(!full&&!options.allowSampleDraft)throw new Error('Only SAMPLE_READY. Explicitly approve incomplete draft promotion; full-film is not ready.');
     const identityReceipt=full?identityFullReceipt:identitySampleReceipt;
@@ -1241,6 +1241,11 @@ export function approveCurrentScript(root:string,input:{sha256:string;revision:n
  if(input.ownerAuthorized!==true||!candidate||candidate.sha256!==input.sha256||candidate.revision!==input.revision||candidate.taskId!==input.taskId)throw Error('SCRIPT_APPROVAL_STALE');
  const corrected=state.lifecycle?.tasks['script:correct']?.id===candidate.taskId;
  if(!corrected&&state.tasks?.script?.status!=='IMPORTED')throw Error('SCRIPT_IMPORT_REQUIRED');
+ if(state.identityPolicy==='v1'){
+   const op=corrected?'recheck':'review',candidateSha=sha(JSON.stringify(candidate));
+   const report=Object.values(state.lifecycle?.artifacts??{}).filter(x=>x.stage==='script'&&x.operation===op&&(x.value as {artifact_sha256?:string}).artifact_sha256===candidateSha).sort((a,b)=>b.createdAt.localeCompare(a.createdAt))[0];
+   if(!report||report.status!=='REVIEWED_NO_FINDINGS'||report.artifactSha256!==sha(JSON.stringify(report.value)))throw Error('SCRIPT_INDEPENDENT_REVIEW_REQUIRED');
+ }
  if(activateScriptCandidate(root,state,corrected?'RECHECK':'AUTHOR_IMPORT',true))writeState(root,state);
  return state;
 }

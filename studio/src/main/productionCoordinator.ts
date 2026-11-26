@@ -46,13 +46,17 @@ async function derive(appPath:string,root:string,decode:IdentityDecoder):Promise
  const candidate=state.scriptCandidate;
  if(candidate&&(state.approvedScript?.sha256!==candidate.sha256||state.approvedScript?.revision!==candidate.revision)){
    const correct=state.lifecycle?.tasks['script:correct'];
-   if(correct?.id===candidate.taskId){
+   const op=correct?.id===candidate.taskId?'recheck':'review';
+   const candidateSha=sha(JSON.stringify(candidate));
+   const report=Object.values(state.lifecycle?.artifacts??{}).filter(x=>x.stage==='script'&&x.operation===op&&(x.value as {artifact_sha256?:string}).artifact_sha256===candidateSha).sort((a,b)=>b.createdAt.localeCompare(a.createdAt))[0];
+   if(!report){freezeLifecycleTask(appPath,root,'script',op,{});return next('SCRIPT_'+op.toUpperCase(),'Import independent Script '+op+'.','script',op);}
+   if(report.status==='REVIEWED_WITH_FINDINGS'){
      const scope=suggestedCorrectScope(root,state,'script');
      if(scope.findingIds.length){freezeLifecycleTask(appPath,root,'script','correct',scope);return next('SCRIPT_CORRECT','Import independent scoped correction.','script','correct');}
-     const recheck=state.lifecycle?.tasks['script:recheck'];
-     if(recheck?.status!=='IMPORTED'){freezeLifecycleTask(appPath,root,'script','recheck',{});return next('SCRIPT_RECHECK','Import independent Recheck.','script','recheck');}
+     return next('SCRIPT_BLOCKED','No supported correction scope; review the exact findings.','script',op);
    }
-   return next('SCRIPT_APPROVE','Review and approve current Script.','script');
+   if(report.status!=='REVIEWED_NO_FINDINGS')return next('SCRIPT_BLOCKED','Independent Script verdict is not clean.','script',op);
+   return next('SCRIPT_APPROVE','Approve current independently reviewed Script.','script');
  }
  if(!state.approvedScript){freezeTask(appPath,root,'script');return next('SCRIPT_AUTHOR','Copy frozen Script Author prompt and import result.','script','author');}
  let journal=readIdentityWorkflow(root);
@@ -118,7 +122,7 @@ async function derive(appPath:string,root:string,decode:IdentityDecoder):Promise
    const existing=state.lifecycle?.tasks['native:'+op];
    if(existing?.status==='FROZEN'&&existing.artifactSha256===draft.sha256&&existing.draftToken===draft.token)
      return next('NATIVE_'+op.toUpperCase(),'Original plan FAIL: '+plan.error+'; import independent technical repair assessment.','native',op);
-   if(report.taskId===existing?.id&&existing.status==='IMPORTED'){
+   if(existing&&report.taskId===existing.id&&existing.status==='IMPORTED'){
      const bytes=fs.readFileSync(resolveProjectFile(root,existing.promptPath));
      if(sha(bytes)!==existing.promptSha256)throw Error('NATIVE_TECHNICAL_REVIEW_PROMPT_TAMPERED');
      const prompt=bytes.toString('utf8');
@@ -131,7 +135,7 @@ async function derive(appPath:string,root:string,decode:IdentityDecoder):Promise
  const pending=getPendingMedia(appPath,root);
  if(!pending||pending.stage!=='native')throw Error('NATIVE_PENDING_MEDIA_REQUIRED');
  if(pending.missing.length)return next('ASSETS','Complete '+pending.missing.length+' required media target(s).');
- await confirmImport(appPath,root,pending.token,{allowSampleDraft:false});
+ await confirmImport(appPath,root,pending.token,{allowSampleDraft:false,fullProduction:true});
  return continueFullProduction(appPath,root);
 }
 export function advanceProduction(appPath:string,root:string,decode:IdentityDecoder):Promise<ProductionNext>{
