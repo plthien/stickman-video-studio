@@ -23,9 +23,10 @@ async function derive(appPath:string,root:string,decode:IdentityDecoder):Promise
  }
  if(!state.approvedScript){freezeTask(appPath,root,'script');return next('SCRIPT_AUTHOR','Copy frozen Script Author prompt and import result.','script','author');}
  let journal=readIdentityWorkflow(root);
- if(!journal.analysisApproved){
+ if(!journal.analysisApproved||journal.draftAnalysis?.source_script_sha256!==state.approvedScript.sha256){
    let op:'author'|'review'|'correct'|'recheck'='author';
    const task=journal.currentTask;
+   if(journal.draftAnalysis&&journal.draftAnalysis.source_script_sha256!==state.approvedScript.sha256){freezeIdentityTask(root,'author',journal.revision);return next('ANALYSIS_AUTHOR','Approved Script changed; import new analysis.','analysis','author');}
    if(task?.status==='FROZEN')op=task.task.operation;
    else if(task?.status==='IMPORTED'){
      if(task.task.operation==='author')op='review';

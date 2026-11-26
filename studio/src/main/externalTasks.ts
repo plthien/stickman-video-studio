@@ -940,6 +940,11 @@ export function fulfillMedia(appPath:string,root:string,token:string,key:string,
   if(ref.kind==='image'){
     const rows=(pending.payload as {assetNeeds:unknown[]}).assetNeeds??[];
     const target={shotId:ref.shotId??'',layerId:ref.layerId??'',path:ref.path};
+    const reuse=imageRequirementsForTarget(rows,target).effective.find(row=>Boolean((row.source as {reuse_approved?:unknown}|null)?.reuse_approved));
+    if(reuse){
+      const source=createContinuityResolver(appPath,root).resolve(key);
+      if(!source||source.path!==relative||source.sha256!==hash||hooks.ownerReviewed!==true||hooks.providerApproval===true)throw Error('ASSET_REUSE_EXACT_APPROVED_SOURCE_REQUIRED');
+    }
     const output=assetOutputForTarget(rows,target);
     const ratios=[...new Set(imageRequirementsForTarget(rows,target).effective.map(row=>row.orientation).filter(v=>['1:1','3:4','4:3','9:16','16:9'].includes(v)))];
     if(ratios.length>1)throw Error('ASSET_ORIENTATION_CONFLICT');

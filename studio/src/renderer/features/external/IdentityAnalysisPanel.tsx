@@ -32,7 +32,7 @@ export function IdentityAnalysisPanel({active=true,stageTabs}:{active?:boolean;s
   }));
   const remember=(projectId:string,journal:IdentityWorkflowStore)=>{
     const entry=journal.currentTask;
-    if(entry)patch(keyFor(projectId,entry.task.operation),{task:entry});
+    if(entry){patch(keyFor(projectId,entry.task.operation),{task:entry});if(entry.status==='FROZEN')setOperation(entry.task.operation);}
   };
   useLayoutEffect(()=>{
     sequence.current++;busyRef.current=false;setBusy(false);setSnapshot(null);
