@@ -8,6 +8,7 @@ import { compileAuthority,nativeAnimationDirection,nativeReferenceInventory,nati
 import {imageRequirementFingerprintSources,imageRequirementsForTarget} from './imageRequirements.js';
 import {assetOutputForTarget,verifyArtwork,verifyRatio} from './assetPreparation.js';
 import {inspectNativePlan,nativePlanPreflight} from './nativePlanPreflight.js';
+import {structuredSoundCues,assertAudioReceipt,type AudioPreparationReceipt} from './soundRequirements.js';
 import {readApprovedNativeIdentity,validateNativeBindingPayload} from './identity/nativeBinding.js';
 import {currentDraftIdentityReceipt,publishNativeIdentityReceipt,assertPublishedIdentityCurrent,readNativeIdentityReceipt} from './identity/finalGate.js';
 import {createContinuityResolver} from './identity/continuityGraph.js';
@@ -230,7 +231,7 @@ export function freezeTask(appPath: string, root: string, stage: Stage, rebuild 
 - Preserve native voice settings and the EXACT current approved caption cue array. Caption boundaries need not coincide with Shot boundaries. No fixed shot count, duration or one-Shot-per-caption rule.
 - Every manifest.shots[] entry MUST have a unique explicit stable id (for example sh_001); match that exact id in shot_ledger and sound_script target IDs. Studio cannot Review/Correct or map Shot/Layer media without explicit Shot IDs. Do not use implicit array indices as Shot IDs.
 - In shot_ledger explain each real shot_id's meaning, visible state, important delta, composition, continuity, motion and constraints using the existing auxiliary ledger format; do not place unsupported extra metadata in manifest.shots.
-- In sound_script place only justified real SFX/ambience intentions tied to actual targets/events; distinguish proposed sounds from existing assets.
+- In sound_script place only justified real SFX/ambience intentions tied to actual targets/events; distinguish proposed sounds from existing assets. Each executable audio cue may use the structured sidecar contract cue_id, track (sfx|ambience|dialogue|music|audio_cuts), track_index, source_kind (file|procedural|cut), source_requirement, optional preparation (preserve|pcm16), optional reuse {path,sha256}. Track/index must point to the actual manifest entry; timeline coordinates come from that entry. For music use index 0. Include precise role/line, material, timing and perspective in source_requirement; no new fields in original manifest audio tracks. Use reuse only for exact previously registered rights-cleared local source bytes; no invented hashes. Original procedural SFX and audio cuts need no external file.
 - For EVERY generated image, declare a real manifest.shots[] image layer with an immutable id and safe missing project-relative path. The corresponding asset_needs must name the SAME real Shot ID, layer ID and expected path using the accepted auxiliary format. Describe actual content, orientation and continuity references. Never claim the image exists or fabricate an asset SHA.
 - If upstream_character_authority is present (F24), EVERY managed Native image target MUST have exactly ONE STRUCTURED asset_needs row with shot_id, layer_id, expected_path, content, REQUIRED asset_kind (background|character|pose|prop|object|other), character_ids (explicit array). For asset_kind character or pose, character_ids MUST be nonempty and contain only canonical character IDs; background/character-free object may use []. Omitting asset_kind is never a valid fallback. Declare optional typed continuity_source {shot_id,layer_id,relation} only for a real earlier managed image. Core @b1/ built-ins are not paid-image targets. Only use canonical char_id values supplied by upstream_character_authority. Do NOT invent characters, omit a target, add identity fields to manifest/project.json, or use legacy string asset_needs for F24 targets. Review exact owner-approved canonical source and identity lineage SHA.
 - Cross-check complete story coverage, temporal order, shot/layer ids, motion feasibility, character/object continuity and every G-Labs-compatible frozen image target. Only actual imported assets with rights and matching SHA may be described as present.
@@ -391,6 +392,7 @@ export function validateManifest(state: StudioState, root: string,
     if(!appPath)throw Error('IDENTITY_NATIVE_APP_PATH_REQUIRED');
     validateNativeBindingPayload(root,appPath,manifest,payload.asset_needs as unknown[]);
   }
+  structuredSoundCues(manifest,payload.sound_script as unknown[]);
   return {manifest,shotLedger:payload.shot_ledger??[],soundScript:payload.sound_script??[],assetNeeds:payload.asset_needs??[],missing:collectMissing(root,state,manifest)};
 }
 interface PendingImport {
@@ -923,7 +925,7 @@ export function importMediaFile(root:string,source:string,kind:'image'|'sfx',rig
   // File import alone never claims native mapping and never corrupts a frozen task.
   writeState(root,state);return{...entry,status:'IMPORTED_UNASSIGNED'};
 }
-export function fulfillMedia(appPath:string,root:string,token:string,key:string,relative:string,rights:string,hooks:{afterPending?:()=>void;afterState?:()=>void;ownerReviewed?:true;providerApproval?:true;decode?:IdentityDecoder}={}){
+export function fulfillMedia(appPath:string,root:string,token:string,key:string,relative:string,rights:string,hooks:{afterPending?:()=>void;afterState?:()=>void;ownerReviewed?:true;providerApproval?:true;decode?:IdentityDecoder;audioReceipt?:AudioPreparationReceipt}={}){
   const pending=readPending(root),state=readState(root);
   if(pending.stage!=='native'||pending.projectId!==state.project.id||pending.token!==token)throw new Error('Project/pending token mismatch.');
   if(pending.taskId!==assertTaskCurrent(appPath,root,'native',state).id||pending.revision!==state.tasks?.native?.revision)throw new Error('Frozen task binding mismatch.');
@@ -946,6 +948,11 @@ export function fulfillMedia(appPath:string,root:string,token:string,key:string,
       if(ratios[0])verifyRatio(decoded,ratios[0]);
       if(output)verifyArtwork(decoded,output);
     }
+  }
+  if(ref.kind==='sfx'){
+    const rows=structuredSoundCues((pending.payload as {manifest:Record<string,unknown>}).manifest,(pending.payload as {soundScript:unknown[]}).soundScript??[]);
+    const cue=rows.find(row=>row.key===key);
+    if(cue||hooks.audioReceipt)assertAudioReceipt(root,state.project.id,pending.token,key,relative,hash,rights.trim(),cue,hooks.audioReceipt);
   }
   const binding={relative,sha256:hash,rights:rights.trim(),kind:ref.kind};
   const previous=pending.fulfillments[key];
@@ -971,7 +978,7 @@ export function fulfillMedia(appPath:string,root:string,token:string,key:string,
     ownerImageApproval={...body,approvalSha:contentHash(body)};
   }
   const mapped={...original,...(ref.kind==='image'?{shotId:ref.shotId,layerId:ref.layerId}:{track:ref.track,trackIndex:ref.trackIndex}),
-    ...(ownerImageApproval?{ownerImageApproval}:{})};
+    ...(ownerImageApproval?{ownerImageApproval}:{}),...(hooks.audioReceipt?{audioReceipt:hooks.audioReceipt}:{})};
   const pendingBefore=structuredClone(pending);state.media=[...(state.media??[]).filter(item=>!(item.path===relative&&item.shotId===ref.shotId&&item.layerId===ref.layerId&&item.track===ref.track&&item.trackIndex===ref.trackIndex)||
     Boolean(pending.publishedCorrection&&item.ownerImageApproval&&item.ownerImageApproval.approvalId!==ownerImageApproval?.approvalId)),mapped];
   pending.fulfillments[key]=binding;

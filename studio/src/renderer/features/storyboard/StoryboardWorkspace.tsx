@@ -3,6 +3,7 @@ import {useEffect,useLayoutEffect,useRef,useState} from 'react';
 import {useAppState} from '../../app/AppState';
 import {Badge,Button,Card,CardHeader} from '../../components/ui';
 import {LegacyStoryboardWorkspace} from './LegacyStoryboardWorkspace';
+import {SoundAssetsPanel} from './SoundAssetsPanel';
 import {ShotImageGallery,type GalleryTarget,type GalleryCard} from './ShotImageGallery';
 
 type Studio=NonNullable<Window['studio']>;
@@ -707,6 +708,7 @@ export function StoryboardWorkspace(){
         <div className="info">{prepared?.shotCount??shotIds.length} Shots · {prepared?.uniquePaths??new Set(imageTargets.map(item=>item.path)).size} distinct paths</div>
       </details>
     </Card>
+    <SoundAssetsPanel revision={native?.nativeDraft?.artifactSha256??''} refreshKey={pending?.missing.length??0} onBound={()=>void refresh()}/>
     <Card>
       <CardHeader title={shotId?shotId+' · Shot Image Gallery':'Shot Image Gallery'}/>
       <div className="storyboard-compact-toolbar">

@@ -17,6 +17,7 @@ import { importAlignedWords, importApprovedWav, longformStatus, runLongform, nar
 import { projectSnapshot } from './projectSnapshot.js';
 import {createProjectStaged} from './projectCreation.js';
 import {exportNativeReferencePackage} from './externalAuthority.js';
+import {soundInventory,bindSoundAssets} from './soundAssets.js';
 import {identityWorkflowSnapshot,freezeIdentityTask,importIdentityResult,
   approveScriptAnalysis,prepareAutomaticReferenceGallery,prepareProjectStyleBible,approveProjectStyleBible,freezeStyleBibleTask,importStyleBibleResult,
   registerOwnerReference,approveOwnerReference,publishStyleBibleReferences,
@@ -219,7 +220,9 @@ function registerIpc() {
   ipcMain.handle('external:stageLifecycle',(_event,id:string,stage:Stage,operation:'review'|'correct'|'recheck',text:string)=>stageLifecycleResult(app.getAppPath(),rootFor(id),stage,operation,text));
   ipcMain.handle('external:confirmLifecycle',async(_event,id:string,token:string,options?:{previewSeconds?:number;allowSampleDraft?:boolean})=>{const root=rootFor(id);await confirmLifecycleResult(app.getAppPath(),root,token,options);await inspectCurrentNativePlan(app.getAppPath(),root);return projectSnapshot(root,app.getAppPath())});
   ipcMain.handle('external:pendingMedia', (_event, id: string) => getPendingMedia(app.getAppPath(), rootFor(id)));
-  ipcMain.handle('external:fulfillMedia', async (_event, id: string, token:string, key:string, relative:string, rights:string,ownerReviewed?:true) => {const root=rootFor(id);await requireCurrentNativePlan(app.getAppPath(),root);return fulfillMedia(app.getAppPath(),root,token,key,relative,rights,{ownerReviewed,decode:decodeGlabsImage});});
+  ipcMain.handle('external:fulfillMedia', async (_event, id: string, token:string, key:string, relative:string, rights:string,ownerReviewed?:true) => {const root=rootFor(id);await requireCurrentNativePlan(app.getAppPath(),root);if(key.startsWith('audio:')){const snapshot=soundInventory(app.getAppPath(),root);const source=readState(root).media?.find(row=>row.kind==='sfx'&&row.path===relative&&row.rights===rights.trim());if(!source)throw Error('SOUND_SOURCE_REQUIRED');const result=await bindSoundAssets(app.getAppPath(),root,{token,candidateSha:snapshot.candidateSha,ownerAuthorized:true,items:[{key,path:relative,sha256:source.sha256,rights:source.rights}]});if(result.results[0]?.status!=='BOUND')throw Error(result.results[0]?.detail??'Sound binding failed');return getPendingMedia(app.getAppPath(),root);}return fulfillMedia(app.getAppPath(),root,token,key,relative,rights,{ownerReviewed,decode:decodeGlabsImage});});
+  ipcMain.handle('sound:inventory',(_event,id:string)=>soundInventory(app.getAppPath(),rootFor(id)));
+  ipcMain.handle('sound:bindBatch',(_event,id:string,input:Parameters<typeof bindSoundAssets>[2])=>bindSoundAssets(app.getAppPath(),rootFor(id),input));
   ipcMain.handle('voice:captionReview', (_event, id: string) => getCaptionReview(rootFor(id)));
   ipcMain.handle('voice:captionAuto',(_event,id:string)=>autoCaptionReview(rootFor(id)));
   ipcMain.handle('voice:captionAuthorFreeze',(_event,id:string)=>freezeCaptionAuthorTask(rootFor(id)));
