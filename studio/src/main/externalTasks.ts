@@ -633,7 +633,7 @@ export function publishNativeDraftCorrection(appPath:string,root:string,original
         draft.revision+1,newArtifact,key);
       if(oldIdentity.fingerprint!==newIdentity.fingerprint)return false;
     }else{
-      const oldCue=structuredSoundCues(draft.artifact.manifest,draft.artifact.sound_script as unknown[]).find(c=>c.key===key);
+      const oldCue=structuredSoundCues(draft.artifact.manifest as Record<string,unknown>,draft.artifact.sound_script as unknown[]).find(c=>c.key===key);
       const newCue=structuredSoundCues(normalized.manifest,normalized.soundScript as unknown[]).find(c=>c.key===key);
       if(JSON.stringify(oldCue??null)!==JSON.stringify(newCue??null))return false;
     }
