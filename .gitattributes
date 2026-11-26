@@ -1,0 +1,3 @@
+# B4's immutable style prompt is verified by raw SHA-256 in Original Core.
+# Preserve the exact committed bytes on checkout, including Windows autocrlf.
+/skills/directing-stickman-videos/assets/b4/style-lock.txt -text
