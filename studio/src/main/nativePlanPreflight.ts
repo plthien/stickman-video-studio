@@ -1,15 +1,17 @@
 /** Pre-media technical validation. Core owns motion and B3 geometry; never fabricate files. */
 import fs from 'node:fs';
 import path from 'node:path';
-import {spawnSync} from 'node:child_process';
-import {nativeSkillRoot,sha,subprocessEnvironment} from './services.js';
-const checked=new Map<string,true>();
+import {spawn} from 'node:child_process';
+import {nativeSkillRoot,sha,subprocessEnvironment,resolveProjectFile} from './services.js';
+export type PlanReport={plan:'PASS'|'FAIL'|'NOT_VERIFIED';media:'NOT_VERIFIED';renderedPixels:'NOT_VERIFIED';error?:string;candidateSha:string;authoritySha:string};
+const checked=new Map<string,PlanReport>(),inFlight=new Map<string,Promise<PlanReport>>();
 const run=String.raw`
 import fs from 'node:fs';
 import {ROOT,hashFile,mediaPath} from './scripts/autopilot-core.mjs';
 import {walkLayers,validateB3} from './scripts/b3-graphics.mjs';
 import {prepareBStyleQuality} from './scripts/b-style-quality.mjs';
 const {manifest:p,base,duration}=JSON.parse(fs.readFileSync(0,'utf8'));
+try{
 const number=(v,label,min=0,max=Infinity)=>{
   if(!Number.isFinite(v)||v<min||v>max)throw Error('Invalid '+label);
 };
@@ -38,6 +40,9 @@ for(const shot of p.shots){
       if(p.style!=='B3'&&['children','commands','radius','fill','stroke',...(!title?['pivotX','pivotY','scaleX','scaleY']:[])].some(k=>l[k]!==undefined))throw Error('B3 artwork properties cannot be used in another style');
       if(l.b4Hook!==undefined&&!title)throw Error('Fixed B4 hook typography belongs to B4 text only');
       if(l.type==='pose'&&(p.style!=='B1'||!Number.isInteger(l.pose)||l.pose<0||l.pose>2))throw Error('Invalid B1 pose atlas index or style');
+      if(l.type==='shadow'){number(l.w,'shadow width',1,10000);number(l.h,'shadow height',1,10000);}
+      if(l.type==='text'&&(typeof l.text!=='string'||!l.text.trim()||l.text.length>400))throw Error('Text layer must be 1–400 characters');
+      if(l.type==='line'&&(!Array.isArray(l.points)||l.points.length<2||l.points.some(pt=>!Array.isArray(pt)||pt.length!==2||pt.some(n=>!Number.isFinite(n)))))throw Error('Line requires finite [x,y] points');
       for(const k of ['x','y','w','h','size','angle','alpha','progress','lineWidth'])if(l[k]!==undefined)number(l[k],k,-10000,10000);
       if(l.w!==undefined&&l.w<=0||l.size!==undefined&&l.size<=0)throw Error('Layer dimensions must be positive');
       number(l.from??0,'layer from',0,span);number(l.to??span,'layer to',l.from??0,span);
@@ -59,20 +64,56 @@ for(const shot of p.shots){
 if(Math.abs(end-duration)>.06)throw Error('Shots do not cover accepted timeline duration');
 // Uses the exact original inactivity/geometry implementation, including B4 exclusion.
 prepareBStyleQuality({...p,base,rangeEnd:duration},{root:ROOT,hashFile,mediaPath});
-console.log(JSON.stringify({plan:'PASS',media:'NOT_VERIFIED',renderedPixels:'NOT_VERIFIED'}));
+console.log(JSON.stringify({plan:'PASS'}));
+}catch(error){console.log(JSON.stringify({plan:'FAIL',error:error instanceof Error?error.message:String(error)}));}
 `;
-export function nativePlanPreflight(appPath:string,root:string,manifest:unknown,duration:number){
+function inputs(appPath:string,root:string,manifest:unknown,duration:number,candidateSha=sha(JSON.stringify(manifest))){
   const skill=nativeSkillRoot(appPath).root;
   const input=JSON.stringify({manifest,base:root,duration});
   const core=['autopilot-core.mjs','b-style-quality.mjs','b-style-motion-geometry.mjs','b3-graphics.mjs'].map(name=>sha(fs.readFileSync(path.join(skill,'scripts',name))));
-  // Custom font bytes may change independently; never cache this case.
   const customFont=(manifest as {captionFont?:unknown})?.captionFont;
-  const key=sha(JSON.stringify({skill,input,core}));
-  if(!customFont&&checked.has(key))return {plan:'PASS' as const,media:'NOT_VERIFIED' as const,renderedPixels:'NOT_VERIFIED' as const};
-  const result=spawnSync(process.execPath,['--input-type=module','-e',run],{cwd:skill,env:subprocessEnvironment(process.execPath),input,encoding:'utf8',windowsHide:true,timeout:30000,maxBuffer:2*1024*1024});
-  if(result.error||result.status!==0)throw Error(result.error?.message||result.stderr.trim()||'Original plan validation could not execute');
-  const report=JSON.parse(result.stdout.trim());
-  if(report.plan!=='PASS'||report.media!=='NOT_VERIFIED'||report.renderedPixels!=='NOT_VERIFIED')throw Error('Invalid plan evidence');
-  if(!customFont){if(checked.size>=32)checked.clear();checked.set(key,true);}
-  return {plan:'PASS' as const,media:'NOT_VERIFIED' as const,renderedPixels:'NOT_VERIFIED' as const};
+  const fontSha=typeof customFont==='string'?sha(fs.readFileSync(resolveProjectFile(root,customFont))):null;
+  const authoritySha=sha(JSON.stringify({core,fontSha,validator:sha(run),bundledFont:sha(fs.readFileSync(path.join(skill,'assets/fonts/NotoSans.ttf')))}));
+  const key=sha(JSON.stringify({skill,input,candidateSha,authoritySha}));
+  return{skill,input,key,candidateSha,authoritySha};
+}
+export function cachedNativePlan(appPath:string,root:string,manifest:unknown,duration:number,candidateSha?:string){
+  try{return checked.get(inputs(appPath,root,manifest,duration,candidateSha).key)??null;}catch{return null;}
+}
+export function inspectNativePlan(appPath:string,root:string,manifest:unknown,duration:number,candidateSha?:string):Promise<PlanReport>{
+  let v:ReturnType<typeof inputs>;
+  try{v=inputs(appPath,root,manifest,duration,candidateSha);}catch(e){return Promise.resolve({plan:'NOT_VERIFIED',media:'NOT_VERIFIED',renderedPixels:'NOT_VERIFIED',candidateSha:candidateSha??sha(JSON.stringify(manifest)),authoritySha:'',error:e instanceof Error?e.message:String(e)});}
+  const existing=checked.get(v.key);if(existing)return Promise.resolve(existing);
+  const active=inFlight.get(v.key);if(active)return active;
+  const promise=new Promise<PlanReport>(resolve=>{
+    const base={candidateSha:v.candidateSha,authoritySha:v.authoritySha,media:'NOT_VERIFIED' as const,renderedPixels:'NOT_VERIFIED' as const};
+    let child:ReturnType<typeof spawn>;
+    try{child=spawn(process.execPath,['--input-type=module','-e',run],{cwd:v.skill,env:subprocessEnvironment(process.execPath),windowsHide:true,stdio:['pipe','pipe','pipe']});}
+    catch(e){resolve({...base,plan:'NOT_VERIFIED',error:String(e)});return;}
+    let stdout='',stderr='',done=false;
+    const finish=(report:PlanReport)=>{if(done)return;done=true;clearTimeout(timer);resolve(report);};
+    const timer=setTimeout(()=>{child.kill();finish({...base,plan:'NOT_VERIFIED',error:'Original plan validator timed out'});},30000);
+    child.stdout?.on('data',(c:Buffer)=>{stdout=(stdout+c.toString('utf8')).slice(-2*1024*1024);});
+    child.stderr?.on('data',(c:Buffer)=>{stderr=(stderr+c.toString('utf8')).slice(-12000);});
+    child.on('error',e=>finish({...base,plan:'NOT_VERIFIED',error:e.message}));
+    child.stdin?.on('error',e=>finish({...base,plan:'NOT_VERIFIED',error:e.message}));
+    child.on('close',code=>{
+      try{
+        if(code!==0)throw Error(stderr||'Original plan validator unavailable');
+        const result=JSON.parse(stdout.trim());
+        if(result.plan!=='PASS'&&result.plan!=='FAIL')throw Error('Invalid plan evidence');
+        finish({...base,plan:result.plan,...(result.plan==='FAIL'?{error:String(result.error)}:{})});
+      }catch(e){finish({...base,plan:'NOT_VERIFIED',error:e instanceof Error?e.message:String(e)});}
+    });
+    child.stdin?.end(v.input);
+  }).then(report=>{
+    if(report.plan!=='NOT_VERIFIED'){if(checked.size>=64)checked.clear();checked.set(v.key,report);}
+    return report;
+  }).finally(()=>inFlight.delete(v.key));
+  inFlight.set(v.key,promise);return promise;
+}
+export async function nativePlanPreflight(appPath:string,root:string,manifest:unknown,duration:number,candidateSha?:string){
+  const report=await inspectNativePlan(appPath,root,manifest,duration,candidateSha);
+  if(report.plan!=='PASS')throw Error('NATIVE_PLAN_'+report.plan+' ['+report.candidateSha+']: '+report.error);
+  return report;
 }

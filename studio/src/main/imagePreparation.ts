@@ -7,7 +7,7 @@ import {assetOutputForTarget,assetOutputPrompt,type AssetOutput} from './assetPr
 import {createContinuityResolver} from './identity/continuityGraph.js';
 import {contentHash} from './identity/contracts.js';
 import {nativeSkillRoot,readState,resolveProjectFile,sha,atomicJson,strictJson} from './services.js';
-import {nativePlanPreflight} from './nativePlanPreflight.js';
+import {cachedNativePlan,type PlanReport} from './nativePlanPreflight.js';
 import {nativeVoiceTiming} from './captionReview.js';
 
 type Row=Record<string,unknown>;
@@ -355,14 +355,9 @@ function gateCreativeAuthority(state:ReturnType<typeof readState>,draft:NonNulla
     return item;
   }catch(error){return {...item,state:'BLOCKED',reason:error instanceof Error?error.message:String(error)};}
 }
-function gatePlan(appPath:string,root:string,state:ReturnType<typeof readState>,draft:NonNullable<ReturnType<typeof readNativeDraft>>,item:ImageJobSpec):ImageJobSpec{
-  if(state.identityPolicy!=='v1'||item.state!=='READY')return item;
-  try{
-    nativePlanPreflight(appPath,root,draft.artifact.manifest,nativeVoiceTiming(root,state).timelineDuration);
-    return item;
-  }catch(error){
-    return {...item,state:'BLOCKED',reason:'NATIVE_PLAN_PREFLIGHT ['+draft.sha256+']: '+(error instanceof Error?error.message:String(error))};
-  }
+function gatePlan(report:PlanReport|null,item:ImageJobSpec):ImageJobSpec{
+  if(!report||report.plan==='PASS'||item.state!=='READY')return item;
+  return {...item,state:'BLOCKED',reason:'NATIVE_PLAN_'+report.plan+' ['+report.candidateSha+']: '+report.error};
 }
 export function prepareNativeImages(appPath:string,root:string,persist=false){
   const state=readState(root),draft=readNativeDraft(root,state),pending=getPendingMedia(appPath,root);
@@ -378,9 +373,10 @@ export function prepareNativeImages(appPath:string,root:string,persist=false){
   const profile=loadImageStyleProfile(appPath,style);
   const resolver=state.identityPolicy==='v1'?
     createContinuityResolver(appPath,root):undefined;
+  const report=state.identityPolicy==='v1'?cachedNativePlan(appPath,root,draft.artifact.manifest,nativeVoiceTiming(root,state).timelineDuration,draft.sha256):null;
   const jobs=compileImageJobSpecs({projectId:state.project.id,style,authorTaskId:draft.authorTaskId,draftRevision:draft.revision,
     token:draft.token,pending,profile,fingerprints,overrides:overrides.items})
-    .map(job=>gatePlan(appPath,root,state,draft,gateCreativeAuthority(state,draft,resolver?withUpstreamIdentity(appPath,root,job,resolver):job)));
+    .map(job=>gatePlan(report,gateCreativeAuthority(state,draft,resolver?withUpstreamIdentity(appPath,root,job,resolver):job)));
   const result={status:'PRE_MEDIA_PROJECTION' as const,style,revision:draft.revision,token:draft.token,
     jobs,shotCount:Array.isArray(pending.after?.shots)?pending.after!.shots!.length:0,imageOccurrences:image.length,
     uniquePaths:new Set(image.map(target=>target.path)).size};
@@ -416,7 +412,7 @@ export function prepareNativeImageTarget(appPath:string,root:string,targetKey:st
   })[0];
   if(!candidate)return null;
   const prepared=withUpstreamIdentity(appPath,root,candidate);
-  return options.historicalJob?prepared:gatePlan(appPath,root,state,draft,gateCreativeAuthority(state,draft,prepared));
+  return options.historicalJob?prepared:gateCreativeAuthority(state,draft,prepared);
 }
 export function saveNativeImagePrompt(appPath:string,root:string,input:{
   targetKey:string;fingerprint:string;styleSha256?:string;prompt:string;references:string[];ownerReviewed?:true

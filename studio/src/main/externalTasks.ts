@@ -7,6 +7,7 @@ import { rejectNativeUnsafePaths, validateAuthoring } from './sourceCitations.js
 import { compileAuthority,nativeAnimationDirection,nativeReferenceInventory,nativeReferenceInstructions } from './externalAuthority.js';
 import {imageRequirementFingerprintSources,imageRequirementsForTarget} from './imageRequirements.js';
 import {assetOutputForTarget,verifyArtwork,verifyRatio} from './assetPreparation.js';
+import {inspectNativePlan,nativePlanPreflight} from './nativePlanPreflight.js';
 import {readApprovedNativeIdentity,validateNativeBindingPayload} from './identity/nativeBinding.js';
 import {currentDraftIdentityReceipt,publishNativeIdentityReceipt,assertPublishedIdentityCurrent,readNativeIdentityReceipt} from './identity/finalGate.js';
 import {createContinuityResolver} from './identity/continuityGraph.js';
@@ -486,6 +487,18 @@ export function readNativeDraft(root:string,state=readState(root)){
   return{context:'DRAFT' as const,token:pending.token,authorTaskId:pending.taskId,
     revision:1+(pending.draftHistory?.length??0),artifact,sha256:sha(JSON.stringify(artifact)),
     history:pending.draftHistory??[],...(pending.publishedCorrection?{publishedCorrectionTaskId:pending.publishedCorrection.correctTaskId}:{})};
+}
+export async function inspectCurrentNativePlan(appPath:string,root:string){
+  const state=readState(root),draft=readNativeDraft(root,state);
+  if(!draft||state.identityPolicy!=='v1')return null;
+  const report=await inspectNativePlan(appPath,root,draft.artifact.manifest,nativeVoiceTiming(root,state).timelineDuration,draft.sha256);
+  if(readNativeDraft(root)?.sha256!==draft.sha256)throw Error('NATIVE_PLAN_STALE_DURING_VALIDATION');
+  return report;
+}
+export async function requireCurrentNativePlan(appPath:string,root:string){
+  const report=await inspectCurrentNativePlan(appPath,root);
+  if(report&&report.plan!=='PASS')throw Error('NATIVE_PLAN_'+report.plan+' ['+report.candidateSha+']: '+report.error);
+  return report;
 }
 /** Creative authority is a confirmed independent review, not a structural validator.
  * Bind the verdict to the complete current artifact and original Author task. */
@@ -997,6 +1010,12 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
     fs.unlinkSync(pendingPath(root));return state;
   }
   const seconds=validateSeconds(options.previewSeconds);
+  if(state.identityPolicy==='v1'){
+    const draft=readNativeDraft(root,state)!;
+    await nativePlanPreflight(appPath,root,draft.artifact.manifest,nativeVoiceTiming(root,state).timelineDuration,draft.sha256);
+    const latest=readPending(root);
+    if(latest.token!==pending.token||latest.payloadSha256!==pending.payloadSha256||JSON.stringify(latest.fulfillments)!==JSON.stringify(pending.fulfillments))throw Error('NATIVE_PLAN_STALE_DURING_VALIDATION');
+  }
   const resolved=resolvePendingCandidate(root,state,pending);
   const missingInside=resolved.missing.filter(ref=>ref.scopeStart<seconds);
   if(missingInside.length)throw new Error('Missing media inside the selected sample: '+missingInside.map(item=>item.key).join(', '));

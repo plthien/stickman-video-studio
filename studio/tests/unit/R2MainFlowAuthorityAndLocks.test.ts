@@ -155,18 +155,18 @@ describe('Original pre-media plan checks',()=>{
   const manifest=(style:string,keys:unknown[])=>({version:1,style,width:1080,height:1920,fps:30,
     shots:[{id:'shot-1',start:0,end:3,layers:[{id:'actor-1',type:'image',path:'assets/images/not-yet-generated.png',w:300,h:400,x:100,y:100,
       motion:{role:'actor',reason:'Approaches the door'},keys}]}]});
-  it('rejects original B1 inactivity before image generation, without fake assets',()=>{
-    expect(()=>nativePlanPreflight(app,app,manifest('B1',[{t:0,x:100},{t:3,x:100}]),3)).toThrow(/principal picture inactive/);
+  it('rejects original B1 inactivity before image generation, without fake assets',async()=>{
+    await expect(nativePlanPreflight(app,app,manifest('B1',[{t:0,x:100},{t:3,x:100}]),3)).rejects.toThrow(/principal picture inactive/);
   });
-  it('runs original plan checks but never claims rendered pixel verification',()=>{
-    expect(nativePlanPreflight(app,app,manifest('B1',[{t:0,x:100},{t:3,x:300}]),3))
-      .toEqual({plan:'PASS',media:'NOT_VERIFIED',renderedPixels:'NOT_VERIFIED'});
+  it('runs original plan checks but never claims rendered pixel verification',async()=>{
+    expect(await nativePlanPreflight(app,app,manifest('B1',[{t:0,x:100},{t:3,x:300}]),3))
+      .toMatchObject({plan:'PASS',media:'NOT_VERIFIED',renderedPixels:'NOT_VERIFIED'});
   });
-  it('rejects unsupported keyframe grammar',()=>{
-    expect(()=>nativePlanPreflight(app,app,manifest('B2',[{t:0,rotation:0}]),3)).toThrow(/Unsupported keyframe property/);
+  it('rejects unsupported keyframe grammar',async()=>{
+    await expect(nativePlanPreflight(app,app,manifest('B2',[{t:0,rotation:0}]),3)).rejects.toThrow(/Unsupported keyframe property/);
   });
-  it('preserves B4 inactivity exception',()=>{
-    expect(nativePlanPreflight(app,app,manifest('B4',[]),3).renderedPixels).toBe('NOT_VERIFIED');
+  it('preserves B4 inactivity exception',async()=>{
+    expect((await nativePlanPreflight(app,app,manifest('B4',[]),3)).renderedPixels).toBe('NOT_VERIFIED');
   });
 });
 describe('B4 accepted narrator provenance',()=>{

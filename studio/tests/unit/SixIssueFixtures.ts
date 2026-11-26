@@ -39,7 +39,9 @@ export function nativePayload(root:string,opts:{image?:'early'|'late'|'both';sam
     {id:'shot-1',start:0,end:20,layers:opts.image==='early'||opts.image==='both'?[{id:'image-1',type:'image',path:opts.unsafe??'assets/images/missing.png'}]:[{id:'text-1',type:'text',text:'First in-scope shot'}]},
     {id:'shot-2',start:20,end:30,layers:opts.image==='late'||opts.image==='both'?[{id:'image-2',type:'image',path:opts.sameBasename?'assets/images/missing.png':'assets/images/late.png'}]:[{id:'text-2',type:'text',text:'Second shot'}]}
   ];
-  return {manifest:{version:1,style:readState(root).project.style,width:1080,height:1920,fps:30,voice:{path:voicePath},captions:cues,shots,sfx:opts.sfx?[{kind:'file',path:opts.unsafe??'assets/sfx/missing.wav',time:22,gain:.1}]:[]},shot_ledger:[],sound_script:[],asset_needs:[]};
+  const style=readState(root).project.style;
+  if(style!=='B4')for(const shot of shots){const layers=shot.layers as Record<string,unknown>[],span=Number(shot.end)-Number(shot.start);layers.push({id:'test-motion-'+shot.id,type:'line',points:[[0,0],[50,0]],x:50,y:50,progress:0,motion:{role:'information',reason:'Engineering fixture visible line drawing'},keys:[{t:0,progress:0},{t:span,progress:1}]});}
+  return {manifest:{version:1,style,width:1080,height:1920,fps:30,voice:{path:voicePath},captions:cues,shots,sfx:opts.sfx?[{kind:'file',path:opts.unsafe??'assets/sfx/missing.wav',time:22,gain:.1}]:[]},shot_ledger:[],sound_script:[],asset_needs:[]};
 }
 export function frozenEnvelope(root:string,stage:'script'|'native',payload:unknown){
   const task=freezeTask(appPath,root,stage);

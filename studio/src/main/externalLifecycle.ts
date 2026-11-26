@@ -5,6 +5,7 @@ import {atomicJson,inspectWavBuffer,readState,resolveProjectFile,sha,strictJson,
 import {readApprovedNativeIdentity} from './identity/nativeBinding.js';
 import {compileAuthority,nativeAnimationDirection,nativeReferenceInstructions} from './externalAuthority.js';
 import {getCaptionReview,nativeVoiceTiming} from './captionReview.js';
+import {cachedNativePlan} from './nativePlanPreflight.js';
 import {alignmentText} from './alignment.js';
 import {invalidateGlabsJobsAfterNativeCorrection} from './glabs.js';
 import {rejectNativeUnsafePaths,validateAuthoring} from './sourceCitations.js';
@@ -762,7 +763,7 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
     throw new Error('REBUILD_REQUIRED: original frozen author task is unavailable for independent review/correction.');
   const originalTask=fs.readFileSync(resolveProjectFile(root,ownerTask.promptPath),'utf8');
   if(ownerTask.promptSha256!==sha(originalTask))throw new Error('REBUILD_REQUIRED: original frozen author task was modified.');
-  const evidencePack=operation==='media-review'?evidence(root,state,scope):{status:'NOT_APPLICABLE',modalities:[],ranges:[],files:[]};
+  const evidencePack=operation==='media-review'?evidence(root,state,scope):{status:'NOT_APPLICABLE',modalities:[],ranges:[],files:[],...(stage==='native'&&artifact.context==='DRAFT'?{technical_plan:cachedNativePlan(appPath,root,(artifact.value as {manifest:unknown}).manifest,nativeVoiceTiming(root,state).timelineDuration,artifact.sha256),technical_plan_instruction:'Machine validation is not an independent Review verdict. Inspect exact current artifact; identify supported findings or request explicit structural reissue if the existing Correct scope cannot repair the error.'}:{})};
   let mediaTransferAttested=false,mediaSha256s:string[]=[],mediaDuration:number|undefined;
   if(operation==='media-review'){
     const listed=evidencePack.files as Array<{path:string;sha256:string}>;

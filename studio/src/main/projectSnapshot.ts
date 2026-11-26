@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {getCaptionReview} from './captionReview.js';
 import {suggestedCorrectScope} from './externalLifecycle.js';
-import {readNativeDraft} from './externalTasks.js';
+import {readNativeDraft,inspectCurrentNativePlan} from './externalTasks.js';
 import {verifyPersistedNativeEvidence,type NativeVerificationAdapter} from './nativeEvidence.js';
 import {assertLocalRoot,readState,resolveProjectFile,sha,strictJson} from './services.js';
 import {identityWorkflowSnapshot} from './identity/identityWorkflow.js';
@@ -44,6 +44,7 @@ export async function projectSnapshot(root:string,appPath:string,verifier?:Nativ
       nativeDraftRecovery='NATIVE_DRAFT_STALE_AUTHOR_TASK';
     else throw error; // Integrity/tamper and transaction errors are not recoverable warnings.
   }
+  const planReport=nativeDraft?await inspectCurrentNativePlan(appPath,projectRoot):null;
   const draftReports=nativeDraft?Object.values(state.lifecycle?.artifacts??{}).filter(item=>
     item.stage==='native'&&item.artifactContext==='DRAFT'&&
     item.draftAuthorTaskId===nativeDraft.authorTaskId&&item.draftToken===nativeDraft.token&&
@@ -81,7 +82,8 @@ export async function projectSnapshot(root:string,appPath:string,verifier?:Nativ
       revision:nativeDraft.revision,artifactSha256:nativeDraft.sha256,
       reviewStatus:latestDraftReview?.status??'NOT_REVIEWED',
       unresolvedFindings:currentFindings.filter(item=>item.status==='open'||item.status==='uncertain').length,
-      readyForMedia:latestDraftReview?.status==='REVIEWED_NO_FINDINGS'}:null,
+      planReport,
+      readyForMedia:latestDraftReview?.status==='REVIEWED_NO_FINDINGS'&&(!planReport||planReport.plan==='PASS')}:null,
     suggestedCorrectScope:{script:suggestedCorrectScope(projectRoot,state,'script'),
       native:suggestedCorrectScope(projectRoot,state,'native',nativeDraft?'DRAFT':'PUBLISHED'),
       nativePublished:state.external.native?suggestedCorrectScope(projectRoot,state,'native','PUBLISHED'):undefined}};

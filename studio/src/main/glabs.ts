@@ -5,6 +5,7 @@ import {randomUUID} from 'node:crypto';
 import {performance} from 'node:perf_hooks';
 import type {CredentialCipher} from './elevenlabsCredentials.js';
 import {getPendingMedia,importMediaFile,fulfillMedia,nativeImageTargetIdentity,readNativeDraft} from './externalTasks.js';
+import {requireCurrentNativePlan} from './externalTasks.js';
 import {prepareNativeImageTarget,loadImageStyleProfile} from './imagePreparation.js';
 import {prepareArtwork,verifyArtwork,assertPreparedLineage,type AssetOutput,type AssetDecoder,type AssetPreparationReceipt} from './assetPreparation.js';
 import {atomicJson,nativeSkillRoot,readState,resolveProjectFile,sha,strictJson} from './services.js';
@@ -389,6 +390,7 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
   if(input.authorized!==true)throw new Error('GLABS_PAID_SUBMISSION_REQUIRES_EXPLICIT_OWNER_AUTHORIZATION');
   if(typeof input.prompt!=='string'||input.prompt.trim().length<12||input.prompt.length>18000)
     throw new Error('GLABS_PROMPT_REQUIRED: owner must confirm an actual image requirement.');
+  await requireCurrentNativePlan(appPath,root);
   const prepared=assertPreparedImageRequest(appPath,root,input);
   // Owner prompt is an editable description; for prepared Native image jobs
   // the authoritative selected B1–B4 guidance is independently composed.
@@ -468,6 +470,7 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
   try{
     // The initial read occurred before the asynchronous health/auth probe.
     // Re-check inside the local job lock so concurrent callers cannot send two paid POSTs.
+    await requireCurrentNativePlan(appPath,root);
     assertJobTarget(appPath,root,job);
     assertPreparedImageRequest(appPath,root,input);
     const latest=listGlabsJobs(root).filter(j=>j.token===job.token&&j.targetKey===job.targetKey);
