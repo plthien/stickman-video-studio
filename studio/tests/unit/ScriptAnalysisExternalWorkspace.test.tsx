@@ -67,6 +67,7 @@ const editor=()=>screen.getByLabelText('Script Analysis JSON result');
 const genericEditor=()=>screen.getByRole('textbox',{name:'Import JSON'});
 const enter=async()=>{
   click('Script Analysis');
+  const recovery=screen.getByText('Advanced task recovery').closest('details');if(recovery)recovery.open=true;
   await waitFor(()=>expect(screen.getByRole('button',{name:'Build Task'})).toBeEnabled());
 };
 const selectFile=(contents:string)=>fireEvent.change(screen.getByLabelText('Choose JSON file'),{
