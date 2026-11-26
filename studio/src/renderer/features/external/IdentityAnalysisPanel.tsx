@@ -160,10 +160,10 @@ export function IdentityAnalysisPanel({active=true,stageTabs}:{active?:boolean;s
         </div>}
       </div>}
       <div className="external-task-toolbar" role="toolbar" aria-label="External task controls">
-        <div className="actions external-task-build-actions">
+        <details open={snapshot?.policy!=='v1'}><summary>Advanced task recovery</summary><div className="actions external-task-build-actions">
           <Button disabled={!ready} onClick={()=>build(false)}>Build Task</Button>
           {canRebuild&&<Button disabled={!ready} onClick={()=>build(true)}>Rebuild Task</Button>}
-        </div>
+        </div></details>
         <div className="actions external-task-export-actions">
           <Button variant="primary" disabled={!entry?.task.prompt} onClick={copy}>Copy prompt</Button>
           <Button disabled={!entry?.task.prompt} onClick={exportPrompt}>Export .md</Button>

@@ -91,7 +91,7 @@ async function derive(appPath:string,root:string,decode:IdentityDecoder):Promise
    if(state.tasks?.native?.status==='IMPORTED'&&state.nativeReadiness?.fullReady){
      return continueFullProduction(appPath,root);
    }
-   if(state.tasks?.native?.status==='IMPORTED')return next('NATIVE_RECOVERY','Historical incomplete publication: explicitly reissue Native Author for Full Production; existing licensed assets are retained.','native');
+   if(state.tasks?.native?.status==='IMPORTED')return next('NATIVE_RECOVERY','Historical incomplete publication: explicitly reissue Native Author for Full Production; existing licensed assets are retained.','native','author');
    freezeTask(appPath,root,'native');return next('NATIVE_AUTHOR','Copy frozen Native Author prompt and import result.','native','author');
  }
  const plan=await inspectCurrentNativePlan(appPath,root);
@@ -119,7 +119,10 @@ async function derive(appPath:string,root:string,decode:IdentityDecoder):Promise
    if(existing?.status==='FROZEN'&&existing.artifactSha256===draft.sha256&&existing.draftToken===draft.token)
      return next('NATIVE_'+op.toUpperCase(),'Original plan FAIL: '+plan.error+'; import independent technical repair assessment.','native',op);
    if(report.taskId===existing?.id&&existing.status==='IMPORTED'){
-     return next('NATIVE_REISSUE','Original plan FAIL: '+plan.error+'; clean independent verdict provides no authorized correction. Explicitly reissue Native Author.','native','author');
+     const bytes=fs.readFileSync(resolveProjectFile(root,existing.promptPath));
+     if(sha(bytes)!==existing.promptSha256)throw Error('NATIVE_TECHNICAL_REVIEW_PROMPT_TAMPERED');
+     const prompt=bytes.toString('utf8');
+     if(prompt.includes(plan.candidateSha)&&prompt.includes(JSON.stringify(plan.error).slice(1,-1)))return next('NATIVE_REISSUE','Original plan FAIL: '+plan.error+'; clean independent verdict provides no authorized correction. Explicitly reissue Native Author.','native','author');
    }
    freezeLifecycleTask(appPath,root,'native',op,{targetContext:'DRAFT'});
    return next('NATIVE_'+op.toUpperCase(),'Original plan FAIL: '+plan.error+'; import independent technical repair assessment.','native',op);

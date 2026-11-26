@@ -8,6 +8,7 @@ import {prepareArtwork,verifyArtwork,assertPreparedLineage,verifyRatio,type Asse
 import {inspectNativePlan} from '../../src/main/nativePlanPreflight';
 import {readState,writeState,sha,repairB4Narrator} from '../../src/main/services';
 import {structuredSoundCues} from '../../src/main/soundRequirements';
+import {autoCaptionReview,ensureCaptionAuthorTask,getCaptionReview,approveCaptionReview,importCaptionAuthorResult,draftCaptionReview} from '../../src/main/captionReview';
 afterEach(cleanup);
 // Actual small RGBA PNG bytes; deliberately limited test decoder, never a production fallback.
 const signature=Buffer.from('89504e470d0a1a0a','hex');
@@ -37,4 +38,30 @@ describe('Completion repair regression: real Core plan subprocess',()=>{
 describe('Completion repair regression: historical audio provenance',()=>{
  it('R17 R19 repairs actual historical B4 metadata without rewriting WAV or alignment',()=>{const {root,voicePath}=fixture({style:'B4'}),state=readState(root),file=path.join(root,'project.json'),manifest=JSON.parse(fs.readFileSync(file,'utf8')),bytes=fs.readFileSync(path.join(root,voicePath)),audioSha=sha(bytes);state.voice={...state.voice!,origin:'NANO_GENERATED',profileId:'historical',profileVersion:2,referenceBinding:'bound',receipt:{schema_version:'nano_execution_receipt_v1',voice_id:'historical',voice_version:2,reference_binding:'bound',wav_sha256:audioSha}};writeState(root,state);manifest.voice={...manifest.voice,name:'Brian',id:'brian'};fs.writeFileSync(file,JSON.stringify(manifest));repairB4Narrator(root,audioSha);expect(fs.readFileSync(path.join(root,voicePath))).toEqual(bytes);expect(readState(root).alignment).toEqual(state.alignment);expect(JSON.parse(fs.readFileSync(file,'utf8')).voice.id).toBe('nano:historical');});
  it('R20 rejects a cue mapped to another track or wrong source kind',()=>{const m={sfx:[{kind:'file',path:'assets/sfx/a.wav',time:0,gain:.1},{kind:'tap',time:1}]};const row={cue_id:'impact',track:'sfx',track_index:0,source_kind:'file',source_requirement:'Owner-created impact'};expect(structuredSoundCues(m,[row])[0].key).toBe('audio:sfx:0');expect(()=>structuredSoundCues(m,[{...row,track_index:1}])).toThrow('SOUND_CUE_TARGET_MISMATCH');expect(()=>structuredSoundCues(m,[row,{...row,cue_id:'duplicate'}])).toThrow('SOUND_CUE_TARGET_MISMATCH');});
+});
+
+describe('Full Production completion: caption semantic authority and exact cue coverage',()=>{
+ it('CAP01–04 technical grouping prepares a reusable frozen semantic task; only valid imported draft can be approved',()=>{
+   const {root}=fixture({approve:false}),state=readState(root);state.identityPolicy='v1';writeState(root,state);
+   const before=readState(root);autoCaptionReview(root);expect(getCaptionReview(root)).toMatchObject({draftKind:'TECHNICAL',canApproveDraft:false});
+   expect(()=>approveCaptionReview(root,'technical only')).toThrow('CAPTION_TECHNICAL_DRAFT_REQUIRES');
+   const task=ensureCaptionAuthorTask(root)!;expect(task.status).toBe('FROZEN');expect(ensureCaptionAuthorTask(root)).toEqual(task);
+   importCaptionAuthorResult(root,JSON.stringify({schema:'mode-b-caption-author-result-v1',project_id:state.project.id,task_id:task.taskId,input_sha256:task.inputSha256,source_sha256:task.sourceSha256,payload:{end_word_indices:[3]}}));
+   const draft=getCaptionReview(root);expect(draft).toMatchObject({draftKind:'AI_AUTHORED',canApproveDraft:true});
+   approveCaptionReview(root,'Owner approved exact cues',draft.draft!.sha256);
+   expect(getCaptionReview(root).status).toBe('VERIFIED');expect(readState(root).voice).toEqual(before.voice);expect(readState(root).alignment?.wordsSha256).toBe(before.alignment?.wordsSha256);
+ });
+ it('CAP05 explicit manual grouping is retained by automatic task preparation and corrupt draft cannot approve',()=>{
+   const {root}=fixture({approve:false}),state=readState(root);state.identityPolicy='v1';writeState(root,state);
+   draftCaptionReview(root,[3]);expect(getCaptionReview(root).draftKind).toBe('OWNER_CORRECTED');expect(ensureCaptionAuthorTask(root)).toBeNull();
+   const draft=readState(root).alignment!.captionDraft!;fs.appendFileSync(path.join(root,draft.path),'tamper');
+   expect(getCaptionReview(root).canApproveDraft).toBe(false);expect(ensureCaptionAuthorTask(root)?.status).toBe('FROZEN');
+ });
+ it('SOUND04 strict newly authored coverage rejects omitted executable file and procedural cues; historical compatibility retained',()=>{
+   const m={sfx:[{kind:'file',path:'assets/sfx/a.wav',time:0},{kind:'tap',time:1}]};
+   const file={cue_id:'a',track:'sfx',track_index:0,source_kind:'file',source_requirement:'Recorded impact'};
+   const proc={cue_id:'b',track:'sfx',track_index:1,source_kind:'procedural',source_requirement:'Original tap'};
+   expect(structuredSoundCues(m,[],false)).toEqual([]);expect(()=>structuredSoundCues(m,[file],true)).toThrow('SOUND_CUE_COVERAGE_REQUIRED');
+   expect(structuredSoundCues(m,[file,proc],true)).toHaveLength(2);
+ });
 });

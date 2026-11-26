@@ -260,8 +260,8 @@ export function autoCaptionReview(root:string){
   if(state.identityPolicy==='v1'){
     // The local grouping is a technical preview only. It cannot authorize a
     // new Native task without explicit semantic authoring/owner review.
-    if(alignment.captionDraft?.sourceSha256===sourceSha256&&alignment.captionDraft.authorTaskId)
-      return {status:'REVIEW_REQUIRED' as const,cues:readCues(root,alignment.captionDraft.path),revision:existing?.revision??0};
+    const current=getCaptionReview(root);
+    if(current.canApproveDraft&&current.draft)return {status:'REVIEW_REQUIRED' as const,cues:current.draft.cues,revision:existing?.revision??0};
     const relative='.studio/alignment/caption-technical-draft-'+randomUUID()+'.json';
     atomicJson(resolveProjectFile(root,relative),cues);
     alignment.captionDraft={path:relative,sha256:sha(fs.readFileSync(resolveProjectFile(root,relative))),sourceSha256,boundaries,technicalDraft:true};

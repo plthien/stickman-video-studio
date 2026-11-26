@@ -805,6 +805,11 @@ function resolvePendingCandidate(root:string,state:StudioState,pending:PendingIm
     const original=pending.references.find(ref=>ref.key===key);
     if(!original)throw new Error('Media fulfillment has no frozen missing-native target.');
     if(!verifiedMedia(root,state,original,binding.relative,binding.rights)||!fs.existsSync(resolveProjectFile(root,binding.relative))||sha(fs.readFileSync(resolveProjectFile(root,binding.relative)))!==binding.sha256||binding.kind!==original.kind)throw new Error('Approved media binding/file/hash/rights is stale.');
+    if(original.kind==='sfx'){
+      const cue=structuredSoundCues(value.manifest,Array.isArray(value.soundScript)?value.soundScript:[]).find(c=>c.key===key);
+      const registered=state.media?.find(row=>row.kind==='sfx'&&row.path===binding.relative&&row.sha256===binding.sha256&&row.rights===binding.rights&&row.track===original.track&&row.trackIndex===original.trackIndex);
+      if(cue||registered?.audioReceipt)assertAudioReceipt(root,state.project.id,pending.token,key,binding.relative,binding.sha256,binding.rights,cue,registered?.audioReceipt);
+    }
     const target=exactNativeTarget(manifest,original);
     if(target.path!==original.path)throw new Error('Frozen native target path was changed without authorization.');
     target.path=binding.relative;
@@ -836,6 +841,7 @@ export function stageImport(appPath: string, root: string, stage: Stage, text: s
     const prior=readPending(root);
     if(prior.projectId===state.project.id&&prior.taskId===task.id&&prior.revision===task.revision&&prior.stage===stage&&prior.responseSha256===responseSha256)return pendingResult(root,prior);
   }
+  if(stage==='native'&&fs.existsSync(pendingPath(root))){const prior=readPending(root);if(prior.taskId!==task.id){const bytes=fs.readFileSync(pendingPath(root)),archive=resolveProjectFile(root,'.studio/external/recovery/pending-'+sha(bytes)+'.json');fs.mkdirSync(path.dirname(archive),{recursive:true});if(!fs.existsSync(archive))fs.writeFileSync(archive,bytes,{flag:'wx'});if(sha(fs.readFileSync(archive))!==sha(bytes))throw Error('NATIVE_PENDING_ARCHIVE_SHA_MISMATCH');}}
   const responsePath='.studio/external/responses/'+stage+'-'+task.id+'-'+task.revision+'-'+responseSha256+'.json';
   const responseFile=resolveProjectFile(root,responsePath);fs.mkdirSync(path.dirname(responseFile),{recursive:true});
   if(fs.existsSync(responseFile)){if(sha(fs.readFileSync(responseFile))!==responseSha256)throw new Error('Original frozen response file changed.');}
@@ -1030,6 +1036,7 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
     if(latest.token!==pending.token||latest.payloadSha256!==pending.payloadSha256||JSON.stringify(latest.fulfillments)!==JSON.stringify(pending.fulfillments))throw Error('NATIVE_PLAN_STALE_DURING_VALIDATION');
   }
   const resolved=resolvePendingCandidate(root,state,pending);
+  if(!options.allowSampleDraft&&resolved.missing.length)throw Error('FULL_PRODUCTION_MEDIA_REQUIRED: '+resolved.missing.map(ref=>ref.key).join(', '));
   const missingInside=resolved.missing.filter(ref=>ref.scopeStart<seconds);
   if(missingInside.length)throw new Error('Missing media inside the selected sample: '+missingInside.map(item=>item.key).join(', '));
   const identitySampleReceipt=state.identityPolicy==='v1'?
@@ -1057,6 +1064,7 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
     if(!resolved.missing.length){
       const result=await runner(process.execPath,[cli,'validate',candidate],{cwd});
       if(result.code===0)full=checkedSeconds(result,'full-film');
+      else if(!options.allowSampleDraft)throw Error('FULL_PRODUCTION_VALIDATION_FAILED: '+(result.stderr.trim()||result.stdout.trim()||'Original full validator failed.'));
     }
     if(!full&&!options.allowSampleDraft)throw new Error('Only SAMPLE_READY. Explicitly approve incomplete draft promotion; full-film is not ready.');
     const identityReceipt=full?identityFullReceipt:identitySampleReceipt;
