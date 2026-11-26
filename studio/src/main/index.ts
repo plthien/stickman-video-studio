@@ -4,17 +4,18 @@ import path, { join } from 'node:path';
 import { alignWithElevenLabs,repairAlignmentTiming,eligibleAlignmentResponse } from './alignment.js';
 import {elevenLabsStatus,saveElevenLabsKey,clearElevenLabsKey,resolveElevenLabsKey} from './elevenlabsCredentials.js';
 import {acceptedNarrationPlaybackUrl,serveAcceptedNarration} from './voicePlayback.js';
-import { reconcileScriptActivation, confirmImport, freezeTask, stageImport, getNativeImageGallery,getPendingMedia, fulfillMedia, importMediaFile,inspectCurrentNativePlan,requireCurrentNativePlan } from './externalTasks.js';
+import { reconcileScriptActivation, approveCurrentScript, confirmImport, freezeTask, stageImport, getNativeImageGallery,getPendingMedia, fulfillMedia, importMediaFile,inspectCurrentNativePlan,requireCurrentNativePlan } from './externalTasks.js';
 import {confirmLifecycleResult,freezeLifecycleTask,readFrozenExternalTask,stageLifecycleResult} from './externalLifecycle.js';
 import {readExternalHistory} from './externalHistory.js';
 import {prepareNativeImages,saveNativeImagePrompt,loadImageStyleProfile} from './imagePreparation.js';
-import { getCaptionReview, draftCaptionReview, approveCaptionReview,autoCaptionReview,freezeCaptionAuthorTask,importCaptionAuthorResult } from './captionReview.js';
+import { getCaptionReview, draftCaptionReview, approveCaptionReview,autoCaptionReview,freezeCaptionAuthorTask,importCaptionAuthorResult,ensureCaptionAuthorTask } from './captionReview.js';
 import {glabsSettings,saveGlabsSettings,glabsCredentialStatus,saveGlabsKey,clearGlabsKey,glabsProbe,reconcileGlabsJobs,readGlabsJob,submitGlabsImage,pollGlabsImage,approveGlabsImage,cancelQueuedGlabsImage,type GLabsSettings,type ImageRequest} from './glabs.js';
 import {createGlabsAutoPolling} from './glabsAutoPolling.js';
 import { discoverNano, generateNano, nanoBase } from './nanoClient.js';
 import { cancelJob, nativeJob, reconcileJob } from './nativeJobs.js';
 import { importAlignedWords, importApprovedWav, longformStatus, runLongform, narrationAction } from './voiceMedia.js';
 import { projectSnapshot } from './projectSnapshot.js';
+import {advanceProduction} from './productionCoordinator.js';
 import {createProjectStaged} from './projectCreation.js';
 import {exportNativeReferencePackage} from './externalAuthority.js';
 import {soundInventory,bindSoundAssets} from './soundAssets.js';
@@ -73,13 +74,14 @@ const decodeGlabsImage=(bytes:Buffer)=>{
   const size=decoded.getSize();return{png:decoded.toPNG(),width:size.width,height:size.height,
     bgra:decoded.toBitmap(),encodeBgra:(pixels:Buffer)=>nativeImage.createFromBitmap(pixels,{width:size.width,height:size.height,scaleFactor:1}).toPNG()};
 };
+const coordinatedSnapshot=async(root:string)=>{const nextAction=await advanceProduction(app.getAppPath(),root,decodeGlabsImage);return {...await projectSnapshot(root,app.getAppPath()),nextAction};};
 function registerIpc() {
   const recentPath = path.join(app.getPath('userData'), 'recent-projects.json');
   const recent = () => fs.existsSync(recentPath) ? strictJson(fs.readFileSync(recentPath, 'utf8')) as { projects?: StudioState['project'][] } : { projects: [] };
   const saveRecent = (project: StudioState['project']) => { const projects = [project, ...(recent().projects ?? []).filter(item => item.id !== project.id)].slice(0, 12); fs.mkdirSync(path.dirname(recentPath), { recursive: true }); fs.writeFileSync(recentPath, JSON.stringify({ projects }, null, 2)); roots.set(project.id, project.root); const pending=path.join(project.root,'.studio','recent-registration-pending.json');if(fs.existsSync(pending))fs.unlinkSync(pending); };
   ipcMain.handle('project:listRecent', () => { const projects = recent().projects ?? []; for (const project of projects) if (fs.existsSync(project.root)) registerRoot(project.root); return projects; });
   ipcMain.handle('project:create', async (_event, input: { parent: string; folder: string; title: string; topic: string; style: string; language: string; targetDuration?: number; audience?:string; purpose?:string }) => {
-    const created=await createProjectStaged(app.getAppPath(),input,{publishRecent:saveRecent});registerRoot(created.root);return{...(await projectSnapshot(created.root,app.getAppPath())),registrationWarning:created.registrationWarning};
+    const created=await createProjectStaged(app.getAppPath(),input,{publishRecent:saveRecent});registerRoot(created.root);return{...(await coordinatedSnapshot(created.root)),registrationWarning:created.registrationWarning};
   });
   ipcMain.handle('project:browseParent', async () => {
     const result = await dialog.showOpenDialog({ properties: ['openDirectory'] });
@@ -90,9 +92,9 @@ function registerIpc() {
     const state=reconcileScriptActivation(root);
     registerRoot(root);saveRecent(state.project);reconcileJob(root);
     resumeGlabsPolling(state.project.id,root);
-    return projectSnapshot(root,app.getAppPath());
+    return coordinatedSnapshot(root);
   });
-  ipcMain.handle('project:state', (_event, id: string) => { const root=rootFor(id); reconcileScriptActivation(root); return projectSnapshot(root,app.getAppPath()); });
+  ipcMain.handle('project:state', (_event, id: string) => { const root=rootFor(id); reconcileScriptActivation(root); return coordinatedSnapshot(root); });
   ipcMain.handle('project:saveBrief', (_event, id: string, brief: StudioState['brief'] & { title: string }) => { const root = rootFor(id), state = readState(root); state.project.title = brief.title.trim(); state.brief = { topic: brief.topic, language: brief.language, ratio: '9:16', targetDuration: brief.targetDuration, audience: brief.audience, purpose: brief.purpose }; state.project.updatedAt = new Date().toISOString(); writeState(root, state); saveRecent(state.project); return projectSnapshot(root,app.getAppPath()); });
   // F24 upstream uses a separate typed identity workflow; never Stage='native'.
   ipcMain.handle('identity:snapshot',(_event,id:string)=>
@@ -104,10 +106,8 @@ function registerIpc() {
   })=>upgradeIdentityPolicy(rootFor(id),input));
   ipcMain.handle('identity:freeze',(_event,id:string,operation:IdentityReviewOperation,
     revision:number)=>freezeIdentityTask(rootFor(id),operation,revision));
-  ipcMain.handle('identity:importResult',(_event,id:string,result:string,revision:number)=>
-    importIdentityResult(rootFor(id),result,revision));
-  ipcMain.handle('identity:approveAnalysis',(_event,id:string,revision:number)=>
-    approveScriptAnalysis(rootFor(id),revision));
+  ipcMain.handle('identity:importResult',async(_event,id:string,result:string,revision:number)=>{const root=rootFor(id);importIdentityResult(root,result,revision);await advanceProduction(app.getAppPath(),root,decodeGlabsImage);return readIdentityWorkflow(root);});
+  ipcMain.handle('identity:approveAnalysis',async(_event,id:string,revision:number)=>{const root=rootFor(id);approveScriptAnalysis(root,revision);await advanceProduction(app.getAppPath(),root,decodeGlabsImage);return readIdentityWorkflow(root);});
   ipcMain.handle('identity:prepareAutomaticGallery',(_event,id:string,revision:number)=>
     prepareAutomaticReferenceGallery(rootFor(id),app.getAppPath(),revision,decodeGlabsImage));
   ipcMain.handle('identity:prepareBible',(_event,id:string,revision:number)=>
@@ -212,6 +212,8 @@ function registerIpc() {
   ipcMain.handle('settings:setNano', (_event, id: string, endpoint: string) => { const root = rootFor(id), state = readState(root); state.nano = { ...state.nano, endpoint: nanoBase(endpoint).toString().replace(/\/$/, '') }; writeState(root, state); return projectSnapshot(root,app.getAppPath()); });
   ipcMain.handle('external:freeze', (_event, id: string, stage: Stage, rebuild = false) => freezeTask(app.getAppPath(), rootFor(id), stage, rebuild));
   ipcMain.handle('external:exportPrompt', async (_event, id: string, stage: Stage, operation: 'author'|'review'|'correct'|'recheck'|'media-review' = 'author', _scope:Record<string,unknown>={}) => { if(operation==='media-review')throw new Error('MEDIA_REVIEW_DISABLED: legacy history is read-only.'); const root = rootFor(id), task = readFrozenExternalTask(app.getAppPath(),root,stage,operation); if(!task)throw new Error('Build a frozen task before exporting its prompt.'); const result = await dialog.showSaveDialog({ defaultPath: path.join(root, '.studio', 'external', `${stage}-prompt.md`), filters: [{ name: 'Markdown', extensions: ['md'] }] }); if (result.canceled || !result.filePath) return null; const current=readFrozenExternalTask(app.getAppPath(),root,stage,operation); if(!current||current.promptSha256!==task.promptSha256)throw new Error('Frozen task changed during export.'); if(stage==='native')exportNativeReferencePackage(app.getAppPath(),readState(root).project.style,result.filePath,current.promptSha256); fs.copyFileSync(path.join(root, current.promptPath), result.filePath); return result.filePath; });
+  ipcMain.handle('external:approveScript',async(_event,id:string,input:Parameters<typeof approveCurrentScript>[1])=>{const root=rootFor(id);approveCurrentScript(root,input);return coordinatedSnapshot(root);});
+  ipcMain.handle('external:importResult',async(_event,id:string,stage:Stage,operation:'author'|'review'|'correct'|'recheck',text:string)=>{const root=rootFor(id),state=readState(root);if(state.identityPolicy!=='v1')throw Error('V1_REQUIRED');if(operation==='author'){const staged=stageImport(app.getAppPath(),root,stage,text);if(stage==='script')await confirmImport(app.getAppPath(),root,staged.token);else await inspectCurrentNativePlan(app.getAppPath(),root);}else{if(stage==='native'&&operation==='correct'&&state.lifecycle?.tasks['native:correct']?.artifactContext!=='DRAFT')throw Error('PUBLISHED_CORRECTION_REQUIRES_EXPLICIT_CONFIRMATION');const staged=stageLifecycleResult(app.getAppPath(),root,stage,operation,text);await confirmLifecycleResult(app.getAppPath(),root,staged.token);}return coordinatedSnapshot(root);});
   ipcMain.handle('external:stageImport', async (_event, id: string, stage: Stage, text: string) => {const root=rootFor(id),result=stageImport(app.getAppPath(),root,stage,text);if(stage==='native')await inspectCurrentNativePlan(app.getAppPath(),root);return result;});
   ipcMain.handle('external:confirmImport', async (_event, id: string, token: string, options?: {previewSeconds?:number;allowSampleDraft?:boolean}) => { const root = rootFor(id); await confirmImport(app.getAppPath(), root, token, options); return projectSnapshot(root,app.getAppPath()); });
   ipcMain.handle('external:readFrozen',(_event,id:string,stage:Stage,operation:'author'|'review'|'correct'|'recheck'|'media-review')=>readFrozenExternalTask(app.getAppPath(),rootFor(id),stage,operation));
@@ -228,6 +230,8 @@ function registerIpc() {
   ipcMain.handle('voice:captionAuthorFreeze',(_event,id:string)=>freezeCaptionAuthorTask(rootFor(id)));
   ipcMain.handle('voice:captionAuthorImport',(_event,id:string,text:string)=>importCaptionAuthorResult(rootFor(id),text));
   ipcMain.handle('voice:captionDraft', (_event, id: string, boundaries: number[]) => draftCaptionReview(rootFor(id),boundaries));
+  ipcMain.handle('voice:captionApproveCurrent',async(_event,id:string,input:{sha256:string;ownerAuthorized:true})=>{if(input.ownerAuthorized!==true)throw Error('OWNER_APPROVAL_REQUIRED');const root=rootFor(id);approveCaptionReview(root,'Owner approved exact displayed caption draft '+input.sha256,input.sha256);return coordinatedSnapshot(root);});
+  ipcMain.handle('voice:generateAndAlign',async(_event,id:string,input:{voice?:string;resume?:boolean;retryUncertain?:boolean;regenerate?:boolean;expectedScriptSha:string;ownerAuthorized:true})=>{const root=rootFor(id),before=readState(root);if(input.ownerAuthorized!==true||before.approvedScript?.sha256!==input.expectedScriptSha)throw Error('VOICE_ALIGNMENT_AUTHORITY_STALE');const key=resolveElevenLabsKey(app.getPath('userData'),safeStorage);if(!before.voice||before.voice.stale||input.regenerate||input.resume||input.retryUncertain)await runLongform(root,input);const current=readState(root);if(current.approvedScript?.sha256!==input.expectedScriptSha||!current.voice||current.voice.stale)throw Error('VOICE_ALIGNMENT_AUTHORITY_STALE');let aligned=false;try{getCaptionReview(root);aligned=true;}catch{/* No valid alignment. */}if(!aligned)await alignWithElevenLabs(app.getAppPath(),root,true,key);ensureCaptionAuthorTask(root);return coordinatedSnapshot(root);});
   ipcMain.handle('voice:captionApprove', (_event, id: string, note: string) => approveCaptionReview(rootFor(id),note));
   ipcMain.handle('voice:nanoDiscover', (_event, endpoint: string) => discoverNano(endpoint));
   ipcMain.handle('voice:nanoGenerate', async (_event, id: string, request: { voice: string; speed: number; seed: number }) => { const root = rootFor(id), state = readState(root); return generateNano(root, { ...request, endpoint: state.nano?.endpoint ?? 'http://127.0.0.1:3901' }); });
@@ -254,6 +258,7 @@ function registerIpc() {
     const result=await dialog.showOpenDialog({properties:['openFile'],filters:mapping.kind==='image'?[{name:'Images',extensions:['png','jpg','jpeg']}]:[{name:'Audio',extensions:['wav','mp3','m4a','aac','ogg','flac']}]});
     return result.canceled?null:importMediaFile(root,result.filePaths[0],mapping.kind,mapping.rights);
   });
+  ipcMain.handle('native:approveContinue',async(_event,id:string,input:{reviewedSha256:string;ownerAuthorized:true;render:boolean})=>{const root=rootFor(id);if(input.ownerAuthorized!==true)throw Error('OWNER_APPROVAL_REQUIRED');await nativeJob(app.getAppPath(),root,'approve',{note:'Owner approved exact displayed preview '+input.reviewedSha256,attested:true,reviewedSha256:input.reviewedSha256});if(input.render&&readState(root).nativeReadiness?.fullReady)await nativeJob(app.getAppPath(),root,'render',{});return coordinatedSnapshot(root);});
   ipcMain.handle('native:run', async (_event, id: string, command: NativeCommand, input: Parameters<typeof nativeJob>[3]) => { const root = rootFor(id), result = await nativeJob(app.getAppPath(), root, command, input); return { ...result, state: await projectSnapshot(root,app.getAppPath()) }; });
   ipcMain.handle('native:cancel', (_event, id: string, jobId: string) => cancelJob(rootFor(id), jobId));
   ipcMain.handle('project:mediaUrl', (_event, id: string, relative: string) => mediaUrl(rootFor(id), assertMediaRelative(relative)));

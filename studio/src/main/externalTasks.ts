@@ -1164,7 +1164,8 @@ export function scriptCorrectionRechecked(state:StudioState):boolean {
       (!value.findings||value.findings.every(f=>f.status==='resolved'));
   });
 }
-export function activateScriptCandidate(root:string,state:StudioState,source:'AUTHOR_IMPORT'|'RECHECK'):boolean {
+export function activateScriptCandidate(root:string,state:StudioState,source:'AUTHOR_IMPORT'|'RECHECK',ownerAuthorized=false):boolean {
+  if(state.identityPolicy==='v1'&&!ownerAuthorized)return false;
   const candidate=state.scriptCandidate;
   if(!candidate||sha(candidate.text)!==candidate.sha256||
     candidate.sections.map(row=>row.text).join('\n\n')!==candidate.text)
@@ -1179,8 +1180,8 @@ export function activateScriptCandidate(root:string,state:StudioState,source:'AU
   const creativeChanged=JSON.stringify(state.approvedScript?.authoring??null)!==JSON.stringify(candidate.authoring??null);
   const approved:NonNullable<StudioState['approvedScript']>={
     sections:candidate.sections,text:candidate.text,sha256:candidate.sha256,revision:candidate.revision,
-    approvedAt:new Date().toISOString(),approvedBy:'AUTO',
-    approvalNote:source==='AUTHOR_IMPORT'?'Auto-activated after confirmed Script Author import.':'Auto-activated after passed Script Recheck.',
+    approvedAt:new Date().toISOString(),approvedBy:ownerAuthorized?'OWNER':'AUTO',
+    approvalNote:ownerAuthorized?'Owner explicitly approved the exact Script candidate.':source==='AUTHOR_IMPORT'?'Auto-activated after confirmed Script Author import.':'Auto-activated after passed Script Recheck.',
     authoring:candidate.authoring
   };
   // Write the exact revision before publishing it into active project state.
@@ -1219,4 +1220,13 @@ export async function confirmImport(appPath:string,root:string,token:string,opti
   activeConfirmations.add(key);
   try{return await confirmImportOnce(appPath,root,token,options);}
   finally{activeConfirmations.delete(key);}
+}
+
+export function approveCurrentScript(root:string,input:{sha256:string;revision:number;taskId:string;ownerAuthorized:true}){
+ const state=readState(root),candidate=state.scriptCandidate;
+ if(input.ownerAuthorized!==true||!candidate||candidate.sha256!==input.sha256||candidate.revision!==input.revision||candidate.taskId!==input.taskId)throw Error('SCRIPT_APPROVAL_STALE');
+ const corrected=state.lifecycle?.tasks['script:correct']?.id===candidate.taskId;
+ if(!corrected&&state.tasks?.script?.status!=='IMPORTED')throw Error('SCRIPT_IMPORT_REQUIRED');
+ if(activateScriptCandidate(root,state,corrected?'RECHECK':'AUTHOR_IMPORT',true))writeState(root,state);
+ return state;
 }

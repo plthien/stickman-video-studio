@@ -60,7 +60,7 @@ export function VoiceWorkspace() {
   const hasAlignment = Boolean(native?.alignment);
   const wordsSha256 = native?.alignment?.wordsSha256;
   const captionRevision = native?.alignment?.captionReview?.revision;
-  const [review,setReview]=useState<null|{status:string;workflowStatus:string;error?:string;wordCount:number;cueCount:number;duration:number;words:Array<{word:string;start:number;end:number}>;original:Array<{start:number;end:number;text:string}>;originalBoundaries:number[];captionAuthorTask?:{taskId:string;prompt:string;status:'FROZEN'|'IMPORTED'}|null;draft:null|{boundaries:number[];cues:Array<{start:number;end:number;text:string}>};approved:null|{revision:number;mode?:'AUTO'|'MANUAL';cues:Array<{start:number;end:number;text:string}>}}>(null);
+  const [review,setReview]=useState<null|{status:string;workflowStatus:string;error?:string;wordCount:number;cueCount:number;duration:number;words:Array<{word:string;start:number;end:number}>;original:Array<{start:number;end:number;text:string}>;originalBoundaries:number[];captionAuthorTask?:{taskId:string;prompt:string;status:'FROZEN'|'IMPORTED'}|null;draft:null|{sha256?:string;boundaries:number[];cues:Array<{start:number;end:number;text:string}>};approved:null|{revision:number;mode?:'AUTO'|'MANUAL';cues:Array<{start:number;end:number;text:string}>}}>(null);
   const [captionResult,setCaptionResult]=useState('');
   const [historicalNarrator,setHistoricalNarrator]=useState('');
   useEffect(()=>setHistoricalNarrator(''),[id,audioSha]);
@@ -70,7 +70,7 @@ export function VoiceWorkspace() {
   const runReview=async(work:()=>Promise<unknown>,success:string)=>{const scope=captureProjectSession();if(!id||!scope)return;setStatus('busy');try{await work();if(!isCurrentProjectSession(scope))return;if(window.studio){const next=await window.studio.projectState(scope.projectId);if(!setNativeIfSessionCurrent(scope,next))return;}if(!await refreshCaptionReview(scope))return;setStatus('ready');showNotice(success);}catch(reason){if(isCurrentProjectSession(scope))fail(reason)}};
   const splitAtWord=()=>{const number=selectedBoundary;if(!review||number<1||number>=review.words.length)return;setBoundaries(value=>[...new Set([...value,number])].sort((a,b)=>a-b));};
   const mergeAtWord=()=>{if(!review)return;setBoundaries(value=>value.filter(number=>number!==selectedBoundary));};
-  const captionCues=review?.approved?.cues??review?.original??[];
+  const captionCues=review?.draft?.cues??review?.approved?.cues??review?.original??[];
   const nativeVoice=(native?.manifest?.voice??{}) as Record<string,unknown>;
   const timelineSeconds=playbackSeconds+(typeof nativeVoice.lead==='number'?nativeVoice.lead:0)-(typeof nativeVoice.trim_start==='number'?nativeVoice.trim_start:0);
   const currentCue=captionCues.find(cue=>cue.start<=timelineSeconds&&cue.end>=timelineSeconds);
@@ -95,7 +95,7 @@ export function VoiceWorkspace() {
       ...(action==='retry'?{resume:true,retryUncertain:true}:{})};
     setStatus('busy');setMessage('');
     try{
-      await window.studio.longformRun(scope.projectId,input);
+      if(native?.identityPolicy==='v1'&&window.studio.generateAndAlign&&native.approvedScript){await window.studio.generateAndAlign(scope.projectId,{...input,expectedScriptSha:native.approvedScript.sha256,ownerAuthorized:true});}else await window.studio.longformRun(scope.projectId,input);
       if(!isCurrentProjectSession(scope))return;
       const next=await window.studio.projectState(scope.projectId);
       if(!setNativeIfSessionCurrent(scope,next))return;
@@ -117,7 +117,7 @@ export function VoiceWorkspace() {
     <Field label="Confirmed voice profile"><Select value={voice} onChange={event=>setVoice(event.target.value)}><option value="">Select discovered profile</option>{voice&&!profiles.some(item=>String(item.id)===voice)&&<option value={voice}>{voice} · saved attempt profile</option>}{profiles.map(item=><option key={String(item.id)} value={String(item.id)}>{String(item.name??item.id)} · v{String(item.version)}</option>)}</Select></Field>
     <Field label="Approved narration (project source, read only)"><Textarea readOnly value={script}/></Field>
     <div className="actions"><Button disabled={!window.studio||status==='busy'} onClick={async()=>{const scope=captureProjectSession();if(!scope)return;setStatus('busy');try{const result=await window.studio!.nanoDiscover(nanoEndpoint);if(!isCurrentProjectSession(scope))return;setProfiles(result.profiles);setStatus(result.ready?'ready':'error');setMessage(result.ready?`${result.profiles.length} confirmed profile(s); producer ready.`:'Producer readiness failed.')}catch(reason){if(isCurrentProjectSession(scope))fail(reason)}}}>Discover producer</Button>
-      <Button variant="primary" disabled={!id||!script||!voice||status==='busy'||!jobAction||(jobAction.action==='running'||jobAction.action==='blocked')} onClick={()=>void runNarration()}>{jobAction?.action==='generate'?'Generate narration':jobAction?.action==='regenerate'?'Regenerate narration':jobAction?.action==='resume'?'Resume narration':jobAction?.action==='retry'?'Explicit Retry uncertain part':jobAction?.action==='running'?'Generation running':jobAction?.action==='blocked'?'Recovery blocked — refresh status':'Checking job state...'}</Button>
+      <Button variant="primary" disabled={!id||!script||!voice||status==='busy'||!jobAction||(jobAction.action==='running'||jobAction.action==='blocked')} onClick={()=>void runNarration()}>{jobAction?.action==='generate'?(native?.identityPolicy==='v1'?'Generate Voice & Align (possible ElevenLabs charge)':'Generate narration'):jobAction?.action==='regenerate'?'Regenerate narration':jobAction?.action==='resume'?'Resume narration':jobAction?.action==='retry'?'Explicit Retry uncertain part':jobAction?.action==='running'?'Generation running':jobAction?.action==='blocked'?'Recovery blocked — refresh status':'Checking job state...'}</Button>
       <Button disabled={!id||status==='busy'} onClick={()=>act(()=>window.studio!.importWav(id!),'Approved WAV imported.')}>Import WAV</Button></div>
     <div className="info">Recovery: {jobAction?.reason??'Checking saved job state'} · Parts {jobAction?.completed??0}/{jobAction?.total??0} · Current part {jobAction?.currentPart??'-'} · {jobAction?.status??'UNKNOWN'}{jobAction?.detail?' · '+jobAction.detail:''}</div>
     <Button disabled={!id||status==='busy'} onClick={()=>void refreshVoiceOperations().catch(fail)}>Refresh Voice status</Button>
@@ -165,9 +165,10 @@ export function VoiceWorkspace() {
       <div className="actions"><Button disabled={status==='busy'} onClick={splitAtWord}>Split cue at word</Button><Button disabled={status==='busy'} onClick={mergeAtWord}>Merge adjacent cues</Button><Button disabled={status==='busy'||!id} onClick={()=>runReview(()=>window.studio!.captionDraft(id!,boundaries),'Caption draft saved; approval still required.')}>Save reviewed grouping draft</Button></div>
       <div className="info">Cue ends (word indices): {boundaries.join(', ')}. Each cue retains original word text and exact recorded boundaries; no free-text edits.</div>
       <dl className="kvs"><dt>Original Core cues</dt><dd>{review.original.map(cue=>cue.text+' ('+cue.start+'–'+cue.end+')').join(' | ')}</dd><dt>Draft cues</dt><dd>{review.draft?.cues.map(cue=>cue.text+' ('+cue.start+'–'+cue.end+')').join(' | ')??'No saved draft'}</dd><dt>Approved cues</dt><dd>{review.approved?.cues.map(cue=>cue.text).join(' | ')??'None'}</dd></dl>
-      <Field label="Required owner review note"><Textarea value={reviewNote} onChange={event=>setReviewNote(event.target.value)} placeholder="Confirm exact spoken words and semantic cue grouping"/></Field>
-      <Button variant="primary" disabled={!id||!review.draft||!reviewNote.trim()||status==='busy'} onClick={()=>runReview(()=>window.studio!.captionApprove(id!,reviewNote),'Caption revision approved and native task invalidated for re-freeze.')}>Approve caption revision</Button>
+      {native?.identityPolicy!=='v1'&&<><Field label="Required owner review note"><Textarea value={reviewNote} onChange={event=>setReviewNote(event.target.value)} placeholder="Confirm exact spoken words and semantic cue grouping"/></Field>
+      <Button variant="primary" disabled={!id||!review.draft||!reviewNote.trim()||status==='busy'} onClick={()=>runReview(()=>window.studio!.captionApprove(id!,reviewNote),'Caption revision approved and native task invalidated for re-freeze.')}>Approve caption revision</Button></>}
       </>}
+      {native?.identityPolicy==='v1'&&review.draft?.sha256&&<Button variant="primary" disabled={status==='busy'||!id} onClick={()=>runReview(()=>window.studio!.captionApproveCurrent!(id!,{sha256:review.draft!.sha256!,ownerAuthorized:true}),'Exact caption draft approved.')}>Approve caption revision</Button>}
     </>}
   </Card></div>;
 }

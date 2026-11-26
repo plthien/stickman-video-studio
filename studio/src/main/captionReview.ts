@@ -167,11 +167,12 @@ export function draftCaptionReview(root:string,boundaries:number[]) {
   writeState(root,state);
   return {cues,sourceSha256,status:'REVIEW_REQUIRED'};
 }
-export function approveCaptionReview(root:string,note:string) {
+export function approveCaptionReview(root:string,note:string,expectedSha?:string) {
   if (typeof note!=='string' || !note.trim()) throw new Error('Explicit caption revision review note is required.');
   const {state,alignment,words,offset,duration,sourceSha256}=inputs(root,{allowCoreRegroup:true});
   const draft=alignment.captionDraft;
   if (!draft || draft.sourceSha256!==sourceSha256 || sha(fs.readFileSync(resolveProjectFile(root,draft.path)))!==draft.sha256) throw new Error('Caption draft source is stale or missing.');
+  if(expectedSha!==undefined&&expectedSha!==draft.sha256)throw Error('CAPTION_APPROVAL_STALE');
   if(draft.technicalDraft)throw Error('CAPTION_TECHNICAL_DRAFT_REQUIRES_AI_AUTHOR_OR_EXPLICIT_MANUAL_CORRECTION');
   const cues=buildCues(words,draft.boundaries,offset,duration);
   if (!same(cues,readCues(root,draft.path))) throw new Error('Caption draft was changed outside review.');
@@ -268,3 +269,5 @@ export function autoCaptionReview(root:string){
   writeState(root,latest);
   return{status:'AUTO_VERIFIED' as const,cues,revision};
 }
+
+export function ensureCaptionAuthorTask(root:string){const current=getCaptionReview(root);if(current.status==='VERIFIED'||current.draft||current.captionAuthorTask)return current.captionAuthorTask;return freezeCaptionAuthorTask(root);}
