@@ -133,6 +133,30 @@
           }
         }
       }
+    },
+    "reuse_approved": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "shot_id",
+        "layer_id"
+      ],
+      "properties": {
+        "shot_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "layer_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
     }
   }
 }

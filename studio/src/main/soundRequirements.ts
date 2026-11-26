@@ -21,7 +21,7 @@ export function manifestAudioTracks(manifest:Record<string,unknown>){
 export function structuredSoundCues(manifest:Record<string,unknown>,rows:unknown[]){
   const tracks=manifestAudioTracks(manifest),ids=new Set<string>(),keys=new Set<string>(),out:Array<SoundCue&{key:string}>=[];
   for(const value of rows){
-    if(!value||typeof value!=='object'||Array.isArray(value)||!('cue_id'in value)||!('track'in value))continue; // historical prose retained
+    if(!value||typeof value!=='object'||Array.isArray(value)||!('source_kind'in value))continue; // historical prose retained
     const row=value as SoundCue;
     if(typeof row.cue_id!=='string'||!/^[A-Za-z0-9_-]{1,100}$/.test(row.cue_id)||ids.has(row.cue_id)||!Number.isSafeInteger(row.track_index)||row.track_index<0||typeof row.source_requirement!=='string'||!row.source_requirement.trim()||row.source_requirement.length>12000)throw Error('SOUND_CUE_INVALID');
     const key='audio:'+row.track+':'+row.track_index,target=tracks.find(t=>t.key===key);

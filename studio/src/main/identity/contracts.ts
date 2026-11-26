@@ -64,6 +64,7 @@ export interface NativeImageNeedV2 {
   asset_kind:'background'|'character'|'pose'|'prop'|'object'|'other';
   character_ids:CharacterId[];
   continuity_source?:{shot_id:string;layer_id:string;relation:ImageRelation};
+  reuse_approved?:{shot_id:string;layer_id:string;sha256?:string};
 }
 export function hash(data:Buffer|string){return createHash('sha256').update(data).digest('hex');}
 export function canonical(value:unknown):string {

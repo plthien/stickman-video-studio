@@ -377,6 +377,7 @@ function assertPreparedImageRequest(appPath:string,root:string,input:ImageReques
     throw new Error('GLABS_PREPARED_FINGERPRINT_INVALID');
   const candidate=prepareNativeImageTarget(appPath,root,input.targetKey);
   const ready=candidate?.draftIdentity.creativeFingerprint===input.preparedFingerprint?candidate:null;
+  if(candidate?.reuseApproved)throw Error('ASSET_REUSE_NO_PAID_GENERATION');
   if(ready?.state==='BLOCKED'&&readState(root).identityPolicy==='v1')
     throw new Error(ready.reason||'IDENTITY_PREPARED_TARGET_BLOCKED');
   if(!ready||ready.state!=='READY'||ready.prompt.trim()!==input.prompt.trim()||
@@ -580,12 +581,37 @@ async function downloadImage(settings:GLabsSettings,urlText:string,userData:stri
   }:undefined;
   return{data,mime,mimeDiagnostic};
 }
+function finishLocalImage(root:string,job:GLabsJob,source:Buffer,decode:GLabsDecoder){
+    const preparedOutput=job.output?prepareArtwork(source,job.output,decode):null;
+    const decoded=preparedOutput?.decoded??decode(source);
+    if(preparedOutput)job.preparation=preparedOutput.receipt;
+    if(!decoded||!Buffer.isBuffer(decoded.png)||imageMime(decoded.png)!=='image/png'||
+      !Number.isSafeInteger(decoded.width)||!Number.isSafeInteger(decoded.height)||
+      decoded.width<1||decoded.height<1||decoded.width>8192||decoded.height>8192)
+      throw new Error('GLABS_IMAGE_DECODE_INVALID');
+    if(decoded.png.length>MAX_IMAGE)throw new Error('GLABS_DECODED_IMAGE_OVERSIZE');
+    job.syncPhase='stage';writeJob(root,job);
+    const relative='assets/images/glabs-'+job.id+'.png',file=resolveProjectFile(root,relative);
+    fs.mkdirSync(path.dirname(file),{recursive:true});
+    if(fs.existsSync(file)&&sha(fs.readFileSync(file))!==sha(decoded.png))throw new Error('GLABS_STAGING_FILE_TAMPERED');
+    if(!fs.existsSync(file)){const temporary=file+'.'+randomUUID()+'.tmp';try{fs.writeFileSync(temporary,decoded.png,{flag:'wx'});fs.renameSync(temporary,file);}finally{if(fs.existsSync(temporary))fs.unlinkSync(temporary);}}
+    job.staged={path:relative,sha256:sha(decoded.png),mime:'image/png',width:decoded.width,height:decoded.height};
+    if(job.requestedOrientation&&!matchesExplicitAssetRatio(decoded.width,decoded.height,job.requestedOrientation)){
+      job.status='FAILED';job.reason='GLABS_EXPLICIT_ASSET_RATIO_MISMATCH: expected '+job.requestedOrientation+'; actual '+decoded.width+'x'+decoded.height+'. No automatic retry.';delete job.lastSyncError;writeJob(root,job);return job;
+    }
+    job.status='VALIDATED';job.syncPhase='validated';delete job.lastSyncError;
+    writeJob(root,job);
+    return job;
+}
 export async function pollGlabsImage(appPath:string,root:string,userData:string,cipher:CredentialCipher,id:string,
   decode:GLabsDecoder){
   const job=readJob(root,id);
   if(['APPROVED','FAILED','CANCELLED','STALE'].includes(job.status))return job;
   if(!currentJobTarget(appPath,root,job))return job;
   if(job.status==='VALIDATED')return job;
+  if(job.sourceImage){
+    try{const bytes=fs.readFileSync(resolveProjectFile(root,job.sourceImage.path));if(sha(bytes)!==job.sourceImage.sha256)throw Error('ASSET_SOURCE_SHA_MISMATCH');job.syncPhase='decode';return finishLocalImage(root,job,bytes,decode);}catch(error){job.lastSyncError={stage:job.syncPhase??'decode',code:syncErrorCode(error,'GLABS_LOCAL_PREPARATION_FAILED'),at:timestamp()};writeJob(root,job);throw error;}
+  }
   if(!job.providerTaskId){
     const note='Submission has no confirmed provider task ID; never auto-POST again.';
     if(job.status!=='UNKNOWN'||!job.reason?.includes(note)){
@@ -666,26 +692,7 @@ export async function pollGlabsImage(appPath:string,root:string,userData:string,
       if(sha(fs.readFileSync(sourceFile))!==sha(image.data))throw Error('ASSET_SOURCE_SHA_MISMATCH');
       job.sourceImage={path:sourcePath,sha256:sha(image.data)};writeJob(root,job);
     }
-    const preparedOutput=job.output?prepareArtwork(image.data,job.output,decode):null;
-    const decoded=preparedOutput?.decoded??decode(image.data);
-    if(preparedOutput)job.preparation=preparedOutput.receipt;
-    if(!decoded||!Buffer.isBuffer(decoded.png)||imageMime(decoded.png)!=='image/png'||
-      !Number.isSafeInteger(decoded.width)||!Number.isSafeInteger(decoded.height)||
-      decoded.width<1||decoded.height<1||decoded.width>8192||decoded.height>8192)
-      throw new Error('GLABS_IMAGE_DECODE_INVALID');
-    if(decoded.png.length>MAX_IMAGE)throw new Error('GLABS_DECODED_IMAGE_OVERSIZE');
-    job.syncPhase='stage';writeJob(root,job);
-    const relative='assets/images/glabs-'+job.id+'.png',file=resolveProjectFile(root,relative);
-    fs.mkdirSync(path.dirname(file),{recursive:true});
-    if(fs.existsSync(file)&&sha(fs.readFileSync(file))!==sha(decoded.png))throw new Error('GLABS_STAGING_FILE_TAMPERED');
-    if(!fs.existsSync(file)){const temporary=file+'.'+randomUUID()+'.tmp';try{fs.writeFileSync(temporary,decoded.png,{flag:'wx'});fs.renameSync(temporary,file);}finally{if(fs.existsSync(temporary))fs.unlinkSync(temporary);}}
-    job.staged={path:relative,sha256:sha(decoded.png),mime:'image/png',width:decoded.width,height:decoded.height};
-    if(job.requestedOrientation&&!matchesExplicitAssetRatio(decoded.width,decoded.height,job.requestedOrientation)){
-      job.status='FAILED';job.reason='GLABS_EXPLICIT_ASSET_RATIO_MISMATCH: expected '+job.requestedOrientation+'; actual '+decoded.width+'x'+decoded.height+'. No automatic retry.';delete job.lastSyncError;writeJob(root,job);return job;
-    }
-    job.status='VALIDATED';job.syncPhase='validated';delete job.lastSyncError;
-    writeJob(root,job);
-    return job;
+    return finishLocalImage(root,job,image.data,decode);
   }catch(error){
     // currentJobTarget can mark this attempt STALE during an awaited GET.
     // Never resurrect an outdated Native image to RUNNING.

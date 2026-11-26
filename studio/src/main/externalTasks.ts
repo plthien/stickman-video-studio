@@ -234,6 +234,7 @@ export function freezeTask(appPath: string, root: string, stage: Stage, rebuild 
 - In sound_script place only justified real SFX/ambience intentions tied to actual targets/events; distinguish proposed sounds from existing assets. Each executable audio cue may use the structured sidecar contract cue_id, track (sfx|ambience|dialogue|music|audio_cuts), track_index, source_kind (file|procedural|cut), source_requirement, optional preparation (preserve|pcm16), optional reuse {path,sha256}. Track/index must point to the actual manifest entry; timeline coordinates come from that entry. For music use index 0. Include precise role/line, material, timing and perspective in source_requirement; no new fields in original manifest audio tracks. Use reuse only for exact previously registered rights-cleared local source bytes; no invented hashes. Original procedural SFX and audio cuts need no external file.
 - For EVERY generated image, declare a real manifest.shots[] image layer with an immutable id and safe missing project-relative path. The corresponding asset_needs must name the SAME real Shot ID, layer ID and expected path using the accepted auxiliary format. Describe actual content, orientation and continuity references. Never claim the image exists or fabricate an asset SHA.
 - If upstream_character_authority is present (F24), EVERY managed Native image target MUST have exactly ONE STRUCTURED asset_needs row with shot_id, layer_id, expected_path, content, REQUIRED asset_kind (background|character|pose|prop|object|other), character_ids (explicit array). For asset_kind character or pose, character_ids MUST be nonempty and contain only canonical character IDs; background/character-free object may use []. Omitting asset_kind is never a valid fallback. Declare optional typed continuity_source {shot_id,layer_id,relation} only for a real earlier managed image. Core @b1/ built-ins are not paid-image targets. Only use canonical char_id values supplied by upstream_character_authority. Do NOT invent characters, omit a target, add identity fields to manifest/project.json, or use legacy string asset_needs for F24 targets. Review exact owner-approved canonical source and identity lineage SHA.
+- For exact reuse of an earlier approved image, declare reuse_approved {shot_id,layer_id, optional sha256 only if known}, together with matching continuity_source (same_setup or match_composition). Source and destination must have identical cast, asset_kind, orientation and output requirements. The owner authorizes the actual source SHA after approval. Never fabricate a hash or reuse similar but different artwork.
 - Cross-check complete story coverage, temporal order, shot/layer ids, motion feasibility, character/object continuity and every G-Labs-compatible frozen image target. Only actual imported assets with rights and matching SHA may be described as present.
 - Return ONE COMPLETE Native candidate with manifest, shot_ledger, sound_script and asset_needs. Do not return Review/Correct/Recheck verdicts, a published project, fake CLI validation, media observations or a rendered film.
 
@@ -494,7 +495,7 @@ export async function inspectCurrentNativePlan(appPath:string,root:string){
   const state=readState(root),draft=readNativeDraft(root,state);
   if(!draft||state.identityPolicy!=='v1')return null;
   const report=await inspectNativePlan(appPath,root,draft.artifact.manifest,nativeVoiceTiming(root,state).timelineDuration,draft.sha256);
-  if(readNativeDraft(root)?.sha256!==draft.sha256)throw Error('NATIVE_PLAN_STALE_DURING_VALIDATION');
+  const latest=readNativeDraft(root);if(!latest||latest.sha256!==draft.sha256||latest.token!==draft.token||nativeVoiceTiming(root,readState(root)).timelineDuration!==nativeVoiceTiming(root,state).timelineDuration)throw Error('NATIVE_PLAN_STALE_DURING_VALIDATION');
   return report;
 }
 export async function requireCurrentNativePlan(appPath:string,root:string){
@@ -1174,7 +1175,7 @@ export function activateScriptCandidate(root:string,state:StudioState,source:'AU
     throw new Error('STALE: Script Author task no longer owns this candidate.');
   if(source==='RECHECK'&&!scriptCorrectionRechecked(state))
     throw new Error('RECHECK_REQUIRED: corrected Script must pass a current independent Recheck.');
-  if(state.approvedScript?.sha256===candidate.sha256&&
+  if(state.approvedScript?.sha256===candidate.sha256&&(!ownerAuthorized||state.approvedScript.revision===candidate.revision)&&
     JSON.stringify(state.approvedScript.authoring??null)===JSON.stringify(candidate.authoring??null))return false;
   const changed=state.approvedScript?.sha256!==candidate.sha256;
   const creativeChanged=JSON.stringify(state.approvedScript?.authoring??null)!==JSON.stringify(candidate.authoring??null);

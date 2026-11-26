@@ -20,6 +20,8 @@ export interface ImageJobSpec {
   /** Exact supported ratio in the frozen asset requirement, not inferred from art kind. */
   requestedOrientation?:string;
   output?:AssetOutput;
+  reuseApproved?:{shot_id:string;layer_id:string;sha256?:string};
+  reuseSource?:{path:string;sha256:string;sourceTargetKey:string};
   effectivePrompt:string;effectivePromptSha256:string;
   sourceDescription:string;sourceLedger:string;sourceRows:unknown[];
   styleProfileRef:{id:Style;path:string;sha256:string};
@@ -183,6 +185,7 @@ export function compileImageJobSpecs(input:{
       state='NEEDS_OWNER_REVIEW';reason='Conflicting descriptions/orientations/continuity for this exact target.';
     }
     const output=assetOutputForTarget(rows,{shotId:target.shotId??'',layerId:target.layerId??'',path:target.path});
+    const reuseApproved=matching.flatMap(r=>object(r.source)&&object(r.source.reuse_approved)?[r.source.reuse_approved as {shot_id:string;layer_id:string;sha256?:string}]:[])[0];
     const sourceLedger=composition;
     const declaredKind=matching.map(row=>row.assetKind).find(value=>['background','character','pose','prop','object','other'].includes(value))??'other';
     const sections=[
@@ -232,7 +235,7 @@ export function compileImageJobSpecs(input:{
     // Owner edits can resolve a missing/conflicting description, but never a
     // structural blocker or a missing/integrity-failed style authority.
     if(validOwner&&state==='NEEDS_OWNER_REVIEW'){state='READY';reason='Owner reviewed and supplied this exact target prompt.';}
-    if(style==='B4'&&state==='READY'){
+    if(style==='B4'&&state==='READY'&&!reuseApproved){
       const references=validOwner&&Array.isArray(owner?.references)?owner.references:[];
       if(!references.some(value=>profile.anchors.some(anchor=>value==='@modeb/b4/'+anchor.id))){
         state='NEEDS_OWNER_REVIEW';reason='B4 requires an explicit approved style-lock reference. Select a verified installed B4 anchor.';
@@ -242,7 +245,7 @@ export function compileImageJobSpecs(input:{
       assetKey:target.key,targetKeys:[target.key],expectedPaths:[target.path],
       targetKey:target.key,shotId:target.shotId??'',layerId:target.layerId??'',path:target.path,assetKind:declaredKind,
       state,reason,prompt,promptSha256:prompt?sha(prompt):'',
-      ...(requestedOrientation?{requestedOrientation}:{}),...(output?{output}:{}),
+      ...(requestedOrientation?{requestedOrientation}:{}),...(output?{output}:{}),...(reuseApproved?{reuseApproved}:{}),
       effectivePrompt,effectivePromptSha256:effectivePrompt?sha(effectivePrompt):'',
       sourceDescription,sourceLedger,sourceRows:requirements.effective.map(row=>row.source),
       styleProfileRef:{id:style,path:profile.path,sha256:profile.sha256},
@@ -277,6 +280,7 @@ function withUpstreamIdentity(appPath:string,root:string,item:ImageJobSpec,
     pinnedCharacterIds=[...binding.characterIds];
     const previous=resolver.resolve(item.targetKey);
     const canonical=binding.canonicalAnchors;
+    if(item.reuseApproved&&(!previous||item.reuseApproved.sha256&&item.reuseApproved.sha256!==previous.sha256))throw Error('ASSET_REUSE_SOURCE_NOT_CURRENT');
     const ownerRefs=[...item.references];
     const lockedStyle=ownerRefs.filter(r=>r.startsWith('@modeb/b4/'));
     const supplements=ownerRefs.filter(r=>!r.startsWith('@modeb/b4/'));
@@ -330,6 +334,7 @@ function withUpstreamIdentity(appPath:string,root:string,item:ImageJobSpec,
     const effectivePrompt=item.effectivePrompt?
       item.effectivePrompt+'\n\n'+appendix:'';
     return{...item,references:paths,
+      ...(item.reuseApproved&&previous?{reuseSource:{path:previous.path,sha256:previous.sha256,sourceTargetKey:previous.sourceTargetKey}}:{}),
       identityBindingSnapshotSha,identityTargetBindingSha:binding.targetBindingSha,identityUpstreamSnapshotSha:binding.upstreamSnapshotSha,
       identityApprovalSetSha:binding.approvalSetSha,
       identityStyleBibleSha:binding.styleBibleSha,

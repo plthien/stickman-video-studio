@@ -42,7 +42,8 @@ export function verifyArtwork(d:DecodedArtwork,o:AssetOutput){
 }
 export function prepareArtwork(source:Buffer,o:AssetOutput,decode:AssetDecoder){
   assertAssetOutput(o);let d=decode(source);
-  if(o.preparation==='border_key'){
+  const hasAlpha=o.background==='transparent'&&pixels(d).some((v,i)=>i%4===3&&v===0);
+  if(o.preparation==='border_key'&&!hasAlpha){
     const input=pixels(d),b=Buffer.from(input),w=d.width,h=d.height,n=w*h,[r,g,blue]=o.key_rgb!;
     const key=(i:number)=>b[i*4]===blue&&b[i*4+1]===g&&b[i*4+2]===r&&b[i*4+3]===255;
     const seen=new Uint8Array(n),queue=new Int32Array(n);let head=0,tail=0;

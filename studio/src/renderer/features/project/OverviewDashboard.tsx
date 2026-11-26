@@ -15,6 +15,7 @@ export function OverviewDashboard() {
   const completed=gates.filter(g=>g.ready).length;
   return <div className="grid wide-left">
     <Card><CardHeader title={native?.project.title??'No project open'} hint={native?.project.root??'Create or open a local native project to begin'}/>
+      {native?.nextAction&&<div className="info"><strong>Next action: {native.nextAction.action}</strong><div>{native.nextAction.detail}</div></div>}
       {native?<div className="kvs"><strong>{visualStyleLabel(native.project.style)}</strong><span>{native.brief.topic||'No topic specified'}</span><span>Approved narration: {native.voice&&!native.voice.stale?'PRESENT':'NOT_READY'}</span><span>Final video: {native.render?'RENDERED':'NOT_RUN'}</span></div>:
         <div className="info">EMPTY — No project, script, voice, scene, video or readiness data has been loaded. Nothing is substituted with a sample.</div>}
     </Card>

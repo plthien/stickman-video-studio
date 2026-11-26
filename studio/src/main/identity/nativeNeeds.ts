@@ -31,6 +31,12 @@ export function validateNativeIdentityNeeds(rows:unknown[],targets:NativeImageTa
   }
   if(byKey.size!==targets.length)throw Error('NATIVE_IDENTITY_DECLARATION_MISSING');
   for(const [key,row]of byKey){
+    if(row.reuse_approved){
+      const r=row.reuse_approved,c=row.continuity_source;
+      if(!c||c.shot_id!==r.shot_id||c.layer_id!==r.layer_id||!['same_setup','match_composition'].includes(c.relation))throw Error('ASSET_REUSE_EXPLICIT_CONTINUITY_REQUIRED');
+      const source=[...byKey.values()].find(s=>s.shot_id===r.shot_id&&s.layer_id===r.layer_id);
+      if(!source||contentHash(source.character_ids)!==contentHash(row.character_ids)||source.asset_kind!==row.asset_kind||source.orientation!==row.orientation||contentHash(source.output??null)!==contentHash(row.output??null))throw Error('ASSET_REUSE_REQUIREMENTS_INCOMPATIBLE');
+    }
     if(row.continuity_source){
       const relation:ImageRelation=row.continuity_source.relation;
       if(!['same_setup','match_subject','match_location','match_composition','graphic_sequence'].includes(relation))

@@ -241,7 +241,7 @@ export function StoryboardWorkspace(){
   // Backend re-verifies lineage, references and chargeable state before POST.
   const eligibleBulk=prepared&&pending&&prepared.token===pending.token&&config?
     prepared.jobs.filter(item=>{
-      if(item.state!=='READY'||!item.prompt.trim())return false;
+      if(item.state!=='READY'||item.reuseApproved||!item.prompt.trim())return false;
       const target=galleryTargets.find(candidate=>candidate.key===item.targetKey&&
         candidate.shotId===item.shotId&&candidate.layerId===item.layerId&&
         candidate.path===item.path);
@@ -648,6 +648,7 @@ export function StoryboardWorkspace(){
     ?.target.shotId??shotIds[0]??'';
   return <div className="stack" data-testid="storyboard-automation">
     <Card>
+      {prepared?.jobs.filter(j=>j.reuseApproved).map(j=><div className="info" key={j.targetKey}>Exact reuse: {j.shotId}/{j.layerId} · {j.reuseSource?.path??j.reason}<Button disabled={busy||j.state!=='READY'||!j.reuseSource||!native?.nativeDraft} onClick={async()=>{const scope=captureProjectSession(),draft=native?.nativeDraft,source=j.reuseSource;if(!scope||!draft||!source||!window.studio?.reuseApprovedAsset)return;try{await window.studio.reuseApprovedAsset(scope.projectId,{targetKey:j.targetKey,token:draft.token,candidateSha:draft.artifactSha256,sourceSha:source.sha256,ownerAuthorized:true});if(!isCurrentProjectSession(scope))return;await refresh(scope);const state=await window.studio.projectState(scope.projectId);setNativeIfSessionCurrent(scope,state);}catch(e){if(isCurrentProjectSession(scope))setError(message(e));}}}>Approve reuse of exact source</Button></div>)}
       <CardHeader title="Storyboard Images" action={<Badge tone={native?.nativeDraft?'mint':'amber'}>{native?.nativeDraft?'DRAFT':'NO DRAFT'}</Badge>}/>
       <div className="storyboard-compact-toolbar">
         <div className="info" data-testid="image-queue-counts">
