@@ -157,7 +157,9 @@ function verifyB3PivotVideo(file:string){
   // Decode actual Studio-produced MP4s by frame index (no seek rounding,
   // no reconstructed frames). The installed Core uses the same FFMPEG setting.
   const select=b3Samples.map(s=>'eq(n\\,'+s.frame+')').join('+');
-  const result=spawnSync(process.env.FFMPEG||'ffmpeg',['-v','error','-i',file,'-map','0:v:0','-vf','select='+select,'-vsync','0','-frames:v',String(b3Samples.length),'-threads','1','-f','rawvideo','-pix_fmt','rgb24','pipe:1'],{windowsHide:true,timeout:30000,maxBuffer:8*1024*1024});
+  // Rebase selected frames to consecutive output PTS: no duplicate gap frames,
+  // and no legacy -vsync option (removed by newer FFmpeg versions).
+  const result=spawnSync(process.env.FFMPEG||'ffmpeg',['-v','error','-i',file,'-map','0:v:0','-vf','select='+select+',setpts=N/('+b3Fps+'*TB)','-frames:v',String(b3Samples.length),'-threads','1','-f','rawvideo','-pix_fmt','rgb24','pipe:1'],{windowsHide:true,timeout:30000,maxBuffer:8*1024*1024});
   expect(result.error).toBeUndefined();
   expect(result.status,result.stderr?.toString('utf8')).toBe(0);
   const stride=b3Width*b3Height*3;
