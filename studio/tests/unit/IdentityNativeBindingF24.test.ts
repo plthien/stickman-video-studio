@@ -93,6 +93,8 @@ function setup(continuity=false,additionalImages=0,includeBuiltIn=false,
   };
   atomicJson(path.join(root,'.studio/identity/workflow-v1.json'),record);
   const raw=nativePayload(root,{image:'both'});
+  // Explicit existing image placement for exact-pointer geometry correction tests.
+  for(const shot of raw.manifest.shots)(shot.layers as Array<Record<string,unknown>>)[0].x=100;
   const needs=[
     {shot_id:'shot-1',layer_id:'image-1',expected_path:'assets/images/missing.png',
       content:'Source-grounded first frame',asset_kind:'character',character_ids:['char_001']},
@@ -965,9 +967,10 @@ describe('AF01 — Published Native Correct must stage and independently Recheck
   });
   it('AF01-08 manifest-changing Published Correct completes Correct → Draft → Recheck → explicit owner Publish',async()=>{
     const {root,receipt,manifest}=await baseline();
-    const paths=['/manifest/shots/1/end'];
+    // Geometry changes are valid without changing narration coverage or leaving keys out of range.
+    const paths=['/manifest/shots/1/layers/0/x'];
     const {draft}=await correctPublished(root,paths,artifact=>{
-      (artifact.manifest.shots as Array<{end:number}>)[1].end=29;
+      (artifact.manifest.shots as Array<{layers:Array<{x:number}>}>)[1].layers[0].x=180;
     });
     expect(fs.readFileSync(path.join(root,'project.json'))).toEqual(manifest);
     await recheck(root,paths,true);
@@ -979,6 +982,8 @@ describe('AF01 — Published Native Correct must stage and independently Recheck
     await confirmImport(appPath,root,draft.token,{previewSeconds:30,validator:mockOriginalNativeCli});
     expect(readNativeDraft(root)).toBeNull();
     expect(assertPublishedIdentityCurrent(root,appPath)?.rows[1].ownerApprovalId).toBeTruthy();
-    expect(JSON.parse(fs.readFileSync(path.join(root,'project.json'),'utf8')).shots[1].end).toBe(29);
+    const published=JSON.parse(fs.readFileSync(path.join(root,'project.json'),'utf8'));
+    expect(published.shots[1].layers[0].x).toBe(180);
+    expect(published.shots[1].end).toBe(30);
   });
 });

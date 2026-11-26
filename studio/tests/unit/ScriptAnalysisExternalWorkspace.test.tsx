@@ -140,6 +140,20 @@ describe('Script Analysis first-class External workspace',()=>{
     expect(screen.getByTestId('external-task-prompt')).toHaveTextContent('Frozen identity review 2');
     click('Native');expect(genericEditor()).toHaveValue('{"native":1}');
   });
+  it('UI06B advances only after successful import and preserves the next operation draft on navigation',async()=>{
+    render(workspace());await enter();await build('author',1);
+    h.importResult.mockImplementationOnce(async(id:string,_json:string,revision:number)=>{
+      const j=journals[id];expect(revision).toBe(j.revision);j.currentTask=entry('review',++j.revision);return structuredClone(j);
+    });
+    fireEvent.change(editor(),{target:{value:'{"author":1}'}});
+    click('Import frozen response');
+    await screen.findByText('Frozen identity review 2');
+    fireEvent.change(editor(),{target:{value:'{"review":2}'}});
+    click('Author');click('Script');await enter();
+    expect(editor()).toHaveValue('');
+    click('Review');expect(editor()).toHaveValue('{"review":2}');
+    expect(screen.getByRole('button',{name:'Import frozen response'})).toBeEnabled();
+  });
   it('UI07 invalidates delayed reads after project, operation and stage changes, including returning to the old key',async()=>{
     class Reader {
       result:string|null=null;onload:(()=>void)|null=null;onloadend:(()=>void)|null=null;onerror:(()=>void)|null=null;

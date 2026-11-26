@@ -10,6 +10,7 @@ export interface AuthoritySource {
   applicability:string[]; disposition:Disposition; headings:string[]; text:string; locations?:string[]; blocks?:Array<{location:string;text:string}>;
 }
 export const AUTHORITY_EXTRACTION_REVISION = 'stage-exact-v3';
+const LEGACY_SCRIPT_MEDIA_EXTRACTION_REVISION = 'stage-exact-v2';
 
 const STYLE:Record<string,string>={B1:'b1-minimal-handdrawn.md',B2:'b2-colorful-handdrawn.md',B3:'b3-television.md',B4:'b4-survival-storytelling.md'};
 
@@ -226,7 +227,7 @@ function source(appPath:string,relative:string,style:string,stage:Stage,operatio
   const text=focused?.text??selectSections(full,headings,relative);
   if(!text.trim())throw new Error('REBUILD_REQUIRED: required authority is empty: '+relative);
   return {path:relative,sha256:sha(bytes),extractionSha256:sha(text),
-    extractionRevision:focused?SCRIPT_AUTHOR_EXTRACTION_REVISION:AUTHORITY_EXTRACTION_REVISION,
+    extractionRevision:focused?SCRIPT_AUTHOR_EXTRACTION_REVISION:stage==='script'?LEGACY_SCRIPT_MEDIA_EXTRACTION_REVISION:AUTHORITY_EXTRACTION_REVISION,
     applicability:[style,stage,operation],disposition,
     headings:focused?.headings??headings,...(focused?{locations:focused.locations,blocks:focused.blocks}:{}),text};
 }
@@ -285,7 +286,7 @@ export function compileAuthority(appPath:string,style:string,stage:Stage,operati
     AGENT_ONLY:['automatic tool dispatch, local terminal/browser automation and unattended producer calls']
   }:undefined;
   const referenceMedia=stage==='native'?nativeReferenceInventory(appPath,style):undefined;
-  return {...(referenceMedia?{referenceMedia}:{}),version:stage==='script'&&(['author','review','correct','recheck'] as ExternalOperation[]).includes(operation)?SCRIPT_AUTHOR_EXTRACTION_REVISION:AUTHORITY_EXTRACTION_REVISION,style,stage,operation,rules,sources,
+  return {...(referenceMedia?{referenceMedia}:{}),version:stage==='script'?(operation==='media-review'?LEGACY_SCRIPT_MEDIA_EXTRACTION_REVISION:SCRIPT_AUTHOR_EXTRACTION_REVISION):AUTHORITY_EXTRACTION_REVISION,style,stage,operation,rules,sources,
     ...(scriptAuthorClassification?{scriptAuthorClassification}:{}),
     matrix:{KEEP:sources.map(item=>item.path),
       MOVE_TO_NATIVE:stage==='script'?['references/autopilot-runtime.md','native project.json contract','native CLI validation and production approval']:[],

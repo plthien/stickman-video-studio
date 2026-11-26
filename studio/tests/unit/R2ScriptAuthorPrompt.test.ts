@@ -34,7 +34,8 @@ describe('R2 focused source-exact Script Author handoff',()=>{
       expect(author.scriptAuthorClassification?.AGENT_ONLY.length).toBeGreaterThan(0);
       expect(author.sources.length).toBeGreaterThanOrEqual(5);
       expect(author.sources.some(source=>source.path==='references/autopilot-runtime.md')).toBe(false);
-      expect(native.version).toBe('stage-exact-v2');
+      expect(native.version).toBe('stage-exact-v3');
+      expect(native.referenceMedia?.length).toBeGreaterThan(0);
       expect(native.sources.some(source=>source.path==='references/autopilot-runtime.md')).toBe(true);
       for(const source of author.sources){
         const original=fs.readFileSync(path.join(nativeSkillRoot(appPath).root,source.path));

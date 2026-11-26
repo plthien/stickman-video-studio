@@ -368,7 +368,7 @@ describe('External creative lifecycle',()=>{
           .toEqual(author.sources.map(x=>[x.path,x.sha256,x.extractionSha256,x.extractionRevision]));
       }
       expect(compileAuthority(appPath,style,'script','media-review').version).toBe('stage-exact-v2');
-      expect(compileAuthority(appPath,style,'native','review').version).toBe('stage-exact-v2');
+      expect(compileAuthority(appPath,style,'native','review').version).toBe('stage-exact-v3');
     }
   });
 

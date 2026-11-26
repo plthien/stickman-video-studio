@@ -24,6 +24,14 @@ describe('Completion repair regression: actual PNG pixels and immutable receipt'
 describe('Completion repair regression: real Core plan subprocess',()=>{
  const manifest=(style:string,layers:unknown[])=>({version:1,style,width:1080,height:1920,fps:30,shots:[{id:'shot-1',start:0,end:4,layers}]});
  it('R09 R11 R12 R13 coalesces 100 exact requests, caches deterministic failure and invalidates on motion revision',async()=>{const {root}=fixture(),m=manifest('B1',[{id:'static',type:'text',text:'static'}]);const p=inspectNativePlan(appPath,root,m,4);for(let i=0;i<100;i++)expect(inspectNativePlan(appPath,root,m,4)).toBe(p);const failed=await p;expect(failed.plan).toBe('FAIL');expect(await inspectNativePlan(appPath,root,m,4)).toBe(failed);const revised=manifest('B1',[{id:'line',type:'line',points:[[0,0],[100,0]],progress:0,motion:{role:'information',reason:'Draw visible line'},keys:[{t:0,progress:0},{t:4,progress:1}]}]);const ready=await inspectNativePlan(appPath,root,revised,4);expect(ready.plan).toBe('PASS');expect(ready.candidateSha).not.toBe(failed.candidateSha);expect(ready.renderedPixels).toBe('NOT_VERIFIED');},40000);
+ it('rejects shortened shot with stale keys and rejects a shortened timeline even with valid keys',async()=>{
+   const {root}=fixture();
+   const layer={id:'line',type:'line',points:[[0,0],[100,0]],progress:0,motion:{role:'information',reason:'Draw line'},keys:[{t:0,progress:0},{t:4,progress:1}]};
+   const m=manifest('B1',[layer]);m.shots[0].end=3;
+   expect(await inspectNativePlan(appPath,root,m,4)).toMatchObject({plan:'FAIL',error:expect.stringMatching(/Invalid key time/)});
+   layer.keys[1].t=3;
+   expect(await inspectNativePlan(appPath,root,m,4)).toMatchObject({plan:'FAIL',error:expect.stringMatching(/cover accepted timeline/)});
+ },40000);
  it('R15 preserves original B4 exception for an approved hold',async()=>{const {root}=fixture({style:'B4'}),m=manifest('B4',[{id:'hold',type:'text',text:'hold'}]);Object.assign(m.shots[0],{kind:'exceptional_hold',reason:'Approved hold test',user_approval:'Owner fixture approval'});expect((await inspectNativePlan(appPath,root,m,4)).plan).toBe('PASS');},40000);
 });
 describe('Completion repair regression: historical audio provenance',()=>{

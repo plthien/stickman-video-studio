@@ -30,9 +30,9 @@ export function IdentityAnalysisPanel({active=true,stageTabs}:{active?:boolean;s
   const patch=(target:string,changes:Partial<Draft>)=>setDrafts(prev=>({
     ...prev,[target]:{...(prev[target]??emptyDraft),...changes}
   }));
-  const remember=(projectId:string,journal:IdentityWorkflowStore)=>{
+  const remember=(projectId:string,journal:IdentityWorkflowStore,advance=false)=>{
     const entry=journal.currentTask;
-    if(entry){patch(keyFor(projectId,entry.task.operation),{task:entry});if(entry.status==='FROZEN')setOperation(entry.task.operation);}
+    if(entry){patch(keyFor(projectId,entry.task.operation),{task:entry});if(advance&&entry.status==='FROZEN')setOperation(entry.task.operation);}
   };
   useLayoutEffect(()=>{
     sequence.current++;busyRef.current=false;setBusy(false);setSnapshot(null);
@@ -57,7 +57,7 @@ export function IdentityAnalysisPanel({active=true,stageTabs}:{active?:boolean;s
     }).catch(e=>{if(current()){setSnapshot(null);setLoadError(errorText(e));}})
       .finally(()=>{if(current())setLoading(false);});
   },[active,id,epoch]);
-  const run=(fn:(projectId:string,revision:number)=>Promise<unknown>,after?:()=>void)=>{
+  const run=(fn:(projectId:string,revision:number)=>Promise<unknown>,after?:()=>void,advance=false)=>{
     const scope=captureProjectSession();
     if(!active||!id||!scope||!snapshot||loading||busyRef.current||!window.studio)return;
     const token=++sequence.current,revision=snapshot.journal.revision;
@@ -71,7 +71,7 @@ export function IdentityAnalysisPanel({active=true,stageTabs}:{active?:boolean;s
         after?.();
         try{
           const data=await window.studio!.identitySnapshot(scope.projectId);
-          if(current()){setSnapshot(data);remember(scope.projectId,data.journal);}
+          if(current()){setSnapshot(data);remember(scope.projectId,data.journal,advance&&activeKey.current===key);}
         }catch(e){
           if(current()){setSnapshot(null);setLoadError(errorText(e));}
         }
@@ -188,7 +188,7 @@ export function IdentityAnalysisPanel({active=true,stageTabs}:{active?:boolean;s
         <Button disabled={!draft.json||busy} onClick={()=>change('')}>Clear</Button>
         <Button variant="primary" disabled={!ready||!isFrozen||!draft.json.trim()}
           onClick={()=>run((project,revision)=>window.studio!.identityImport(project,draft.json,revision),
-            ()=>patch(key,{json:'',error:''}))}>Import frozen response</Button>
+            ()=>patch(key,{json:'',error:''}),true)}>Import frozen response</Button>
         <Button disabled={!canApprove}
           onClick={()=>run((project,revision)=>window.studio!.identityApproveAnalysis(project,revision))}>Approve reviewed analysis</Button>
       </div>

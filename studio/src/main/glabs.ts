@@ -677,10 +677,29 @@ export async function pollGlabsImage(appPath:string,root:string,userData:string,
     if(!pureObject(resolved)||resolved.task_id!==task||resolved.status!=='completed'||
       !Array.isArray(resolved.results)||!resolved.results.length||typeof resolved.results[0]!=='string')
       throw new Error('GLABS_RESULT_CONTRACT_INVALID');
-    job.status='DOWNLOADED';job.syncPhase='download';writeJob(root,job);
-    const image=job.sourceImage?{data:fs.readFileSync(resolveProjectFile(root,job.sourceImage.path)),mime:job.sourceMime??'image/png' as const,mimeDiagnostic:job.mimeDiagnostic}:await downloadImage(config,resolved.results[0],userData,cipher);
-    if(job.sourceImage&&sha(image.data)!==job.sourceImage.sha256)throw Error('ASSET_SOURCE_SHA_MISMATCH');
+    // Another poll may have persisted the exact source while this GET was pending.
+    const durable=readJob(root,id);
+    if(['VALIDATED','APPROVED','FAILED','STALE','CANCELLED'].includes(durable.status))return durable;
+    Object.assign(job,durable);
     if(!currentJobTarget(appPath,root,job))return job;
+    if(durable.sourceImage){
+      const bytes=fs.readFileSync(resolveProjectFile(root,durable.sourceImage.path));
+      if(sha(bytes)!==durable.sourceImage.sha256)throw Error('ASSET_SOURCE_SHA_MISMATCH');
+      job.syncPhase='decode';
+      return finishLocalImage(root,job,bytes,decode);
+    }
+    job.status='DOWNLOADED';job.syncPhase='download';writeJob(root,job);
+    const image=await downloadImage(config,resolved.results[0],userData,cipher);
+    const afterDownload=readJob(root,id);
+    if(['VALIDATED','APPROVED','FAILED','STALE','CANCELLED'].includes(afterDownload.status))return afterDownload;
+    Object.assign(job,afterDownload);
+    if(!currentJobTarget(appPath,root,job))return job;
+    if(afterDownload.sourceImage){
+      const bytes=fs.readFileSync(resolveProjectFile(root,afterDownload.sourceImage.path));
+      if(sha(bytes)!==afterDownload.sourceImage.sha256)throw Error('ASSET_SOURCE_SHA_MISMATCH');
+      job.syncPhase='decode';
+      return finishLocalImage(root,job,bytes,decode);
+    }
     job.sourceMime=image.mime;
     if(image.mimeDiagnostic)job.mimeDiagnostic=image.mimeDiagnostic;
     else delete job.mimeDiagnostic;
