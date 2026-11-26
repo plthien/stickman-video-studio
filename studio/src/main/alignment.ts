@@ -155,8 +155,9 @@ export async function publishAlignment(appPath: string, root: string, raw: Recor
     writeState(root, latest);
     // R3: Local word-boundary regroup only. Never re-upload to ElevenLabs or edit WAV.
     try{
-      const {autoCaptionReview}=await import('./captionReview.js');
+      const {autoCaptionReview,ensureCaptionAuthorTask}=await import('./captionReview.js');
       autoCaptionReview(root);
+      if(readState(root).identityPolicy==='v1')ensureCaptionAuthorTask(root);
     }catch(error){
       const now=readState(root);
       if(now.alignment && now.alignment.wordsSha256===latest.alignment.wordsSha256){

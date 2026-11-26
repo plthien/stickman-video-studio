@@ -60,7 +60,7 @@ export function VoiceWorkspace() {
   const hasAlignment = Boolean(native?.alignment);
   const wordsSha256 = native?.alignment?.wordsSha256;
   const captionRevision = native?.alignment?.captionReview?.revision;
-  const [review,setReview]=useState<null|{status:string;workflowStatus:string;error?:string;wordCount:number;cueCount:number;duration:number;words:Array<{word:string;start:number;end:number}>;original:Array<{start:number;end:number;text:string}>;originalBoundaries:number[];captionAuthorTask?:{taskId:string;prompt:string;status:'FROZEN'|'IMPORTED'}|null;draft:null|{sha256?:string;boundaries:number[];cues:Array<{start:number;end:number;text:string}>};approved:null|{revision:number;mode?:'AUTO'|'MANUAL';cues:Array<{start:number;end:number;text:string}>}}>(null);
+  const [review,setReview]=useState<null|{status:string;workflowStatus:string;error?:string;wordCount:number;cueCount:number;duration:number;words:Array<{word:string;start:number;end:number}>;original:Array<{start:number;end:number;text:string}>;originalBoundaries:number[];captionAuthorTask?:{taskId:string;prompt:string;status:'FROZEN'|'IMPORTED'}|null;canApproveDraft?:boolean;draftKind?:string;draft:null|{sha256?:string;technicalDraft?:boolean;boundaries:number[];cues:Array<{start:number;end:number;text:string}>};approved:null|{revision:number;mode?:'AUTO'|'MANUAL';cues:Array<{start:number;end:number;text:string}>}}>(null);
   const [captionResult,setCaptionResult]=useState('');
   const [historicalNarrator,setHistoricalNarrator]=useState('');
   useEffect(()=>setHistoricalNarrator(''),[id,audioSha]);
@@ -151,8 +151,8 @@ export function VoiceWorkspace() {
         try{await act(()=>window.studio!.captionAuto(id!),'Technical grouping prepared; review is required for AI-first projects.');}
         finally{setAutoGenerating(false);}
       }}>Prepare technical grouping (legacy auto)</Button>
-      <Button disabled={!id||status==='busy'} onClick={()=>runReview(()=>window.studio!.captionAuthorFreeze(id!),'Caption Author task frozen.')}>Freeze AI Caption Author</Button>
-      {review.captionAuthorTask&&<div className="stack">
+      {native?.identityPolicy!=='v1'?<Button disabled={!id||status==='busy'} onClick={()=>runReview(()=>window.studio!.captionAuthorFreeze(id!),'Caption Author task frozen.')}>Freeze AI Caption Author</Button>:<details><summary>Advanced caption recovery</summary><Button disabled={!id||status==='busy'} onClick={()=>runReview(()=>window.studio!.captionAuthorFreeze(id!),'Caption Author task frozen.')}>Rebuild AI Caption Author</Button></details>}
+      {review.captionAuthorTask?.status==='FROZEN'&&<div className="stack">
         <Textarea readOnly value={review.captionAuthorTask.prompt}/>
         <Button onClick={()=>void navigator.clipboard.writeText(review.captionAuthorTask!.prompt)}>Copy frozen prompt</Button>
         <Field label="Caption Author JSON result"><Textarea value={captionResult} onChange={event=>setCaptionResult(event.target.value)}/></Field>
@@ -168,7 +168,7 @@ export function VoiceWorkspace() {
       {native?.identityPolicy!=='v1'&&<><Field label="Required owner review note"><Textarea value={reviewNote} onChange={event=>setReviewNote(event.target.value)} placeholder="Confirm exact spoken words and semantic cue grouping"/></Field>
       <Button variant="primary" disabled={!id||!review.draft||!reviewNote.trim()||status==='busy'} onClick={()=>runReview(()=>window.studio!.captionApprove(id!,reviewNote),'Caption revision approved and native task invalidated for re-freeze.')}>Approve caption revision</Button></>}
       </>}
-      {native?.identityPolicy==='v1'&&review.draft?.sha256&&<Button variant="primary" disabled={status==='busy'||!id} onClick={()=>runReview(()=>window.studio!.captionApproveCurrent!(id!,{sha256:review.draft!.sha256!,ownerAuthorized:true}),'Exact caption draft approved.')}>Approve caption revision</Button>}
+      {native?.identityPolicy==='v1'&&review.canApproveDraft&&review.draft?.sha256&&<Button variant="primary" disabled={status==='busy'||!id} onClick={()=>runReview(()=>window.studio!.captionApproveCurrent!(id!,{sha256:review.draft!.sha256!,ownerAuthorized:true}),'Exact caption draft approved.')}>Approve caption revision</Button>}
     </>}
   </Card></div>;
 }

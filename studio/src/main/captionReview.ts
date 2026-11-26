@@ -94,11 +94,23 @@ export function getCaptionReview(root: string) {
   let status:'REVIEW_REQUIRED'|'STALE_REVIEW'|'CORRUPT_REGISTERED_REVIEW'|'VERIFIED'|'AUTO_VERIFIED'='REVIEW_REQUIRED',approved:({cues:CaptionCue[]}&CaptionReviewRecord)|null=null;
   if(review){if(review.sourceSha256!==sourceSha256)status='STALE_REVIEW';else{try{const bytes=fs.readFileSync(resolveProjectFile(root,review.path));if(sha(bytes)!==review.sha256)throw new Error('hash');const cues=readCues(root,review.path),boundaries=boundariesFromCues(words,cues);if(!same(cues,buildCues(words,boundaries,offset,nativeVoiceTiming(root,state).timelineDuration)))throw new Error('content');approved={...review,cues};status=review.mode==='AUTO'?'AUTO_VERIFIED':'VERIFIED'}catch{status='CORRUPT_REGISTERED_REVIEW'}}}
   const draft=state.alignment?.captionDraft;
-  const validDraft=draft && draft.sourceSha256===sourceSha256 && fs.existsSync(resolveProjectFile(root,draft.path)) && sha(fs.readFileSync(resolveProjectFile(root,draft.path)))===draft.sha256;
-  return {words,original,sourceSha256,captionAuthorTask:state.alignment?.captionAuthorTask?.sourceSha256===sourceSha256?state.alignment.captionAuthorTask:null,status,workflowStatus:status==='VERIFIED'?'USER_APPROVED':status==='STALE_REVIEW'?'STALE':status,approved,
+  let verifiedDraft: (NonNullable<NonNullable<typeof state.alignment>['captionDraft']>&{cues:CaptionCue[]})|null=null;
+  if(draft?.sourceSha256===sourceSha256){
+    try{
+      const bytes=fs.readFileSync(resolveProjectFile(root,draft.path));
+      const cues=readCues(root,draft.path);
+      if(sha(bytes)===draft.sha256&&same(cues,buildCues(words,draft.boundaries,offset,duration)))
+        verifiedDraft={...draft,cues};
+    }catch{/* stale/corrupt draft is not an approval candidate */}
+  }
+  const author=state.alignment?.captionAuthorTask;
+  const validAuthor=author?.sourceSha256===sourceSha256&&author.inputSha256===sha(JSON.stringify({sourceSha256,words,offset,duration}))?author:null;
+  const draftKind=verifiedDraft?(verifiedDraft.technicalDraft?'TECHNICAL':verifiedDraft.authorTaskId&&validAuthor?.status==='IMPORTED'&&validAuthor.taskId===verifiedDraft.authorTaskId?'AI_AUTHORED':verifiedDraft.authorTaskId?'CORRUPT':'OWNER_CORRECTED'):draft?'STALE_OR_CORRUPT':'NONE';
+  const canApproveDraft=draftKind==='AI_AUTHORED'||draftKind==='OWNER_CORRECTED';
+  return {words,original,sourceSha256,captionAuthorTask:validAuthor,draftKind,canApproveDraft,status,workflowStatus:status==='VERIFIED'?'USER_APPROVED':status==='STALE_REVIEW'?'STALE':status,approved,
     wordCount:words.length, cueCount:approved?.cues.length??original.length, duration,
     error:status==='REVIEW_REQUIRED'?state.alignment?.captionAutoError:undefined,
-    draft: validDraft ? { ...draft, cues: readCues(root,draft!.path) } : null,
+    draft: verifiedDraft,
     originalBoundaries,shift:offset};
 }
 function invalidateTimingDependents(root:string,state:ReturnType<typeof readState>,approvedSource:string|undefined,currentSource:string) {
@@ -174,6 +186,7 @@ export function approveCaptionReview(root:string,note:string,expectedSha?:string
   if (!draft || draft.sourceSha256!==sourceSha256 || sha(fs.readFileSync(resolveProjectFile(root,draft.path)))!==draft.sha256) throw new Error('Caption draft source is stale or missing.');
   if(expectedSha!==undefined&&expectedSha!==draft.sha256)throw Error('CAPTION_APPROVAL_STALE');
   if(draft.technicalDraft)throw Error('CAPTION_TECHNICAL_DRAFT_REQUIRES_AI_AUTHOR_OR_EXPLICIT_MANUAL_CORRECTION');
+  if(!getCaptionReview(root).canApproveDraft)throw Error('CAPTION_DRAFT_AUTHORITY_INVALID');
   const cues=buildCues(words,draft.boundaries,offset,duration);
   if (!same(cues,readCues(root,draft.path))) throw new Error('Caption draft was changed outside review.');
   const existing=alignment.captionReview;
@@ -270,4 +283,4 @@ export function autoCaptionReview(root:string){
   return{status:'AUTO_VERIFIED' as const,cues,revision};
 }
 
-export function ensureCaptionAuthorTask(root:string){const current=getCaptionReview(root);if(current.status==='VERIFIED'||current.draft||current.captionAuthorTask)return current.captionAuthorTask;return freezeCaptionAuthorTask(root);}
+export function ensureCaptionAuthorTask(root:string){const current=getCaptionReview(root);if(current.status==='VERIFIED'||current.canApproveDraft||current.captionAuthorTask?.status==='FROZEN')return current.captionAuthorTask;return freezeCaptionAuthorTask(root);}

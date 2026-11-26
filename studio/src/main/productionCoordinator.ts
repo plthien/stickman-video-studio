@@ -45,7 +45,7 @@ async function derive(appPath:string,root:string,decode:IdentityDecoder):Promise
  if(!state.voice||state.voice.stale)return next('VOICE','Generate or import approved narration.');
  if(!state.alignment)return next('ALIGN','Authorize alignment of accepted WAV.');
  const caption=getCaptionReview(root);
- if(caption.status!=='VERIFIED')return next(caption.draft?'CAPTION_APPROVE':'CAPTION_AUTHOR','Approve exact caption revision or import frozen Caption Author result.');
+ if(caption.status!=='VERIFIED')return caption.canApproveDraft?next('CAPTION_APPROVE','Approve the exact semantic caption revision.'):next('CAPTION_AUTHOR','Import the frozen semantic Caption Author result; technical grouping is not approval authority.');
  const draft=readNativeDraft(root,state);
  if(!draft){
    if(state.tasks?.native?.status==='IMPORTED'&&state.nativeReadiness?.fullReady){
@@ -72,6 +72,19 @@ async function derive(appPath:string,root:string,decode:IdentityDecoder):Promise
    if(!scope.editablePaths?.length)return next('NATIVE_REISSUE','No structured editable paths; owner must explicitly reissue Author.','native');
    freezeLifecycleTask(appPath,root,'native','correct',{...scope,targetContext:'DRAFT'});
    return next('NATIVE_CORRECT','Import scoped Native Correct result.','native','correct');
+ }
+ if(report.status==='REVIEWED_NO_FINDINGS'&&plan?.plan==='FAIL'){
+   // The exact preflight error is included by freezeLifecycleTask in the frozen evidence.
+   // A clean verdict cannot authorize invalid motion; never synthesize findings or paths.
+   const op=draft.history.length?'recheck':'review';
+   const existing=state.lifecycle?.tasks['native:'+op];
+   if(existing?.status==='FROZEN'&&existing.artifactSha256===draft.sha256&&existing.draftToken===draft.token)
+     return next('NATIVE_'+op.toUpperCase(),'Original plan FAIL: '+plan.error+'; import independent technical repair assessment.','native',op);
+   if(report.taskId===existing?.id&&existing.status==='IMPORTED'){
+     return next('NATIVE_REISSUE','Original plan FAIL: '+plan.error+'; clean independent verdict provides no authorized correction. Explicitly reissue Native Author.','native','author');
+   }
+   freezeLifecycleTask(appPath,root,'native',op,{targetContext:'DRAFT'});
+   return next('NATIVE_'+op.toUpperCase(),'Original plan FAIL: '+plan.error+'; import independent technical repair assessment.','native',op);
  }
  if(report.status!=='REVIEWED_NO_FINDINGS'||plan?.plan!=='PASS')return next('NATIVE_BLOCKED','Technical/creative blocker: '+(plan?.error??report.status)+'; use independent Review or explicit reissue.','native');
  const pending=getPendingMedia(appPath,root);
