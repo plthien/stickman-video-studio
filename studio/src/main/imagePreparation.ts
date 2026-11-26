@@ -22,6 +22,8 @@ export interface ImageJobSpec {
   output?:AssetOutput;
   reuseApproved?:{shot_id:string;layer_id:string;sha256?:string};
   reuseSource?:{path:string;sha256:string;sourceTargetKey:string};
+  /** Display-only exact source for a dependency within the same authorized batch. */
+  reuseBatchSource?:{path:string;sha256:string;sourceTargetKey:string};
   effectivePrompt:string;effectivePromptSha256:string;
   sourceDescription:string;sourceLedger:string;sourceRows:unknown[];
   styleProfileRef:{id:Style;path:string;sha256:string};
@@ -379,9 +381,27 @@ export function prepareNativeImages(appPath:string,root:string,persist=false){
   const resolver=state.identityPolicy==='v1'?
     createContinuityResolver(appPath,root):undefined;
   const report=state.identityPolicy==='v1'?cachedNativePlan(appPath,root,draft.artifact.manifest,nativeVoiceTiming(root,state).timelineDuration,draft.sha256):null;
-  const jobs=compileImageJobSpecs({projectId:state.project.id,style,authorTaskId:draft.authorTaskId,draftRevision:draft.revision,
-    token:draft.token,pending,profile,fingerprints,overrides:overrides.items})
-    .map(job=>gatePlan(report,gateCreativeAuthority(state,draft,resolver?withUpstreamIdentity(appPath,root,job,resolver):job)));
+  const compiled=compileImageJobSpecs({projectId:state.project.id,style,authorTaskId:draft.authorTaskId,draftRevision:draft.revision,
+    token:draft.token,pending,profile,fingerprints,overrides:overrides.items});
+  const jobs=compiled.map(job=>gatePlan(report,gateCreativeAuthority(state,draft,resolver?withUpstreamIdentity(appPath,root,job,resolver):job)));
+  // The full batch can include an exact reuse chain rooted at already approved
+  // bytes. Do NOT mark a dependent READY for a paid request or single approval.
+  // The bind operation independently verifies every hop after its parent binds.
+  if(resolver&&report?.plan==='PASS'){
+    const authorized=new Map<string,NonNullable<ImageJobSpec['reuseSource']>>();
+    for(let i=0;i<jobs.length;i++){
+      const job=jobs[i],base=compiled[i],key=job.shotId+'/'+job.layerId;
+      if(!job.reuseApproved)continue;
+      if(job.state==='READY'&&job.reuseSource){authorized.set(key,job.reuseSource);continue;}
+      if(job.reason!=='CONTINUITY_SOURCE_NOT_READY'||base.state!=='READY'||base.ownerEdited&&!base.ownerCreativeReviewSha)continue;
+      const parent=authorized.get(job.reuseApproved.shot_id+'/'+job.reuseApproved.layer_id);
+      if(!parent||job.reuseApproved.sha256&&job.reuseApproved.sha256!==parent.sha256)continue;
+      try{
+        requireReviewedNativeDraft(state,draft,resolver.getBinding(job.targetKey).upstreamSnapshotSha);
+        job.reuseBatchSource=parent;authorized.set(key,parent);
+      }catch{/* no batch authority when the exact review is missing */}
+    }
+  }
   const result={status:'PRE_MEDIA_PROJECTION' as const,style,revision:draft.revision,token:draft.token,
     jobs,shotCount:Array.isArray(pending.after?.shots)?pending.after!.shots!.length:0,imageOccurrences:image.length,
     uniquePaths:new Set(image.map(target=>target.path)).size};

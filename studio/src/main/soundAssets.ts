@@ -79,8 +79,8 @@ export async function importSoundBatch(appPath:string,root:string,input:{token:s
  const before=soundInventory(appPath,root);if(before.token!==input.token||before.candidateSha!==input.candidateSha)throw Error('SOUND_BATCH_STALE');
  const results:Array<{file:string;status:'IMPORTED'|'FAILED';detail:string}>=[];
  for(const file of [...new Set(input.files)]){
-   try{await probeAudio(appPath,file);const current=soundInventory(appPath,root);if(current.token!==input.token||current.candidateSha!==input.candidateSha)throw Error('SOUND_BATCH_STALE');
-     const source=importMediaFile(root,file,'sfx',input.rights.trim());if(source.rights!==input.rights.trim())throw Error('SOUND_SOURCE_RIGHTS_MISMATCH');
+   try{if(!path.isAbsolute(file)||!fs.statSync(file).isFile())throw Error('SOUND_LOCAL_FILE_REQUIRED');const originalSha=sha(fs.readFileSync(file));await probeAudio(appPath,file);if(sha(fs.readFileSync(file))!==originalSha)throw Error('SOUND_SOURCE_SHA_MISMATCH');const current=soundInventory(appPath,root);if(current.token!==input.token||current.candidateSha!==input.candidateSha)throw Error('SOUND_BATCH_STALE');
+     const source=importMediaFile(root,file,'sfx',input.rights.trim());if(source.sha256!==originalSha||source.rights!==input.rights.trim())throw Error('SOUND_SOURCE_RIGHTS_MISMATCH');
      results.push({file,status:'IMPORTED',detail:source.path});
    }catch(error){results.push({file,status:'FAILED',detail:error instanceof Error?error.message:String(error)});}
  }

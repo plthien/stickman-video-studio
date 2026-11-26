@@ -632,6 +632,10 @@ export function publishNativeDraftCorrection(appPath:string,root:string,original
       const newIdentity=imageTargetIdentity(state,draft.authorTaskId,draft.token,
         draft.revision+1,newArtifact,key);
       if(oldIdentity.fingerprint!==newIdentity.fingerprint)return false;
+    }else{
+      const oldCue=structuredSoundCues(draft.artifact.manifest,draft.artifact.sound_script as unknown[]).find(c=>c.key===key);
+      const newCue=structuredSoundCues(normalized.manifest,normalized.soundScript as unknown[]).find(c=>c.key===key);
+      if(JSON.stringify(oldCue??null)!==JSON.stringify(newCue??null))return false;
     }
     const saved=state.media?.find(row=>row.path===binding.relative&&row.kind===binding.kind&&
       row.sha256===binding.sha256&&row.rights===binding.rights);

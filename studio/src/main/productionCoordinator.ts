@@ -28,7 +28,7 @@ async function continueFullProduction(appPath:string,root:string):Promise<Produc
    await nativeJob(appPath,root,'preview',{seconds,replace:true});
    return next('PREVIEW_APPROVE','Watch and approve the exact verified preview to render the full video.');
  }
- await verifyPersistedNativeEvidence(appPath,root,state);
+ try{await verifyPersistedNativeEvidence(appPath,root,state);}catch(error){return next('PREVIEW_RETRY','Current preview/approval evidence is invalid: '+(error instanceof Error?error.message:String(error)));}
  if(!state.approval)return next('PREVIEW_APPROVE','Watch and approve the exact verified preview to render the full video.');
  if(state.render)return next('DONE','Verified final output: '+state.render.path);
  // A durable original approval is the explicit human authority for continuation.
