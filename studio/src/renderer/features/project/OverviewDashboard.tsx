@@ -10,7 +10,7 @@ export function OverviewDashboard() {
     {title:'Script',ready:Boolean(native?.approvedScript),href:'/script',detail:native?.approvedScript?`${native.approvedScript.sections.length} approved sections`:'No approved script'},
     {title:'Voice & Captions',ready:Boolean(native?.voice&&!native.voice.stale&&native.projection?.captionReady),href:'/voice',detail:native?.voice&&!native.voice.stale?(native.projection?.captionReady?'Narration and approved captions verified':'Narration recorded; caption review required until approved'):'Narration and reviewed captions required'},
     {title:'Storyboard',ready:shots.length>0,href:'/storyboard',detail:shots.length?`${shots.length} native shots`:'No native storyboard shots'},
-    {title:'Video Editor',ready:Boolean(native?.preview),href:'/editor',detail:native?.preview?'Native encoded sample exists':'Native preview NOT_RUN'}
+    {title:'Video Editor',ready:Boolean(native?.preview),href:'/editor',detail:native?.preview?'Verified native preview exists':'Native preview NOT_RUN'}
   ];
   const completed=gates.filter(g=>g.ready).length;
   return <div className="grid wide-left">

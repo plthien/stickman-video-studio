@@ -1,4 +1,8 @@
-import {readState} from './services.js';
+import {readState,resolveProjectFile,sha} from './services.js';
+import fs from 'node:fs';
+import {nativeJob} from './nativeJobs.js';
+import {currentNativeEvidence,verifyPersistedNativeEvidence} from './nativeEvidence.js';
+import {assertPublishedIdentityCurrent} from './identity/finalGate.js';
 import {freezeTask,readNativeDraft,getPendingMedia,inspectCurrentNativePlan,confirmImport} from './externalTasks.js';
 import {freezeLifecycleTask,suggestedCorrectScope} from './externalLifecycle.js';
 import {identityWorkflowSnapshot,readIdentityWorkflow,freezeIdentityTask,prepareAutomaticReferenceGallery} from './identity/identityWorkflow.js';
@@ -7,6 +11,35 @@ import type {IdentityDecoder} from './identity/referencePublication.js';
 export type ProductionNext={action:string;detail:string;operation?:'author'|'review'|'correct'|'recheck';stage?:'script'|'native'|'analysis'};
 const active=new Map<string,Promise<ProductionNext>>();
 const next=(action:string,detail:string,stage?:ProductionNext['stage'],operation?:ProductionNext['operation']):ProductionNext=>({action,detail,stage,operation});
+async function continueFullProduction(appPath:string,root:string):Promise<ProductionNext>{
+ const state=readState(root);
+ if(!state.nativeReadiness?.fullReady)throw Error('FULL_PRODUCTION_REQUIRES_FULL_READY');
+ assertPublishedIdentityCurrent(root,appPath,'FULL');
+ const evidence=currentNativeEvidence(root,state);
+ const seconds=state.nativeReadiness.previewSeconds;
+ const previewEvidence=currentNativeEvidence(root,state,{seconds});
+ const jobFile=resolveProjectFile(root,'.studio/jobs/latest.json');
+ const job=fs.existsSync(jobFile)?JSON.parse(fs.readFileSync(jobFile,'utf8')) as {command?:string;status?:string;sourceFingerprint?:string;error?:string}:null;
+ // Failed local production is surfaced, not endlessly retried by state refresh.
+ // Interrupted local jobs may safely resume through original transaction and lock.
+ if(!state.preview){
+   if(job?.command==='preview'&&job.status==='FAILED'&&job.sourceFingerprint===previewEvidence.fingerprint)
+     return next('PREVIEW_RETRY','Original preview failed: '+(job.error??'See native job diagnostics'));
+   await nativeJob(appPath,root,'preview',{seconds,replace:true});
+   return next('PREVIEW_APPROVE','Watch and approve the exact verified preview to render the full video.');
+ }
+ await verifyPersistedNativeEvidence(appPath,root,state);
+ if(!state.approval)return next('PREVIEW_APPROVE','Watch and approve the exact verified preview to render the full video.');
+ if(state.render)return next('DONE','Verified final output: '+state.render.path);
+ // A durable original approval is the explicit human authority for continuation.
+ if(state.approval.previewSha256!==state.preview.sha256)throw Error('PREVIEW_APPROVAL_STALE');
+ if(job?.command==='render'&&job.status==='FAILED'&&job.sourceFingerprint===evidence.fingerprint)
+   return next('RENDER_RETRY','Original render failed: '+(job.error??'See native job diagnostics'));
+ await nativeJob(appPath,root,'render',{replace:true});
+ const final=readState(root);
+ if(!final.render||sha(fs.readFileSync(resolveProjectFile(root,final.render.path)))!==final.render.sha256)throw Error('FULL_RENDER_EVIDENCE_MISSING');
+ return next('DONE','Verified final output: '+final.render.path);
+}
 async function derive(appPath:string,root:string,decode:IdentityDecoder):Promise<ProductionNext>{
  let state=readState(root);
  if(state.identityPolicy!=='v1')return next('LEGACY','Legacy workflow remains explicit.');
@@ -46,14 +79,19 @@ async function derive(appPath:string,root:string,decode:IdentityDecoder):Promise
  if(!state.alignment)return next('ALIGN','Authorize alignment of accepted WAV.');
  const caption=getCaptionReview(root);
  if(caption.status!=='VERIFIED')return caption.canApproveDraft?next('CAPTION_APPROVE','Approve the exact semantic caption revision.'):next('CAPTION_AUTHOR','Import the frozen semantic Caption Author result; technical grouping is not approval authority.');
- const draft=readNativeDraft(root,state);
+ let draft:ReturnType<typeof readNativeDraft>;
+ try{draft=readNativeDraft(root,state);}catch(error){
+   if(error instanceof Error&&error.message==='NATIVE_DRAFT_STALE_AUTHOR_TASK'){
+     if(state.tasks?.native?.status==='FROZEN')return next('NATIVE_AUTHOR','Import the explicitly reissued Native Author; historical draft and licensed assets remain preserved.','native','author');
+     return next('NATIVE_REISSUE','Previous draft has stale Author authority; explicitly reissue Native Author.','native','author');
+   }
+   throw error;
+ }
  if(!draft){
    if(state.tasks?.native?.status==='IMPORTED'&&state.nativeReadiness?.fullReady){
-     if(!state.preview)return next('PREVIEW','Authorize original Core preview.');
-     if(!state.approval)return next('PREVIEW_APPROVE','Watch and approve the current preview.');
-     return next(state.render?'DONE':'RENDER',state.render?'Final render registered.':'Authorize final render.');
+     return continueFullProduction(appPath,root);
    }
-   if(state.tasks?.native?.status==='IMPORTED')return next('NATIVE_RECOVERY','Published sample requires explicit continuation/rebuild.','native');
+   if(state.tasks?.native?.status==='IMPORTED')return next('NATIVE_RECOVERY','Historical incomplete publication: explicitly reissue Native Author for Full Production; existing licensed assets are retained.','native');
    freezeTask(appPath,root,'native');return next('NATIVE_AUTHOR','Copy frozen Native Author prompt and import result.','native','author');
  }
  const plan=await inspectCurrentNativePlan(appPath,root);
@@ -91,7 +129,7 @@ async function derive(appPath:string,root:string,decode:IdentityDecoder):Promise
  if(!pending||pending.stage!=='native')throw Error('NATIVE_PENDING_MEDIA_REQUIRED');
  if(pending.missing.length)return next('ASSETS','Complete '+pending.missing.length+' required media target(s).');
  await confirmImport(appPath,root,pending.token,{allowSampleDraft:false});
- return next('PREVIEW','Full Native publication validated. Authorize original Core preview.');
+ return continueFullProduction(appPath,root);
 }
 export function advanceProduction(appPath:string,root:string,decode:IdentityDecoder):Promise<ProductionNext>{
  const existing=active.get(root);if(existing)return existing;
