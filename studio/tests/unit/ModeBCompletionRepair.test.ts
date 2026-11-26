@@ -156,15 +156,19 @@ function assertB3PivotFrames(frames:Buffer[]){
 function verifyB3PivotVideo(file:string){
   // Decode actual Studio-produced MP4s by frame index (no seek rounding,
   // no reconstructed frames). The installed Core uses the same FFMPEG setting.
-  const select=b3Samples.map(s=>'eq(n\\,'+s.frame+')').join('+');
-  // Rebase selected frames to consecutive output PTS: no duplicate gap frames,
-  // and no legacy -vsync option (removed by newer FFmpeg versions).
-  const result=spawnSync(process.env.FFMPEG||'ffmpeg',['-v','error','-i',file,'-map','0:v:0','-vf','select='+select+',setpts=N/('+b3Fps+'*TB)','-frames:v',String(b3Samples.length),'-threads','1','-f','rawvideo','-pix_fmt','rgb24','pipe:1'],{windowsHide:true,timeout:30000,maxBuffer:8*1024*1024});
-  expect(result.error).toBeUndefined();
-  expect(result.status,result.stderr?.toString('utf8')).toBe(0);
   const stride=b3Width*b3Height*3;
-  expect(result.stdout.length).toBe(stride*b3Samples.length);
-  const measured=assertB3PivotFrames(b3Samples.map((_,i)=>result.stdout.subarray(i*stride,(i+1)*stride)));
+  // Decode each selected frame independently and reset its PTS to zero.
+  // Sparse multi-frame output can duplicate frames under default CFR sync;
+  // this avoids that ambiguity and the removed legacy -vsync option.
+  const frames=b3Samples.map(sample=>{
+    const filter='select=eq(n\\,'+sample.frame+'),setpts=PTS-STARTPTS';
+    const result=spawnSync(process.env.FFMPEG||'ffmpeg',['-v','error','-i',file,'-map','0:v:0','-vf',filter,'-frames:v','1','-threads','1','-f','rawvideo','-pix_fmt','rgb24','pipe:1'],{windowsHide:true,timeout:30000,maxBuffer:8*1024*1024});
+    expect(result.error).toBeUndefined();
+    expect(result.status,result.stderr?.toString('utf8')).toBe(0);
+    expect(result.stdout.length,'B3 frame '+sample.frame+' RGB byte length').toBe(stride);
+    return result.stdout;
+  });
+  const measured=assertB3PivotFrames(frames);
   console.info('B3 actual decoded pivot evidence',JSON.stringify({file,samples:measured}));
 }
 function assertB3PivotDiagnostics(report:{local_motion:{intervals:Array<{id:string;changed_pixels:number}>;windows:Array<{id:string;changed_pixels:number}>}}){
