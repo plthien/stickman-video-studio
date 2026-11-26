@@ -26,7 +26,7 @@ import {listReferenceJobs,submitReferenceJob,syncReferenceJob,
   validateNewReferenceGenerateInput} from './identity/referenceGeneration.js';
 import {previewReferenceSwitchImpact} from './identity/impact.js';
 import type {IdentityReviewOperation} from './identity/contracts.js';
-import { assertLocalRoot, assertMediaRelative, fileFetchUrl, mediaUrl, projectId, readState, strictJson, writeState, type NativeCommand, type Stage, type StudioState } from './services.js';
+import { assertLocalRoot, assertMediaRelative, fileFetchUrl, mediaUrl, projectId, readState, strictJson, writeState,repairB4Narrator, type NativeCommand, type Stage, type StudioState } from './services.js';
 
 if (process.env.MODE_B_STUDIO_DISABLE_GPU === '1') { app.disableHardwareAcceleration(); app.commandLine.appendSwitch('disable-gpu'); app.commandLine.appendSwitch('disable-gpu-compositing'); }
 if(process.env.MODE_B_STUDIO_USER_DATA){const userData=path.resolve(process.env.MODE_B_STUDIO_USER_DATA);if(!path.isAbsolute(process.env.MODE_B_STUDIO_USER_DATA)||userData.startsWith('\\\\'))throw new Error('MODE_B_STUDIO_USER_DATA must be a local absolute path.');fs.mkdirSync(userData,{recursive:true});app.setPath('userData',userData)}
@@ -231,6 +231,7 @@ function registerIpc() {
   ipcMain.handle('voice:align', (_event, id: string, authorized: boolean) => alignWithElevenLabs(
     app.getAppPath(),rootFor(id),authorized,
     authorized?resolveElevenLabsKey(app.getPath('userData'),safeStorage):undefined));
+  ipcMain.handle('voice:repairB4Narrator',(_event,id:string,sha:string,confirmation?:{name:string;scriptSha:string;ownerConfirmed:true})=>repairB4Narrator(rootFor(id),sha,confirmation));
   ipcMain.handle('voice:playbackUrl', (_event,id:string) => acceptedNarrationPlaybackUrl(rootFor(id)));
   ipcMain.handle('voice:narrationAction', (_event,id:string)=>narrationAction(rootFor(id)));
   ipcMain.handle('voice:repairTiming', (_event,id:string)=>repairAlignmentTiming(app.getAppPath(),rootFor(id)));

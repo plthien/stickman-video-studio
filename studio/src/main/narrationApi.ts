@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {decodeProducerReceipt,nanoBase,synthesizeNano,verifiedNanoProfile} from './nanoClient.js';
-import {acceptNarration,atomicJson,inspectWavBuffer,readState,resolveProjectFile,sha,strictJson,writeState} from './services.js';
+import {acceptNarration,atomicJson,inspectWavBuffer,readState,resolveProjectFile,sha,strictJson,writeState,repairB4Narrator} from './services.js';
 
 const API_MAX_CHARS=4096;
 const FINAL_MAX_SECONDS=900;
@@ -196,6 +196,7 @@ export async function generateApiNarration(root:string,input:JobInput){
       if(info.sha256!==old.voice.sha256||
         sha(fs.readFileSync(resolveProjectFile(root,old.voice.path)))!==info.sha256)
         throw new Error('NARRATION_PUBLISHED_AUDIO_CHANGED: verified output differs from accepted WAV.');
+      if(old.project.style==='B4')repairB4Narrator(root,info.sha256);
       return {jobId,path:old.voice.path,sha256:info.sha256,duration:info.duration,
         summary:strictJson(fs.readFileSync(resolveProjectFile(root,relativeBase+'/output/summary.json'),'utf8'))};
     }
@@ -315,11 +316,10 @@ export async function generateApiNarration(root:string,input:JobInput){
       mode:input.regenerate?'regenerate':input.retryUncertain?'retry':input.resume?'resume':'generate'};
     const accepted=readState(root).voice;
     if(accepted&&!accepted.stale&&accepted.sha256===info.sha256&&
-      (initial.project.style!=='B4'||(accepted.origin==='NANO_LONGFORM'&&accepted.profileId===voice&&accepted.profileVersion===version&&accepted.referenceBinding===binding))&&
       sha(fs.readFileSync(resolveProjectFile(root,accepted.path)))===info.sha256){
-      // New attempt produced byte-identical audio: keep alignment/caption approvals.
-      const state=readState(root);state.longform=longform;
-      writeState(root,state);
+      // Same exact WAV and current Script: update actual source identity without invalidating words/captions.
+      if(initial.project.style==='B4')repairB4Narrator(root,info.sha256,undefined,{voice:{...accepted,origin:'NANO_LONGFORM',profileId:voice,profileVersion:version,referenceBinding:binding,receipt:{schema:'nano-api-assembled-receipt-v1',sourceSha256,summary}},longform,nano:{endpoint:new URL(endpoint).origin,profileId:voice}});
+      else{const state=readState(root);state.longform=longform;writeState(root,state);}
       return {jobId,path:accepted.path,sha256:info.sha256,duration:info.duration,summary};
     }
     const published=acceptNarration(root,{wav:finalWav,expectedScriptSha256:script.sha256,

@@ -171,7 +171,7 @@ describe('Original pre-media plan checks',()=>{
 });
 describe('B4 accepted narrator provenance',()=>{
   const voice:NonNullable<StudioState['voice']>={path:'assets/audio/narration.wav',sha256:'a'.repeat(64),
-    generatedAt:'2026-11-25T00:00:00Z',origin:'NANO_GENERATED',profileId:'selected-nano-profile',profileVersion:2,referenceBinding:'proof',receipt:{verified:true}};
+    generatedAt:'2026-11-25T00:00:00Z',origin:'NANO_GENERATED',profileId:'selected-nano-profile',profileVersion:2,referenceBinding:'proof',receipt:{schema_version:'nano_execution_receipt_v1',voice_id:'selected-nano-profile',voice_version:2,reference_binding:'proof',wav_sha256:'a'.repeat(64)}};
   it('records the selected profile and rejects a falsely labeled Brian',()=>{
     const identity=b4AcceptedNarrator(voice)!;
     expect(identity.id).toBe('nano:selected-nano-profile');

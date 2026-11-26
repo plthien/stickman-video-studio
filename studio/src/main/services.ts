@@ -17,7 +17,7 @@ export interface StudioState {
   scriptCandidate?: { sections: Array<{ id: string; text: string }>; text: string; sha256: string; revision: number; importedAt: string; taskId:string; authoring?: Record<string, unknown> };
   approvedScript?: { sections: Array<{ id: string; text: string }>; text: string; sha256: string; revision: number; approvedAt: string; approvedBy?:'OWNER'|'AUTO'; approvalNote?:string; authoring?: Record<string, unknown> };
   lifecycle?: { tasks:Record<string,{id:string;stage:Stage;operation:ExternalOperation;revision:number;inputSha256:string;artifactSha256:string;promptPath:string;promptSha256:string;status:'FROZEN'|'IMPORTED'|'STALE';createdAt:string;confirmedResponseSha256?:string;structuredReviewScope?:true;identityEvidenceSha?:string;editableIds?:string[];editablePaths?:string[];targetIds?:string[];findingIds?:string[];sourceReviewTaskId?:string;sourceCorrectTaskId?:string;artifactContext?:'DRAFT'|'PUBLISHED';draftToken?:string;draftAuthorTaskId?:string;draftRevision?:number;evidenceSha256?:string;originalTaskSha256?:string;sourceContextSha256?:string;authorityFingerprint?:string;mediaTransferAttested?:boolean;mediaKind?:'preview'|'film'|'voice'|'captions';mediaSha256s?:string[];mediaDuration?:number;mediaBaseline?:StudioState['media']}>; artifacts:Record<string,{taskId:string;stage:Stage;operation:ExternalOperation;artifactSha256:string;value:unknown;status:string;createdAt:string;identityEvidenceSha?:string;artifactContext?:'DRAFT'|'PUBLISHED';draftAuthorTaskId?:string;draftToken?:string;draftRevision?:number;sourceCorrectTaskId?:string}> };
-  voice?: { path: string; sha256: string; receipt?: unknown; generatedAt: string; duration?: number; stale?: boolean; profileId?: string; profileVersion?: number; referenceBinding?: string; origin?: 'NANO_GENERATED' | 'NANO_LONGFORM' | 'IMPORTED_WAV' };
+  voice?: { path: string; sha256: string; receipt?: unknown; generatedAt: string; duration?: number; stale?: boolean; profileId?: string; profileVersion?: number; referenceBinding?: string; origin?: 'NANO_GENERATED' | 'NANO_LONGFORM' | 'IMPORTED_WAV'; narratorConfirmation?:{name:string;wavSha:string;scriptSha:string;ownerActionAt:string} };
   alignment?: { path: string; captionsPath: string; audioSha256: string; scriptSha256?: string; wordsSha256?: string; cuesSha256?: string; generatedAt: string; origin?: 'ELEVENLABS' | 'IMPORTED_WORDS'; words?: Array<{word:string;start:number;end:number;loss?:number}>; characters?: unknown; loss?: number; captionReview?: { revision:number; path:string; sha256:string; sourceSha256:string; note:string; approvedAt:string; mode?:'AUTO'|'MANUAL'; authorTaskId?:string }; captionAutoError?:string; captionDraft?: { path:string; sha256:string; sourceSha256:string; boundaries:number[]; authorTaskId?:string; technicalDraft?:boolean }; captionAuthorTask?: {taskId:string;sourceSha256:string;inputSha256:string;prompt:string;status:'FROZEN'|'IMPORTED'} };
   approval?: { note: string; previewSha256: string; approvedAt: string };
   preview?: { path: string; sha256: string; reportPath: string; reportSha256: string; sourceFingerprint?: string; verifiedAt: string; reviewedAt?: string };
@@ -87,22 +87,52 @@ export function b4AcceptedNarrator(voice:NonNullable<StudioState['voice']>):Reco
   if(voice.origin==='NANO_GENERATED'||voice.origin==='NANO_LONGFORM'){
     if(!voice.profileId?.trim()||!Number.isInteger(voice.profileVersion)||!voice.referenceBinding||!voice.receipt)
       throw new Error('B4_NARRATOR_EVIDENCE_REQUIRED: verified Nano profile and accepted receipt required.');
+    const r=voice.receipt as Record<string,unknown>,s=r.summary as Record<string,unknown>|undefined;
+    const valid=voice.origin==='NANO_GENERATED'?r.schema_version==='nano_execution_receipt_v1'&&r.voice_id===voice.profileId&&r.voice_version===voice.profileVersion&&r.reference_binding===voice.referenceBinding&&r.wav_sha256===voice.sha256:
+      r.schema==='nano-api-assembled-receipt-v1'&&s?.schema==='nano-api-narration-summary-v1'&&s.state==='PASS'&&s.finalSha256===voice.sha256&&s.voice===voice.profileId&&s.version===voice.profileVersion&&s.binding===voice.referenceBinding&&r.sourceSha256===s.sourceSha256;
+    if(!valid)throw Error('B4_NARRATOR_EVIDENCE_REQUIRED: accepted Nano receipt does not bind the current WAV/profile.');
     return {name:'Nano profile '+voice.profileId,id:'nano:'+voice.profileId,
       user_override:'Owner-selected Nano profile '+voice.profileId+' v'+voice.profileVersion+'; accepted WAV SHA256 '+voice.sha256};
   }
   if(voice.origin==='IMPORTED_WAV')return {name:'Owner-imported WAV (speaker unverified)',id:'imported-wav:'+voice.sha256,
     user_override:'Owner imported this narration WAV; speaker identity not independently verified.'};
+  const confirmed=voice.narratorConfirmation;
+  if(confirmed&&confirmed.wavSha===voice.sha256&&confirmed.name.trim()&&confirmed.ownerActionAt)return {name:confirmed.name,id:'owner-confirmed:'+voice.sha256,user_override:'Owner declared narrator identity for this exact WAV; speaker not independently verified.'};
   return null;
 }
 export function assertB4NarratorBinding(style:string,voice:StudioState['voice'],native:unknown){
   if(style!=='B4'||!voice)return;
   const expected=b4AcceptedNarrator(voice);
-  if(!expected)return; // legacy voice without recorded provenance is not silently rewritten
+  if(!expected)throw Error('B4_NARRATOR_EVIDENCE_REQUIRED: confirm the historical narrator for this exact WAV.');
   const actual=native as Record<string,unknown>|undefined;
   if(!actual||Object.entries(expected).some(([key,value])=>actual[key]!==value))
     throw new Error('B4_NARRATOR_METADATA_MISMATCH: accepted narration and Native identity differ; repair metadata without regenerating WAV.');
 }
 const restoreExact=(file:string,bytes:Buffer)=>{const temporary=file+'.'+randomUUID()+'.restore';fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(temporary,bytes,{flag:'wx'});fs.renameSync(temporary,file)};
+/** Atomically repair manifest metadata, preserving all unchanged WAV/word/caption dependencies. */
+export function repairB4Narrator(root:string,expectedWavSha:string,confirmation?:{name:string;scriptSha:string;ownerConfirmed:true},replacement?:{voice:NonNullable<StudioState['voice']>;longform?:StudioState['longform'];nano?:StudioState['nano']}){
+  const projectRoot=assertLocalRoot(root),current=readState(projectRoot),file=path.join(projectRoot,'project.json'),stateFile=statePath(projectRoot);
+  if(current.project.style!=='B4'||!current.voice||current.voice.stale||!current.approvedScript||current.voice.sha256!==expectedWavSha||sha(current.approvedScript.text)!==current.approvedScript.sha256)throw Error('B4_NARRATOR_REPAIR_SOURCE_STALE');
+  const info=inspectWavBuffer(fs.readFileSync(resolveProjectFile(projectRoot,current.voice.path)));
+  if(info.sha256!==expectedWavSha)throw Error('B4_NARRATOR_REPAIR_WAV_CHANGED');
+  const previousManifest=fs.readFileSync(file),previousState=fs.readFileSync(stateFile),manifest=strictJson(previousManifest.toString('utf8')) as Record<string,unknown>,native=manifest.voice as Record<string,unknown>;
+  if(!native||native.path!==current.voice.path)throw Error('B4_NARRATOR_REPAIR_PATH_MISMATCH');
+  const accepted=structuredClone(replacement?.voice??current.voice);
+  if(accepted.sha256!==current.voice.sha256||accepted.path!==current.voice.path||accepted.stale)throw Error('B4_NARRATOR_REPAIR_REPLACEMENT_MISMATCH');
+  let identity=b4AcceptedNarrator(accepted);
+  if(!identity){
+    if(confirmation?.ownerConfirmed!==true||confirmation.scriptSha!==current.approvedScript.sha256||!confirmation.name.trim()||confirmation.name.length>160)throw Error('B4_NARRATOR_EVIDENCE_REQUIRED: explicit historical narrator confirmation required.');
+    accepted.narratorConfirmation={name:confirmation.name.trim(),wavSha:expectedWavSha,scriptSha:confirmation.scriptSha,ownerActionAt:new Date().toISOString()};
+    identity=b4AcceptedNarrator(accepted);
+  }
+  if(!identity)throw Error('B4_NARRATOR_EVIDENCE_REQUIRED');
+  const changed=Object.entries(identity).some(([key,value])=>native[key]!==value)||JSON.stringify(accepted)!==JSON.stringify(current.voice);
+  if(!changed&&!replacement)return current.voice;
+  const next=structuredClone(current);next.voice=accepted;if(replacement?.longform)next.longform=replacement.longform;if(replacement?.nano)next.nano=replacement.nano;
+  if(changed){if(next.tasks?.native)next.tasks.native.status='STALE';for(const task of Object.values(next.lifecycle?.tasks??{}))if(task.stage==='native'&&task.status==='FROZEN')task.status='STALE';next.nativeReadiness=undefined;next.preview=undefined;next.approval=undefined;next.render=undefined;}
+  try{if(changed)atomicJson(file,{...manifest,voice:{...native,...identity}});writeState(projectRoot,next);return next.voice;}
+  catch(error){if(!fs.readFileSync(file).equals(previousManifest))restoreExact(file,previousManifest);if(!fs.readFileSync(stateFile).equals(previousState))restoreExact(stateFile,previousState);throw error;}
+}
 /** One rollback-safe publication boundary shared by short, long-form and imported narration. */
 export function acceptNarration(root:string,input:NarrationAcceptance){
   const projectRoot=assertLocalRoot(root),projectFile=path.join(projectRoot,'project.json'),stateFile=statePath(projectRoot),target=resolveProjectFile(projectRoot,'assets/audio/narration.wav');
