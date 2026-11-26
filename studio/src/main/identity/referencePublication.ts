@@ -7,7 +7,7 @@ import {hash,contentHash,type StyleBible} from './contracts.js';
 
 export type Mime='image/png'|'image/jpeg'|'image/webp';
 /** Required production decoder: Electron nativeImage or a verified image library. */
-export type IdentityDecoder=(bytes:Buffer)=>{width:number;height:number;png:Buffer};
+export type IdentityDecoder=import('../assetPreparation.js').AssetDecoder;
 export interface ReferenceCandidate {
   schema:'stickman-visual-reference-candidate-v1';
   project_id:string;candidate_id:string;anchor_type:'character';anchor_id:string;

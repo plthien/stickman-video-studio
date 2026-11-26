@@ -60,6 +60,7 @@ export interface StyleBible {
 export interface NativeImageNeedV2 {
   shot_id:string;layer_id:string;expected_path:string;content:string;
   orientation?:'9:16'|'16:9'|'1:1'|'3:4'|'4:3';
+  output?:import('../assetPreparation.js').AssetOutput;
   asset_kind:'background'|'character'|'pose'|'prop'|'object'|'other';
   character_ids:CharacterId[];
   continuity_source?:{shot_id:string;layer_id:string;relation:ImageRelation};

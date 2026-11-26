@@ -5,7 +5,8 @@ import { assertB4NarratorBinding, atomicJson, nativeSkillRoot, readState, resolv
 import { approvedCaptionCues, nativeVoiceTiming } from './captionReview.js';
 import { rejectNativeUnsafePaths, validateAuthoring } from './sourceCitations.js';
 import { compileAuthority,nativeAnimationDirection,nativeReferenceInventory,nativeReferenceInstructions } from './externalAuthority.js';
-import {imageRequirementFingerprintSources} from './imageRequirements.js';
+import {imageRequirementFingerprintSources,imageRequirementsForTarget} from './imageRequirements.js';
+import {assetOutputForTarget,verifyArtwork,verifyRatio} from './assetPreparation.js';
 import {readApprovedNativeIdentity,validateNativeBindingPayload} from './identity/nativeBinding.js';
 import {currentDraftIdentityReceipt,publishNativeIdentityReceipt,assertPublishedIdentityCurrent,readNativeIdentityReceipt} from './identity/finalGate.js';
 import {createContinuityResolver} from './identity/continuityGraph.js';
@@ -920,6 +921,19 @@ export function fulfillMedia(appPath:string,root:string,token:string,key:string,
   const hash=sha(fs.readFileSync(resolveProjectFile(root,relative)));
   const original=state.media?.find(item=>item.path===relative&&item.sha256===hash&&item.kind===ref.kind&&item.rights===rights.trim());
   if(!original)throw new Error('Imported file SHA, rights or media kind mismatch.');
+  if(ref.kind==='image'){
+    const rows=(pending.payload as {assetNeeds:unknown[]}).assetNeeds??[];
+    const target={shotId:ref.shotId??'',layerId:ref.layerId??'',path:ref.path};
+    const output=assetOutputForTarget(rows,target);
+    const ratios=[...new Set(imageRequirementsForTarget(rows,target).effective.map(row=>row.orientation).filter(v=>['1:1','3:4','4:3','9:16','16:9'].includes(v)))];
+    if(ratios.length>1)throw Error('ASSET_ORIENTATION_CONFLICT');
+    if(output||ratios.length){
+      const decoded=hooks.decode?.(fs.readFileSync(resolveProjectFile(root,relative)));
+      if(!decoded)throw Error('ASSET_OUTPUT_DECODE_REQUIRED');
+      if(ratios[0])verifyRatio(decoded,ratios[0]);
+      if(output)verifyArtwork(decoded,output);
+    }
+  }
   const binding={relative,sha256:hash,rights:rights.trim(),kind:ref.kind};
   const previous=pending.fulfillments[key];
   if(previous){if(JSON.stringify(previous)!==JSON.stringify(binding))throw new Error('A frozen target cannot be silently remapped; rebuild/review the task.');return pendingResult(root,pending);}

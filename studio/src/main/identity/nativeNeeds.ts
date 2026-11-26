@@ -1,5 +1,6 @@
 /** Strict, exact current-DRAFT image declarations. Old string asset needs are
  * handled by the old pipeline only when identityPolicy === 'legacy'. */
+import {assertAssetOutput} from '../assetPreparation.js';
 import {loadSchema,validateWithSchema,contentHash,type StyleBible,
   type NativeImageNeedV2,type ImageRelation} from './contracts.js';
 export interface NativeImageTarget {shotId:string;layerId:string;path:string}
@@ -13,6 +14,7 @@ export function validateNativeIdentityNeeds(rows:unknown[],targets:NativeImageTa
   if(new Set(order).size!==order.length)throw Error('NATIVE_DUPLICATE_IMAGE_TARGET');
   for(const source of rows){
     const row=validateWithSchema<NativeImageNeedV2>(loadSchema('need'),source);
+    if(row.output)assertAssetOutput(row.output);
     const key=row.shot_id+'/'+row.layer_id+'/'+row.expected_path;
     if(row.expected_path.split('/').includes('..')||row.expected_path.includes('//')||
       !row.expected_path.startsWith('assets/images/'))

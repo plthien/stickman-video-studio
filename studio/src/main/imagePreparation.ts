@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {getPendingMedia,nativeImageTargetIdentity,nativeImageTargetIdentityFromSnapshot,readNativeDraft,requireReviewedNativeDraft} from './externalTasks.js';
 import {imageRequirementsForTarget} from './imageRequirements.js';
+import {assetOutputForTarget,assetOutputPrompt,type AssetOutput} from './assetPreparation.js';
 import {createContinuityResolver} from './identity/continuityGraph.js';
 import {contentHash} from './identity/contracts.js';
 import {nativeSkillRoot,readState,resolveProjectFile,sha,atomicJson,strictJson} from './services.js';
@@ -18,6 +19,7 @@ export interface ImageJobSpec {
   state:PreparedState;reason:string;prompt:string;promptSha256:string;
   /** Exact supported ratio in the frozen asset requirement, not inferred from art kind. */
   requestedOrientation?:string;
+  output?:AssetOutput;
   effectivePrompt:string;effectivePromptSha256:string;
   sourceDescription:string;sourceLedger:string;sourceRows:unknown[];
   styleProfileRef:{id:Style;path:string;sha256:string};
@@ -180,6 +182,7 @@ export function compileImageJobSpecs(input:{
     else if(descriptions.length!==1||dimensions.length>1||continuity.length>1){
       state='NEEDS_OWNER_REVIEW';reason='Conflicting descriptions/orientations/continuity for this exact target.';
     }
+    const output=assetOutputForTarget(rows,{shotId:target.shotId??'',layerId:target.layerId??'',path:target.path});
     const sourceLedger=composition;
     const declaredKind=matching.map(row=>row.assetKind).find(value=>['background','character','pose','prop','object','other'].includes(value))??'other';
     const sections=[
@@ -188,6 +191,7 @@ export function compileImageJobSpecs(input:{
       ...globalSections,
       'EXACT IMAGE CONTENT [Native asset_needs; '+target.shotId+'/'+target.layerId+'; '+target.path+']',
       sourceDescription,
+      ...(output?[assetOutputPrompt(output)]:[]),
       ...(dimensions.length===1?['ASSET ORIENTATION / OUTPUT REQUIREMENT',dimensions[0]]:[]),
       ...(continuity.length===1?['ASSET CONTINUITY REQUIREMENT',continuity[0]]:[]),
       ...(sourceLedger?['RELEVANT SHOT COMPOSITION [shot_ledger]',sourceLedger]:[])
@@ -217,7 +221,8 @@ export function compileImageJobSpecs(input:{
       authoritativeStyle,
       ownerText.includes(authoritativeStyle)?
         ownerText.replace(authoritativeStyle,'').trim():ownerText,
-      ...missingOwnerGlobals
+      ...missingOwnerGlobals,
+      ...(output&&!ownerText.includes(assetOutputPrompt(output))?[assetOutputPrompt(output)]:[])
     ].filter(Boolean).join('\n\n'):computed;
     // Legacy canonical behavior retains global directives in the visible
     // prepared prompt. When there are no global source rows, the owner-edited
@@ -237,7 +242,7 @@ export function compileImageJobSpecs(input:{
       assetKey:target.key,targetKeys:[target.key],expectedPaths:[target.path],
       targetKey:target.key,shotId:target.shotId??'',layerId:target.layerId??'',path:target.path,assetKind:declaredKind,
       state,reason,prompt,promptSha256:prompt?sha(prompt):'',
-      ...(requestedOrientation?{requestedOrientation}:{}),
+      ...(requestedOrientation?{requestedOrientation}:{}),...(output?{output}:{}),
       effectivePrompt,effectivePromptSha256:effectivePrompt?sha(effectivePrompt):'',
       sourceDescription,sourceLedger,sourceRows:requirements.effective.map(row=>row.source),
       styleProfileRef:{id:style,path:profile.path,sha256:profile.sha256},

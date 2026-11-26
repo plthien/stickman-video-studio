@@ -69,7 +69,8 @@ const resumeGlabsPolling=(id:string,root:string)=>{
 const decodeGlabsImage=(bytes:Buffer)=>{
   const decoded=nativeImage.createFromBuffer(bytes);
   if(decoded.isEmpty())throw new Error('GLABS_IMAGE_DECODE_FAILED');
-  const size=decoded.getSize();return{png:decoded.toPNG(),width:size.width,height:size.height};
+  const size=decoded.getSize();return{png:decoded.toPNG(),width:size.width,height:size.height,
+    bgra:decoded.toBitmap(),encodeBgra:(pixels:Buffer)=>nativeImage.createFromBitmap(pixels,{width:size.width,height:size.height,scaleFactor:1}).toPNG()};
 };
 function registerIpc() {
   const recentPath = path.join(app.getPath('userData'), 'recent-projects.json');
