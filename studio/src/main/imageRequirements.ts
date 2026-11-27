@@ -8,6 +8,9 @@ export interface NativeImageRequirement {
   scope:'target'|'path'|'global'|'partial'|'unsupported';
   shotId:string;layerId:string;path:string;
   description:string;orientation:string;continuity:string;assetKind:string;
+  /** Structured F24 declarations; legacy strings have an empty cast. */
+  characterIds?:string[];
+  continuitySource?:{shotId:string;layerId:string;relation:string};
 }
 export interface ImageRequirementTarget {shotId:string;layerId:string;path:string}
 const isObject=(value:unknown):value is Record<string,unknown>=>
@@ -30,7 +33,17 @@ const create=(source:unknown,format:ImageRequirementFormat,row:Record<string,unk
     description:read(row,['content','image_description','imageDescription','asset_description','assetDescription','description']),
     orientation:read(row,['orientation','framing','canvas']),
     continuity:read(row,['continuity','visual_constraints','visualConstraints']),
-    assetKind:read(row,['asset_kind','assetKind'])};
+    assetKind:read(row,['asset_kind','assetKind']),
+    // Only *explicit* structured F24 fields extend the result. Legacy rows
+    // retain their exact original normalization shape, including in old tests.
+    ...(format==='structured'&&Array.isArray(row.character_ids)?{
+      characterIds:row.character_ids.filter((v):v is string=>typeof v==='string')
+    }:{}),
+    ...(format==='structured'&&isObject(row.continuity_source)?{
+      continuitySource:{shotId:read(row.continuity_source,['shot_id']),
+        layerId:read(row.continuity_source,['layer_id']),
+        relation:read(row.continuity_source,['relation'])}
+    }:{})};
 };
 export function normalizeNativeImageRequirement(value:unknown):NativeImageRequirement{
   if(isObject(value))return create(value,'structured',value);

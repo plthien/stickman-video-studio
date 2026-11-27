@@ -5,7 +5,9 @@ import {randomUUID} from 'node:crypto';
 import {performance} from 'node:perf_hooks';
 import type {CredentialCipher} from './elevenlabsCredentials.js';
 import {getPendingMedia,importMediaFile,fulfillMedia,nativeImageTargetIdentity,readNativeDraft} from './externalTasks.js';
+import {requireCurrentNativePlan} from './externalTasks.js';
 import {prepareNativeImageTarget,loadImageStyleProfile} from './imagePreparation.js';
+import {prepareArtwork,verifyArtwork,assertPreparedLineage,type AssetOutput,type AssetDecoder,type AssetPreparationReceipt} from './assetPreparation.js';
 import {atomicJson,nativeSkillRoot,readState,resolveProjectFile,sha,strictJson} from './services.js';
 
 export const GLABS_MODELS=['nano_banana_2','nano_banana_pro'] as const;
@@ -17,6 +19,12 @@ export interface GLabsJob {
   authorTaskId?:string;draftRevisionAtSubmission?:number;targetCreativeSha256?:string;
   styleProfileId?:'B1'|'B2'|'B3'|'B4';styleProfileSha256?:string;
   prompt:string;promptSha256:string;references:Array<{path:string;sha256:string;mime:string;name:string;rightsSha256:string}>;model:string;aspectRatio:string;status:JobStatus;
+  /** Present only for jobs with an explicit frozen asset orientation. */
+  requestedOrientation?:string;
+  output?:AssetOutput;sourceImage?:{path:string;sha256:string};preparation?:AssetPreparationReceipt;
+  identityBindingSnapshotSha?:string;identityTargetBindingSha?:string;identityApprovalSetSha?:string;
+  identityStyleBibleSha?:string;identityCharacterIds?:string[];
+  identityRequiredReferences?:string[];identityPreviousSourceSha?:string;
   providerTaskId?:string;staged?:{path:string;sha256:string;mime:string;width:number;height:number};
   journalRevision?:number;
   syncPhase?:'provider'|'result'|'download'|'decode'|'stage'|'validated';
@@ -34,10 +42,13 @@ export interface GLabsJob {
   }};createdAt:string;updatedAt:string;
 }
 const MAX_RESPONSE=262_144,MAX_REQUEST=5_242_880,MAX_IMAGE=16*1024*1024;
-// Keep the owner's requested aspect ratio in the G-Labs provider request.
-// The provider's returned image dimensions are not an approval constraint:
-// decoded PNG integrity, SHA, rights, frozen Native identity and image inspection
-// remain mandatory.
+// Legacy targets without an explicit ratio retain their historical dimensional policy.
+// An explicit Native orientation is authoritative: allow only integer-pixel rounding.
+export function matchesExplicitAssetRatio(width:number,height:number,ratio:string){
+  if(!(GLABS_RATIOS as readonly string[]).includes(ratio)||!Number.isSafeInteger(width)||!Number.isSafeInteger(height)||width<1||height<1)return false;
+  const [w,h]=ratio.split(':').map(Number);
+  return Math.abs(width*h-height*w)<=Math.max(w,h);
+}
 const active=new Set<string>();
 const defaultSettings:GLabsSettings={endpoint:'http://127.0.0.1:8765',contract:'legacy',model:'nano_banana_2',aspectRatio:'9:16'};
 const settingsFile=(userData:string)=>path.join(userData,'glabs-config-r3.json');
@@ -246,6 +257,23 @@ function assertJobTarget(appPath:string,root:string,job:GLabsJob){
   if(state.project.style!==job.styleProfileId||
     loadImageStyleProfile(appPath,state.project.style as 'B1'|'B2'|'B3'|'B4').sha256!==job.styleProfileSha256)
     throw new Error('GLABS_JOB_STALE_STYLE_AUTHORITY: approved style source changed after image generation.');
+  if(state.identityPolicy==='v1'){
+    const prepared=prepareNativeImageTarget(appPath,root,job.targetKey,{historicalJob:true});
+    if(!prepared||prepared.state!=='READY'||
+      (prepared.requestedOrientation!==undefined&&job.aspectRatio!==prepared.requestedOrientation)||
+      (job.requestedOrientation!==undefined&&job.requestedOrientation!==prepared.requestedOrientation)||
+      JSON.stringify(job.output??null)!==JSON.stringify(prepared.output??null)||
+      (prepared.requestedOrientation!==undefined&&job.staged!==undefined&&!matchesExplicitAssetRatio(job.staged.width,job.staged.height,prepared.requestedOrientation))||
+      !prepared.identityBindingSnapshotSha||
+      job.identityBindingSnapshotSha!==prepared.identityBindingSnapshotSha||
+      job.identityTargetBindingSha!==prepared.identityTargetBindingSha||
+      // Global approval-set SHA is historical job provenance, not a
+      // per-target invalidation key; exact relevant anchors are in bindingSha.
+      JSON.stringify(job.references.map(ref=>ref.path))!==
+        JSON.stringify(prepared.references))
+      throw new Error('IDENTITY_JOB_STALE_REFERENCE_BINDINGS');
+  }else if(job.identityBindingSnapshotSha)
+    throw new Error('IDENTITY_JOB_POLICY_CHANGED');
   return current;
 }
 /** Persist stale attempts so output history is retained, never silently re-bound. */
@@ -302,7 +330,7 @@ export function invalidateGlabsJobsAfterNativeCorrection(appPath:string,root:str
  */
 function recoverLegacyRatioFailures(appPath:string,root:string){
   for(const job of listGlabsJobs(root)){
-    if(job.status!=='FAILED'||job.reason!=='GLABS_IMAGE_ASPECT_RATIO_MISMATCH'||!job.staged)
+    if(job.requestedOrientation||job.status!=='FAILED'||job.reason!=='GLABS_IMAGE_ASPECT_RATIO_MISMATCH'||!job.staged)
       continue;
     try{
       assertJobTarget(appPath,root,job);
@@ -331,7 +359,7 @@ export function reconcileGlabsJobs(appPath:string,root:string):GLabsJob[]{
   invalidateGlabsJobsAfterNativeCorrection(appPath,root);
   return listGlabsJobs(root);
 }
-export type GLabsDecoder=(bytes:Buffer)=>{png:Buffer;width:number;height:number};
+export type GLabsDecoder=AssetDecoder;
 export interface ImageRequest{
   targetKey:string;prompt:string;model:string;aspectRatio:string;
   references:string[];authorized:boolean;acknowledgeUnknown?:boolean;regenerate?:boolean;preparedFingerprint?:string;
@@ -340,13 +368,21 @@ function assertPreparedImageRequest(appPath:string,root:string,input:ImageReques
   // Existing explicit manual owner-authored workflow remains supported.
   // Automatic Storyboard submissions carry a frozen creative fingerprint
   // and cannot bypass source readiness or reuse a stale saved prompt.
-  if(input.preparedFingerprint===undefined)return null;
+  if(input.preparedFingerprint===undefined){
+    if(readState(root).identityPolicy==='v1')
+      throw new Error('IDENTITY_PREPARED_FINGERPRINT_REQUIRED');
+    return null;
+  }
   if(typeof input.preparedFingerprint!=='string'||!/^[a-f0-9]{64}$/.test(input.preparedFingerprint))
     throw new Error('GLABS_PREPARED_FINGERPRINT_INVALID');
   const candidate=prepareNativeImageTarget(appPath,root,input.targetKey);
   const ready=candidate?.draftIdentity.creativeFingerprint===input.preparedFingerprint?candidate:null;
+  if(candidate?.reuseApproved)throw Error('ASSET_REUSE_NO_PAID_GENERATION');
+  if(ready?.state==='BLOCKED'&&readState(root).identityPolicy==='v1')
+    throw new Error(ready.reason||'IDENTITY_PREPARED_TARGET_BLOCKED');
   if(!ready||ready.state!=='READY'||ready.prompt.trim()!==input.prompt.trim()||
-    JSON.stringify(ready.references)!==JSON.stringify(input.references))
+    JSON.stringify(ready.references)!==JSON.stringify(input.references)||
+    (readState(root).identityPolicy==='v1'&&!ready.identityBindingSnapshotSha))
     throw new Error('GLABS_PREPARED_TARGET_NOT_READY_OR_STALE');
   return ready;
 }
@@ -355,6 +391,7 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
   if(input.authorized!==true)throw new Error('GLABS_PAID_SUBMISSION_REQUIRES_EXPLICIT_OWNER_AUTHORIZATION');
   if(typeof input.prompt!=='string'||input.prompt.trim().length<12||input.prompt.length>18000)
     throw new Error('GLABS_PROMPT_REQUIRED: owner must confirm an actual image requirement.');
+  await requireCurrentNativePlan(appPath,root);
   const prepared=assertPreparedImageRequest(appPath,root,input);
   // Owner prompt is an editable description; for prepared Native image jobs
   // the authoritative selected B1–B4 guidance is independently composed.
@@ -362,8 +399,10 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
   if(providerPrompt.length>18000)
     throw new Error('GLABS_EFFECTIVE_PROMPT_OVERSIZE');
   const config=glabsSettings(userData);
-  if(input.model!==config.model||input.aspectRatio!==config.aspectRatio)
-    throw new Error('GLABS_MODEL_CONFIG_MISMATCH: save exact chosen model/ratio in Settings.');
+  const requestedOrientation=prepared?.requestedOrientation;
+  if(input.model!==config.model||input.aspectRatio!==(requestedOrientation??config.aspectRatio)||
+    !(GLABS_RATIOS as readonly string[]).includes(input.aspectRatio))
+    throw new Error('GLABS_MODEL_CONFIG_MISMATCH: use the saved model and exact frozen asset ratio (Settings default only when unspecified).');
   const {pending,match}=pendingTarget(appPath,root,input.targetKey);
   const state=readState(root),creative=nativeImageTargetIdentity(root,input.targetKey),
     styleProfile=loadImageStyleProfile(appPath,state.project.style as 'B1'|'B2'|'B3'|'B4'),
@@ -414,14 +453,25 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
     targetPath:match.path,candidateSha256:sha(JSON.stringify(pending.after)),
     authorTaskId:creative.authorTaskId,draftRevisionAtSubmission:creative.draftRevision,targetCreativeSha256:creative.fingerprint,
     styleProfileId:styleProfile.id,styleProfileSha256:styleProfile.sha256,
+    ...(prepared?.identityBindingSnapshotSha?{
+      identityBindingSnapshotSha:prepared.identityBindingSnapshotSha,
+      identityTargetBindingSha:prepared.identityTargetBindingSha,
+      identityApprovalSetSha:prepared.identityApprovalSetSha,
+      identityStyleBibleSha:prepared.identityStyleBibleSha,
+      identityCharacterIds:[...(prepared.identityCharacterIds??[])],
+      identityRequiredReferences:[...(prepared.identityRequiredReferences??[])],
+      ...(prepared.identityPreviousSourceSha?{
+        identityPreviousSourceSha:prepared.identityPreviousSourceSha}:{})
+    }:{}),
     prompt:providerPrompt,promptSha256:sha(providerPrompt),
-    references:referenceFiles,model:input.model,aspectRatio:input.aspectRatio,status:'QUEUED',createdAt:timestamp(),updatedAt:timestamp()};
+    references:referenceFiles,model:input.model,aspectRatio:input.aspectRatio,...(requestedOrientation?{requestedOrientation}:{}),...(prepared?.output?{output:prepared.output}:{}),status:'QUEUED',createdAt:timestamp(),updatedAt:timestamp()};
   const lock=job.projectId+':'+job.token+':'+job.targetKey;
   if(active.has(lock))throw new Error('GLABS_TARGET_ALREADY_RUNNING');
   active.add(lock);
   try{
     // The initial read occurred before the asynchronous health/auth probe.
     // Re-check inside the local job lock so concurrent callers cannot send two paid POSTs.
+    await requireCurrentNativePlan(appPath,root);
     assertJobTarget(appPath,root,job);
     assertPreparedImageRequest(appPath,root,input);
     const latest=listGlabsJobs(root).filter(j=>j.token===job.token&&j.targetKey===job.targetKey);
@@ -433,7 +483,7 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
       throw new Error('GLABS_NEW_ATTEMPT_REQUIRES_EXPLICIT_REGENERATE');
     const refreshedSettings=glabsSettings(userData);
     if(refreshedSettings.endpoint!==config.endpoint||refreshedSettings.model!==job.model||
-      refreshedSettings.aspectRatio!==job.aspectRatio)
+      (!job.requestedOrientation&&refreshedSettings.aspectRatio!==job.aspectRatio))
       throw new Error('GLABS_CONFIG_CHANGED_DURING_PREFLIGHT');
     writeJob(root,job);
     // All deterministic input validation must finish before the paid/uncertain marker.
@@ -448,10 +498,19 @@ export async function submitGlabsImage(appPath:string,root:string,userData:strin
         return{data:'data:'+ref.mime+';base64,'+checked.bytes.toString('base64'),name:ref.name};
       });
       providerPayload={prompt:job.prompt,model:job.model,aspect_ratio:job.aspectRatio,reference_images:refs,upscale:[]};
-      if(Buffer.byteLength(JSON.stringify(providerPayload),'utf8')>MAX_REQUEST)
-        throw new Error('GLABS_REQUEST_OVERSIZE');
-    }catch{
-      job.status='FAILED';job.reason='Request/reference validation failed BEFORE provider submission. No paid POST was made.';
+      const payloadBytes=Buffer.byteLength(JSON.stringify(providerPayload),'utf8');
+      if(payloadBytes>MAX_REQUEST)
+        throw new Error(state.identityPolicy==='v1'?
+          'REFERENCE_BUDGET_EXCEEDED: '+job.references.length+'/8 images; '+
+          payloadBytes+'/'+MAX_REQUEST+' JSON bytes':'GLABS_REQUEST_OVERSIZE');
+    }catch(error){
+      // Keep exact safe budget diagnostics while never disclosing credentials,
+      // external provider URLs, or arbitrary parser/transport exception text.
+      const safe=error instanceof Error&&
+        /^REFERENCE_BUDGET_EXCEEDED: [0-9]+\/8 images; [0-9]+\/[0-9]+ JSON bytes$/.test(error.message)?
+        error.message+': ':'';
+      job.status='FAILED';job.reason=safe+
+        'Request/reference validation failed BEFORE provider submission. No paid POST was made.';
       writeJob(root,job);return job;
     }
     if(!currentJobTarget(appPath,root,job))return job;
@@ -522,12 +581,37 @@ async function downloadImage(settings:GLabsSettings,urlText:string,userData:stri
   }:undefined;
   return{data,mime,mimeDiagnostic};
 }
+function finishLocalImage(root:string,job:GLabsJob,source:Buffer,decode:GLabsDecoder){
+    const preparedOutput=job.output?prepareArtwork(source,job.output,decode):null;
+    const decoded=preparedOutput?.decoded??decode(source);
+    if(preparedOutput)job.preparation=preparedOutput.receipt;
+    if(!decoded||!Buffer.isBuffer(decoded.png)||imageMime(decoded.png)!=='image/png'||
+      !Number.isSafeInteger(decoded.width)||!Number.isSafeInteger(decoded.height)||
+      decoded.width<1||decoded.height<1||decoded.width>8192||decoded.height>8192)
+      throw new Error('GLABS_IMAGE_DECODE_INVALID');
+    if(decoded.png.length>MAX_IMAGE)throw new Error('GLABS_DECODED_IMAGE_OVERSIZE');
+    job.syncPhase='stage';writeJob(root,job);
+    const relative='assets/images/glabs-'+job.id+'.png',file=resolveProjectFile(root,relative);
+    fs.mkdirSync(path.dirname(file),{recursive:true});
+    if(fs.existsSync(file)&&sha(fs.readFileSync(file))!==sha(decoded.png))throw new Error('GLABS_STAGING_FILE_TAMPERED');
+    if(!fs.existsSync(file)){const temporary=file+'.'+randomUUID()+'.tmp';try{fs.writeFileSync(temporary,decoded.png,{flag:'wx'});fs.renameSync(temporary,file);}finally{if(fs.existsSync(temporary))fs.unlinkSync(temporary);}}
+    job.staged={path:relative,sha256:sha(decoded.png),mime:'image/png',width:decoded.width,height:decoded.height};
+    if(job.requestedOrientation&&!matchesExplicitAssetRatio(decoded.width,decoded.height,job.requestedOrientation)){
+      job.status='FAILED';job.reason='GLABS_EXPLICIT_ASSET_RATIO_MISMATCH: expected '+job.requestedOrientation+'; actual '+decoded.width+'x'+decoded.height+'. No automatic retry.';delete job.lastSyncError;writeJob(root,job);return job;
+    }
+    job.status='VALIDATED';job.syncPhase='validated';delete job.lastSyncError;
+    writeJob(root,job);
+    return job;
+}
 export async function pollGlabsImage(appPath:string,root:string,userData:string,cipher:CredentialCipher,id:string,
   decode:GLabsDecoder){
   const job=readJob(root,id);
   if(['APPROVED','FAILED','CANCELLED','STALE'].includes(job.status))return job;
   if(!currentJobTarget(appPath,root,job))return job;
   if(job.status==='VALIDATED')return job;
+  if(job.sourceImage){
+    try{const bytes=fs.readFileSync(resolveProjectFile(root,job.sourceImage.path));if(sha(bytes)!==job.sourceImage.sha256)throw Error('ASSET_SOURCE_SHA_MISMATCH');job.syncPhase='decode';return finishLocalImage(root,job,bytes,decode);}catch(error){job.lastSyncError={stage:job.syncPhase??'decode',code:syncErrorCode(error,'GLABS_LOCAL_PREPARATION_FAILED'),at:timestamp()};writeJob(root,job);throw error;}
+  }
   if(!job.providerTaskId){
     const note='Submission has no confirmed provider task ID; never auto-POST again.';
     if(job.status!=='UNKNOWN'||!job.reason?.includes(note)){
@@ -593,28 +677,41 @@ export async function pollGlabsImage(appPath:string,root:string,userData:string,
     if(!pureObject(resolved)||resolved.task_id!==task||resolved.status!=='completed'||
       !Array.isArray(resolved.results)||!resolved.results.length||typeof resolved.results[0]!=='string')
       throw new Error('GLABS_RESULT_CONTRACT_INVALID');
+    // Another poll may have persisted the exact source while this GET was pending.
+    const durable=readJob(root,id);
+    if(['VALIDATED','APPROVED','FAILED','STALE','CANCELLED'].includes(durable.status))return durable;
+    Object.assign(job,durable);
+    if(!currentJobTarget(appPath,root,job))return job;
+    if(durable.sourceImage){
+      const bytes=fs.readFileSync(resolveProjectFile(root,durable.sourceImage.path));
+      if(sha(bytes)!==durable.sourceImage.sha256)throw Error('ASSET_SOURCE_SHA_MISMATCH');
+      job.syncPhase='decode';
+      return finishLocalImage(root,job,bytes,decode);
+    }
     job.status='DOWNLOADED';job.syncPhase='download';writeJob(root,job);
     const image=await downloadImage(config,resolved.results[0],userData,cipher);
+    const afterDownload=readJob(root,id);
+    if(['VALIDATED','APPROVED','FAILED','STALE','CANCELLED'].includes(afterDownload.status))return afterDownload;
+    Object.assign(job,afterDownload);
     if(!currentJobTarget(appPath,root,job))return job;
+    if(afterDownload.sourceImage){
+      const bytes=fs.readFileSync(resolveProjectFile(root,afterDownload.sourceImage.path));
+      if(sha(bytes)!==afterDownload.sourceImage.sha256)throw Error('ASSET_SOURCE_SHA_MISMATCH');
+      job.syncPhase='decode';
+      return finishLocalImage(root,job,bytes,decode);
+    }
     job.sourceMime=image.mime;
     if(image.mimeDiagnostic)job.mimeDiagnostic=image.mimeDiagnostic;
     else delete job.mimeDiagnostic;
     job.syncPhase='decode';writeJob(root,job);
-    const decoded=decode(image.data);
-    if(!decoded||!Buffer.isBuffer(decoded.png)||imageMime(decoded.png)!=='image/png'||
-      !Number.isSafeInteger(decoded.width)||!Number.isSafeInteger(decoded.height)||
-      decoded.width<1||decoded.height<1||decoded.width>8192||decoded.height>8192)
-      throw new Error('GLABS_IMAGE_DECODE_INVALID');
-    if(decoded.png.length>MAX_IMAGE)throw new Error('GLABS_DECODED_IMAGE_OVERSIZE');
-    job.syncPhase='stage';writeJob(root,job);
-    const relative='assets/images/glabs-'+job.id+'.png',file=resolveProjectFile(root,relative);
-    fs.mkdirSync(path.dirname(file),{recursive:true});
-    if(fs.existsSync(file)&&sha(fs.readFileSync(file))!==sha(decoded.png))throw new Error('GLABS_STAGING_FILE_TAMPERED');
-    if(!fs.existsSync(file)){const temporary=file+'.'+randomUUID()+'.tmp';try{fs.writeFileSync(temporary,decoded.png,{flag:'wx'});fs.renameSync(temporary,file);}finally{if(fs.existsSync(temporary))fs.unlinkSync(temporary);}}
-    job.staged={path:relative,sha256:sha(decoded.png),mime:'image/png',width:decoded.width,height:decoded.height};
-    job.status='VALIDATED';job.syncPhase='validated';delete job.lastSyncError;
-    writeJob(root,job);
-    return job;
+    if(job.output&&!job.sourceImage){
+      const sourcePath='.studio/asset-sources/'+job.id+'.bin',sourceFile=resolveProjectFile(root,sourcePath);
+      fs.mkdirSync(path.dirname(sourceFile),{recursive:true});
+      if(!fs.existsSync(sourceFile))fs.writeFileSync(sourceFile,image.data,{flag:'wx'});
+      if(sha(fs.readFileSync(sourceFile))!==sha(image.data))throw Error('ASSET_SOURCE_SHA_MISMATCH');
+      job.sourceImage={path:sourcePath,sha256:sha(image.data)};writeJob(root,job);
+    }
+    return finishLocalImage(root,job,image.data,decode);
   }catch(error){
     // currentJobTarget can mark this attempt STALE during an awaited GET.
     // Never resurrect an outdated Native image to RUNNING.
@@ -721,6 +818,7 @@ function recoverCommittedGeneratedApproval(
   const decoded=decode(source.bytes);
   if(!decoded||!Buffer.isBuffer(decoded.png)||imageMime(decoded.png)!=='image/png'||
     decoded.width!==job.staged.width||decoded.height!==job.staged.height)return null;
+  if(job.output){verifyArtwork(decoded,job.output);assertPreparedLineage(root,job.output,job.sourceImage,job.preparation,job.staged.sha256);}
   assertJobReferences(appPath,root,job,decode);
   job.approved={rights:authorization,path:binding.relative,
     sha256:binding.sha256,provenance:generatedApprovalProvenance(job)};
@@ -750,6 +848,7 @@ export function approveGlabsImage(appPath:string,root:string,id:string,rights:st
       throw new Error('GLABS_JOB_STALE_PROMPT_EVIDENCE: stored image prompt SHA does not match the original provider payload.');
     // Crash-safe idempotency: only the exact same generated job can recover its
     // already committed binding; there must never be a second import.
+    if(readState(root).identityPolicy==='v1')assertJobTarget(appPath,root,job);
     const recovered=recoverCommittedGeneratedApproval(appPath,root,job,decode);
     if(recovered)return recovered;
     // Undefined is the new G-Labs project-use approval. A legacy explicit
@@ -766,7 +865,9 @@ export function approveGlabsImage(appPath:string,root:string,id:string,rights:st
       decoded.width!==job.staged.width||decoded.height!==job.staged.height||
       decoded.width<1||decoded.height<1||decoded.width>8192||decoded.height>8192)
       throw new Error('GLABS_IMAGE_APPROVAL_DECODE_MISMATCH');
+    if(job.requestedOrientation&&!matchesExplicitAssetRatio(decoded.width,decoded.height,job.requestedOrientation))throw new Error('GLABS_EXPLICIT_ASSET_RATIO_MISMATCH');
     assertJobReferences(appPath,root,job,decode);
+    if(job.output){verifyArtwork(decoded,job.output);assertPreparedLineage(root,job.output,job.sourceImage,job.preparation,job.staged.sha256);}
     const provenance=generatedApprovalProvenance(job);
     // Media core still requires a nonempty rights string. This is a factual
     // owner-authorization provenance marker, NOT an independently verified
@@ -775,13 +876,61 @@ export function approveGlabsImage(appPath:string,root:string,id:string,rights:st
       'OWNER_APPROVED_GLABS_PROJECT_USE | job='+job.id+
       ' | source=G-Labs-generated | provider_license_not_verified':rights.trim();
     const imported=importMediaFile(root,resolveProjectFile(root,job.staged.path),'image',authorization);
-    const bound=fulfillMedia(appPath,root,job.token,job.targetKey,imported.path,authorization);
+    const bound=fulfillMedia(appPath,root,job.token,job.targetKey,imported.path,authorization,{providerApproval:true,decode});
     job.approved={rights:authorization,path:imported.path,sha256:imported.sha256,provenance};
     job.status='APPROVED';writeJob(root,job);
     return{job,pending:bound};
   }finally{approvalLocks.delete(projectLock);}
 }
 
+/**
+ * Shared audited legacy provider transport for separate 1:1 Style Bible jobs.
+ * This never changes Shot settings (9:16) and never accepts remote URLs or
+ * renderer-supplied credentials. Caller MUST keep an UNKNOWN/paid journal.
+ */
+export const GLABS_REFERENCE_MODELS=['nano_banana_2','nano_banana_pro','gpt_image_2'] as const;
+export type GLabsReferenceModel=(typeof GLABS_REFERENCE_MODELS)[number];
+export function isReferenceModel(value:unknown):value is GLabsReferenceModel{
+  return typeof value==='string'&&(GLABS_REFERENCE_MODELS as readonly string[]).includes(value);
+}
+/** Ported from YTB AI Studio app/modules/media/glabs_image_models.py.
+ * GPT Image 2 uses the separate OpenAI endpoint and no model/upscale wire fields. */
+export function buildReferenceProviderRequest(input:{prompt:string;model:string}){
+  if(!isReferenceModel(input.model)||typeof input.prompt!=='string'||!input.prompt.trim()||
+    input.prompt.length>18000)throw Error('REFERENCE_PROVIDER_CONFIG_OR_PROMPT_INVALID');
+  const common={prompt:input.prompt,aspect_ratio:'1:1',reference_images:[]};
+  return input.model==='gpt_image_2'?
+    {route:'api/openai/generate',payload:{...common,quality:'high',prompt_mode:'direct',reasoning:'none',web_search:false}}:
+    {route:'api/image/generate',payload:{...common,model:input.model,upscale:[]}};
+}
+export function glabsReferenceSettings(userData:string,model?:string){
+  const settings=glabsSettings(userData);
+  const selected=model??settings.model;
+  if(!isReferenceModel(selected))throw Error('REFERENCE_PROVIDER_MODEL_INVALID');
+  return{model:selected,endpoint:settings.endpoint};
+}
+function referenceTransportSettings(userData:string,endpoint?:string){
+  const settings=glabsSettings(userData);
+  if(endpoint!==undefined&&endpoint!==settings.endpoint)throw Error('REFERENCE_PROVIDER_ENDPOINT_CHANGED');
+  return settings;
+}
+export async function glabsReferenceSubmit(userData:string,cipher:CredentialCipher,
+  input:{prompt:string;model:string;endpoint?:string}){
+  const settings=referenceTransportSettings(userData,input.endpoint);
+  const wire=buildReferenceProviderRequest(input);
+  return requestJson(settings,userData,cipher,'POST',wire.route,wire.payload);
+}
+export async function glabsReferenceStatus(userData:string,cipher:CredentialCipher,taskId:string,endpoint?:string){
+  if(!/^[a-f0-9]{8}$/i.test(taskId))throw new Error('REFERENCE_PROVIDER_ID_INVALID');
+  return requestJson(referenceTransportSettings(userData,endpoint),userData,cipher,'GET','api/status/'+taskId);
+}
+export async function glabsReferenceResult(userData:string,cipher:CredentialCipher,taskId:string,endpoint?:string){
+  if(!/^[a-f0-9]{8}$/i.test(taskId))throw new Error('REFERENCE_PROVIDER_ID_INVALID');
+  return requestJson(referenceTransportSettings(userData,endpoint),userData,cipher,'GET','api/result/'+taskId);
+}
+export async function glabsReferenceDownload(userData:string,cipher:CredentialCipher,url:string,endpoint?:string){
+  return downloadImage(referenceTransportSettings(userData,endpoint),url,userData,cipher);
+}
 /** Local cancellation is possible only before a provider POST has been submitted. */
 export function cancelQueuedGlabsImage(root:string,id:string){
   const job=readJob(root,id);

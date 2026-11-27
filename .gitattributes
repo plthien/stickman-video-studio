@@ -1,0 +1,5 @@
+# The bundled Original Core is a byte-pinned resource pack: its B4 style lock
+# verifies SHA-256 fingerprints of text resources (assets/b4/style-lock.txt),
+# so Core text files must check out with LF endings on every platform,
+# independent of the machine's core.autocrlf setting.
+skills/directing-stickman-videos/** text=auto eol=lf

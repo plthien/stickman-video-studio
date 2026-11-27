@@ -20,7 +20,8 @@ const finding=(id:string,target:string,status='open')=>({
   evidence:{kind:'manifest',detail:'Synthetic fixture text establishes the narrow causal problem.'},
   recommendation:'Clarify the existing causal relation without editing locked content.'
 });
-function reviewPayload(task:Lifecycle,targetIds:string[],found:ReturnType<typeof finding>[],stage:'script'|'native'){
+type ReviewFixtureFinding=ReturnType<typeof finding>&{editable_paths?:string[]};
+function reviewPayload(task:Lifecycle,targetIds:string[],found:ReviewFixtureFinding[],stage:'script'|'native'){
   return {schema:'mode-b-review-v1',artifact_sha256:task.artifactSha256,
     status:found.length?'REVIEWED_WITH_FINDINGS':'REVIEWED_NO_FINDINGS',
     coverage:{target_ids:targetIds,modalities:[stage==='script'?'script':'manifest'],ranges:[],media_sha256s:[]},
@@ -162,7 +163,7 @@ describe('P-01 through P-14 lifecycle prompt, lock, evidence and ancestry contra
     const review=freezeLifecycleTask(appPath,root,'native','review');
     const staged=stageLifecycleResult(appPath,root,'native','review',
       result(root,review,'review',reviewPayload(review,['shot-1','shot-2'],
-        [finding('F-NATIVE','shot-1')],'native')));
+        [{...finding('F-NATIVE','shot-1'),editable_paths:['/manifest/shots/0/layers/0/text']}],'native')));
     await Promise.resolve(confirmLifecycleResult(root,staged.token));
     const correct=freezeLifecycleTask(appPath,root,'native','correct',{editableIds:['shot-1']});
     const state=readState(root);

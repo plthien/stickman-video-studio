@@ -1,0 +1,245 @@
+import {describe,it,expect} from 'vitest';
+import {hash,contentHash,readAndValidate,loadSchema} from '../../src/main/identity/contracts';
+import type {ScriptCharacter,ScriptAnalysis} from '../../src/main/identity/contracts';
+import {validateScriptAnalysis,freezeAnalysisTask,validateAnalysisEnvelope,
+  analysisAuthorContract,analysisReviewContract,
+  verifyIndependentReview} from '../../src/main/identity/scriptAnalysis';
+import {compileStyleBible,referencePromptForCharacter,
+  validateStyleBibleCurrent} from '../../src/main/identity/styleBible';
+import {validateNativeIdentityNeeds} from '../../src/main/identity/nativeNeeds';
+import {identityPolicy} from '../../src/main/identity/identityWorkflow';
+import {nativeImageTargetsFromManifest,isManagedNativeImagePath} from '../../src/main/externalTasks';
+import {exactNativeTargetBindingHash,type ApprovedAnchor} from '../../src/main/identity/nativeBinding';
+import type {StudioState} from '../../src/main/services';
+const projectId='a'.repeat(24);
+const text='Kip has a scar and enters the camp.\n\nBrog follows Kip.';
+const authoring={characters:['Kip','Brog']};
+const sections=[{id:'sec_001',text:'Kip has a scar and enters the camp.'},
+  {id:'sec_002',text:'Brog follows Kip.'}];
+const script={projectId,sha256:hash(text),authoring,revision:1,sections};
+const second=text.lastIndexOf('Kip');
+const entry=():ScriptCharacter=>({char_id:'char_001',label:'Kip',description:'',
+  narrative_role:'Character in approved narration',
+  explicit_visual_traits:['scar'],
+  visual_trait_evidence:[{trait:'scar',relationship:'intrinsic_appearance',
+    source:{section_id:'sec_001',quote:'Kip has a scar',start:0,end:14}}],
+  identity_markers:['scar'],
+  continuity_notes:[],physical_constraints:[],
+  occurrences:[{section_id:'sec_001',quote:'Kip',start:0,end:3},
+    {section_id:'sec_002',quote:'Kip',start:second,end:second+3}],
+  presence_ranges:[{start:0,end:3},{start:second,end:second+3}]});
+const analysis=():ScriptAnalysis=>({schema:'stickman-script-analysis-v1' as const,project_id:projectId,
+  source_script_sha256:script.sha256,
+  source_authoring_sha256:contentHash(authoring),
+  continuity_catalog:{characters:[entry()]}});
+const style={id:'B1' as const,guidance:'Approved simple hand-drawn identity style.',
+  sha256:hash('Approved simple hand-drawn identity style.')};
+describe('F24 upstream source-grounded contract gates',()=>{
+  it('U02 rejects unknown fields, duplicate IDs and duplicate nested JSON keys',()=>{
+    expect(()=>validateScriptAnalysis(analysis(),script)).not.toThrow();
+    expect(()=>validateScriptAnalysis({...analysis(),extra:'untrusted'},script))
+      .toThrow('IDENTITY_SCHEMA_EXTRA');
+    expect(()=>validateScriptAnalysis({...analysis(),
+      continuity_catalog:{characters:[entry(),entry()]}},script))
+      .toThrow('IDENTITY_SCHEMA_DUPLICATE');
+    const corrupt=JSON.stringify(analysis()).replace('"label":"Kip"',
+      '"label":"Kip","label":"Impostor"');
+    expect(()=>readAndValidate(loadSchema('analysis'),corrupt))
+      .toThrow('IDENTITY_JSON_DUPLICATE_KEY');
+  });
+  it('U03 demands exact UTF-16 source quote and matching section ID',()=>{
+    const bad=analysis();bad.continuity_catalog.characters[0].occurrences[0].quote='Not Kip';
+    expect(()=>validateScriptAnalysis(bad,script)).toThrow('SCRIPT_ANALYSIS_QUOTE_OR_SPAN_INVALID');
+    const foreign=analysis();foreign.continuity_catalog.characters[0].occurrences[0].section_id='sec_999';
+    expect(()=>validateScriptAnalysis(foreign,script)).toThrow('SCRIPT_ANALYSIS_UNKNOWN_SECTION');
+  });
+  it('G02 structurally valid appearance decisions are not interpreted by Backend',()=>{
+    const invented=analysis();
+    invented.continuity_catalog.characters[0].explicit_visual_traits.push('neon green eyes that are not in the approved narration');
+    expect(validateScriptAnalysis(invented,script)).toEqual(invented);
+  });
+  it('U04 has a separate frozen task envelope not spoofed as Native',()=>{
+    const task=freezeAnalysisTask(script,'author',1);
+    expect(task.stage).toBe('script_analysis');
+    const response={schema:'mode-b-identity-external-result-v1',project_id:projectId,
+      task_id:task.task_id,revision:task.revision,input_sha256:task.input_sha256,
+      stage:'script_analysis',payload:analysis()};
+    expect(()=>validateAnalysisEnvelope(response,task,script)).not.toThrow();
+    expect(()=>validateAnalysisEnvelope({...response,stage:'native'},task,script))
+      .toThrow('SCRIPT_ANALYSIS_ENVELOPE_INVALID');
+  });
+  it('F24-AUD-03 embeds complete character schema and exact frozen Author/Correct/Recheck envelope',()=>{
+    for(const operation of ['author','correct'] as const){
+      const frozen=freezeAnalysisTask(script,operation,operation==='author'?1:2);
+      const contract=operation==='author'?frozen.prompt:
+        analysisAuthorContract(frozen);
+      expect(contract).toContain('"mode-b-identity-external-result-v1"');
+      expect(contract).toContain('"stickman-script-analysis-v1"');
+      expect(contract).toContain('"char_id"');
+      expect(contract).toContain('"presence_ranges"');
+      expect(contract).toContain('"input_sha256": "'+frozen.input_sha256+'"');
+      expect(contract).toContain('"task_id": "'+frozen.task_id+'"');
+      expect(contract).toContain('"stage": "script_analysis"');
+      expect(contract).toContain('UTF-16');
+    }
+    const review=freezeAnalysisTask(script,'recheck',3);
+    const contract=analysisReviewContract(review,contentHash(analysis()));
+    expect(contract).toContain('"stickman-analysis-review-v1"');
+    expect(contract).toContain('"independent_review": true');
+    expect(contract).toContain('"analysis_sha256": "');
+    expect(contract).toContain('"input_sha256": "'+review.input_sha256+'"');
+  });
+  it('U05 rejects unreviewed authoritative identity defects',()=>{
+    const review={schema:'stickman-analysis-review-v1' as const,project_id:projectId,
+      analysis_sha256:contentHash(analysis()),independent_review:true as const,
+      approved:true,findings:[{finding_id:'F01',severity:'P1' as const,
+        location:'char_001',issue:'unsupported trait',evidence:'exact quote'}]};
+    expect(()=>verifyIndependentReview(review,analysis()))
+      .toThrow('SCRIPT_ANALYSIS_REVIEW_INVALID');
+  });
+  it('U07/U08/U09 preserves an empty catalog and never invents appearance',()=>{
+    expect(compileStyleBible({...analysis(),continuity_catalog:{characters:[]}},
+      script,style).characters).toEqual([]);
+    const unchanged=analysis(),bible=compileStyleBible(unchanged,script,style);
+    expect(bible.characters[0].char_id).toBe('char_001');
+    expect(bible.characters[0].occurrences).toEqual(entry().occurrences);
+    expect(validateStyleBibleCurrent(bible,unchanged,script,style)).toBe(true);
+    const unknown=analysis();unknown.continuity_catalog.characters[0].identity_markers=[];
+    unknown.continuity_catalog.characters[0].explicit_visual_traits=[];
+    unknown.continuity_catalog.characters[0].visual_trait_evidence=[];
+    const incomplete=compileStyleBible(unknown,script,style);
+    expect(incomplete.characters[0].visual_readiness).toBe('NEEDS_OWNER_DEFINITION');
+    expect(()=>referencePromptForCharacter(incomplete,'char_001',style))
+      .toThrow('STYLE_BIBLE_NEEDS_OWNER_DEFINITION');
+  });
+  it('U09/R10 pins full B1–B4 source SHA separately from extracted guidance text SHA',()=>{
+    const pinned={...style,sha256:'c'.repeat(64)};
+    const bible=compileStyleBible(analysis(),script,pinned);
+    expect(bible.style_profile_sha256).toBe(pinned.sha256);
+    expect(bible.style_guidance_sha256).toBe(hash(pinned.guidance));
+    expect(bible.style_guidance_sha256).not.toBe(bible.style_profile_sha256);
+    expect(()=>referencePromptForCharacter(bible,'char_001',pinned)).not.toThrow();
+  });
+  it('RFG-03/04 compiles the single square four-view reference for one char_id',()=>{
+    const bible=compileStyleBible(analysis(),script,style);
+    const prompt=referencePromptForCharacter(bible,'char_001',style);
+    expect(prompt.aspect_ratio).toBe('1:1');
+    expect(prompt.prompt).toContain('Exactly FOUR edge-to-edge panels in a 2×2 sheet');
+    expect(prompt.prompt).toMatch(/Upper-left: front close-up/);
+    expect(prompt.prompt).toMatch(/Upper-right: front full view/);
+    expect(prompt.prompt).toMatch(/Lower-left: side view/);
+    expect(prompt.prompt).toMatch(/Lower-right: back view/);
+    expect(prompt.prompt).not.toContain('ONE GROUP OVERVIEW');
+  });
+  it('N02/N03 requires exact typed cast, validates DAG and rejects unknown characters',()=>{
+    const bible=compileStyleBible(analysis(),script,style);
+    const targets=[{shotId:'s1',layerId:'l1',path:'assets/images/a.png'},
+      {shotId:'s2',layerId:'l2',path:'assets/images/b.png'}];
+    const first={shot_id:'s1',layer_id:'l1',expected_path:targets[0].path,
+      content:'Real character action',asset_kind:'character',character_ids:['char_001']};
+    const second={shot_id:'s2',layer_id:'l2',expected_path:targets[1].path,
+      content:'Real empty-cast action',asset_kind:'background',character_ids:[],continuity_source:{
+        shot_id:'s1',layer_id:'l1',relation:'same_setup'}};
+    expect(validateNativeIdentityNeeds([first,second],targets,bible,'v1').status).toBe('READY');
+    expect(()=>validateNativeIdentityNeeds([{...first,character_ids:['char_999']},second],
+      targets,bible,'v1')).toThrow('NATIVE_IDENTITY_UNKNOWN_CHARACTER');
+    expect(()=>validateNativeIdentityNeeds([first],targets,bible,'v1'))
+      .toThrow('NATIVE_IDENTITY_DECLARATION_MISSING');
+  });
+  it('A03-01/02/03 unverified description and name/alias never become visual prompt authority',()=>{
+    const polluted=analysis();
+    polluted.continuity_catalog.characters[0].description=
+      'A boy wearing a red jacket and black glasses (unverified)';
+    const bible=compileStyleBible(polluted,script,style);
+    const prompt=referencePromptForCharacter(bible,'char_001',style).prompt;
+    expect(prompt).not.toContain('red jacket');
+    expect(prompt).not.toContain('black glasses');
+    const named=analysis();
+    named.continuity_catalog.characters[0].explicit_visual_traits=[];
+    named.continuity_catalog.characters[0].visual_trait_evidence=[];
+    named.continuity_catalog.characters[0].identity_markers=['Kip'];
+    const withoutAppearance=compileStyleBible(named,script,style);
+    expect(withoutAppearance.characters[0].visual_readiness).toBe('NEEDS_OWNER_DEFINITION');
+    expect(()=>referencePromptForCharacter(withoutAppearance,'char_001',style))
+      .toThrow('STYLE_BIBLE_NEEDS_OWNER_DEFINITION');
+  });
+  it('G02/G03 exact source evidence is validated, semantic attribution belongs to independent review',()=>{
+    expect(()=>validateScriptAnalysis(analysis(),script)).not.toThrow();
+    const impostor=analysis();
+    impostor.continuity_catalog.characters[0].occurrences=[
+      {section_id:'sec_002',quote:'Brog',start:text.indexOf('Brog'),
+        end:text.indexOf('Brog')+4}
+    ];
+    impostor.continuity_catalog.characters[0].presence_ranges=[
+      {start:text.indexOf('Brog'),end:text.indexOf('Brog')+4}
+    ];
+    expect(validateScriptAnalysis(impostor,script)).toEqual(impostor);
+  });
+  it('A04-01/02/03/04/07 requires v1 asset_kind and canonical cast for character/pose',()=>{
+    const bible=compileStyleBible(analysis(),script,style);
+    const targets=[{shotId:'s1',layerId:'l1',path:'assets/images/a.png'}];
+    const base={shot_id:'s1',layer_id:'l1',expected_path:targets[0].path,
+      content:'Frozen verified image layer',character_ids:[] as Array<`char_${string}`>};
+    expect(()=>validateNativeIdentityNeeds([{...base,asset_kind:'character'}],
+      targets,bible,'v1')).toThrow('NATIVE_IDENTITY_CHARACTER_CAST_REQUIRED');
+    expect(()=>validateNativeIdentityNeeds([{...base,asset_kind:'pose'}],
+      targets,bible,'v1')).toThrow('NATIVE_IDENTITY_CHARACTER_CAST_REQUIRED');
+    expect(()=>validateNativeIdentityNeeds([{...base,asset_kind:'character',
+      character_ids:['char_001']}],targets,bible,'v1')).not.toThrow();
+    expect(()=>validateNativeIdentityNeeds([{...base,asset_kind:'background'}],
+      targets,bible,'v1')).not.toThrow();
+    expect(()=>validateNativeIdentityNeeds([base],targets,bible,'v1'))
+      .toThrow('IDENTITY_SCHEMA_REQUIRED');
+  });
+  it('A02-01/03/07/08 one managed inventory excludes Core built-ins even when nested',()=>{
+    const manifest={shots:[{id:'shot_one',start:0,layers:[
+      {id:'built',type:'image',path:'@b1/some-core-asset'},
+      {id:'managed1',type:'image',path:'assets/images/one.png'},
+      {id:'group',type:'group',children:[
+        {id:'nested_builtin',type:'image',path:'@b1/nested-core'},
+        {id:'managed2',type:'image',path:'assets/images/two.png'}
+      ]}
+    ]}]};
+    expect(isManagedNativeImagePath('@b1/native-shape')).toBe(false);
+    const targets=nativeImageTargetsFromManifest(manifest);
+    expect(targets.map(t=>t.layerId)).toEqual(['managed1','managed2']);
+    expect(targets.map(t=>t.key)).toEqual([
+      'image:0:managed1','image:0:managed2'
+    ]);
+    const duplicated=structuredClone(manifest);
+    duplicated.shots[0].layers.push({id:'managed1',type:'image',
+      path:'assets/images/duplicate.png'});
+    expect(()=>nativeImageTargetsFromManifest(duplicated))
+      .toThrow('NATIVE_DUPLICATE_IMAGE_LAYER_ID');
+  });
+  it('A01-06/B01-02/B01-04 changes only matching actor and explicit continuity descendants, not unrelated cast',()=>{
+    const anchor=(id:string,image:string):ApprovedAnchor=>({
+      charId:id,sourceDefinitionHash:hash(id+'-definition'),
+      path:'assets/images/'+image+'.png',sha256:hash(image),
+      mime:'image/png',rightsSha256:hash('owner-rights-'+id),
+      candidateId:id+'-owner-approved',approvalEventId:id+'-approval'
+    });
+    const one=anchor('char_001','one'),two=anchor('char_002','two');
+    const input=(characterIds:string[],anchors:ApprovedAnchor[],layerId:string)=>({
+      targetKey:'image:0:'+layerId,shotId:'shot-0',layerId,
+      path:'assets/images/'+layerId+'.png',
+      assetKind:'character' as const,
+      characterIds,canonicalAnchors:anchors,continuitySource:null,
+      styleProfileSha:style.sha256
+    });
+    const left=input(['char_001'],[one],'first');
+    const right=input(['char_002'],[two],'second');
+    const leftSha=exactNativeTargetBindingHash(left);
+    const rightSha=exactNativeTargetBindingHash(right);
+    const changedOne=anchor('char_001','one-new');
+    expect(exactNativeTargetBindingHash({...left,canonicalAnchors:[changedOne]}))
+      .not.toBe(leftSha);
+    expect(exactNativeTargetBindingHash(right)).toBe(rightSha);
+    expect(exactNativeTargetBindingHash({...right,
+      canonicalAnchors:[anchor('char_002','two-new')]})).not.toBe(rightSha);
+  });
+  it('U12 defaults missing identityPolicy to LEGACY and honors v1 opt-in',()=>{
+    expect(identityPolicy({} as StudioState)).toBe('legacy');
+    expect(identityPolicy({identityPolicy:'v1'} as StudioState)).toBe('v1');
+  });
+});

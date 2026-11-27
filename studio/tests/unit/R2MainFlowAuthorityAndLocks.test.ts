@@ -2,8 +2,10 @@
 import {describe,it,expect} from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import {compileAuthority} from '../../src/main/externalAuthority';
-import {nativeSkillRoot,sha} from '../../src/main/services';
+import {compileAuthority,nativeAnimationDirection,nativeReferenceInventory} from '../../src/main/externalAuthority';
+import {nativeSkillRoot,sha,b4AcceptedNarrator,assertB4NarratorBinding,type StudioState} from '../../src/main/services';
+import {nativePlanPreflight} from '../../src/main/nativePlanPreflight';
+import {matchesExplicitAssetRatio} from '../../src/main/glabs';
 import {validateLocks} from '../../src/main/externalLifecycle';
 
 describe('R2 original-artifact scoped correction regression',()=>{
@@ -108,5 +110,77 @@ describe('R2 source-exact creative authority',()=>{
     for(const needed of ['references/autopilot-runtime.md','references/autopilot-production-qa.md','references/autopilot-sound-system.md']){
       expect(pack.sources.find(source=>source.path===needed)?.text.length).toBeGreaterThan(1000);
     }
+  });
+});
+
+
+describe('Original Native production authority',()=>{
+  it('includes selected-style production supplement and actual reference inventory for Native operations',()=>{
+    const appPath=path.resolve('.');
+    for(const operation of ['author','review','correct','recheck'] as const){
+      for(const style of ['B1','B2','B3','B4']){
+        const compiled=compileAuthority(appPath,style,'native',operation);
+        expect(compiled.sources.some(row=>row.path==='references/b1-production-qa.md')).toBe(style==='B1');
+        expect(compiled.referenceMedia?.length).toBeGreaterThan(0);
+        expect(compiled.referenceMedia?.every(row=>row.style===style&&row.transferStatus==='LOCAL_ONLY_NOT_TRANSFERRED')).toBe(true);
+      }
+    }
+    expect(compileAuthority(appPath,'B1','script','author').sources.some(row=>row.path==='references/b1-production-qa.md')).toBe(false);
+    const media=nativeReferenceInventory(appPath,'B3');
+    expect(media.some(row=>row.path.endsWith('accepted-dog-motion.mp4'))).toBe(true);
+    for(const row of media)expect(row.sha256).toBe(sha(fs.readFileSync(path.join(nativeSkillRoot(appPath).root,row.path))));
+  });
+  it('keeps B3-specific mechanisms and B4 deliberate-hold exception explicit',()=>{
+    expect(nativeAnimationDirection('B1')).toContain('2.5-second');
+    expect(nativeAnimationDirection('B3')).toContain('group-local coordinates');
+    expect(nativeAnimationDirection('B4')).toContain('Do not impose B1–B3 inactivity quota');
+  });
+});
+
+
+describe('Explicit Native asset ratios',()=>{
+  it('checks all supported explicit ratios, allowing integer-pixel rounding only',()=>{
+    expect(matchesExplicitAssetRatio(1024,1024,'1:1')).toBe(true);
+    expect(matchesExplicitAssetRatio(1080,1920,'9:16')).toBe(true);
+    expect(matchesExplicitAssetRatio(1920,1080,'16:9')).toBe(true);
+    expect(matchesExplicitAssetRatio(768,1024,'3:4')).toBe(true);
+    expect(matchesExplicitAssetRatio(1024,768,'4:3')).toBe(true);
+    expect(matchesExplicitAssetRatio(1024,1024,'9:16')).toBe(false);
+    expect(matchesExplicitAssetRatio(0,1024,'1:1')).toBe(false);
+  });
+});
+
+describe('Original pre-media plan checks',()=>{
+  const app=path.resolve('.');
+  const manifest=(style:string,keys:unknown[])=>({version:1,style,width:1080,height:1920,fps:30,
+    shots:[{id:'shot-1',start:0,end:3,layers:[{id:'actor-1',type:'image',path:'assets/images/not-yet-generated.png',w:300,h:400,x:100,y:100,
+      motion:{role:'actor',reason:'Approaches the door'},keys}]}]});
+  it('rejects original B1 inactivity before image generation, without fake assets',async()=>{
+    await expect(nativePlanPreflight(app,app,manifest('B1',[{t:0,x:100},{t:3,x:100}]),3)).rejects.toThrow(/principal picture inactive/);
+  });
+  it('runs original plan checks but never claims rendered pixel verification',async()=>{
+    expect(await nativePlanPreflight(app,app,manifest('B1',[{t:0,x:100},{t:3,x:300}]),3))
+      .toMatchObject({plan:'PASS',media:'NOT_VERIFIED',renderedPixels:'NOT_VERIFIED'});
+  });
+  it('rejects unsupported keyframe grammar',async()=>{
+    await expect(nativePlanPreflight(app,app,manifest('B2',[{t:0,rotation:0}]),3)).rejects.toThrow(/Unsupported keyframe property/);
+  });
+  it('preserves B4 inactivity exception',async()=>{
+    expect((await nativePlanPreflight(app,app,manifest('B4',[]),3)).renderedPixels).toBe('NOT_VERIFIED');
+  });
+});
+describe('B4 accepted narrator provenance',()=>{
+  const voice:NonNullable<StudioState['voice']>={path:'assets/audio/narration.wav',sha256:'a'.repeat(64),
+    generatedAt:'2026-11-25T00:00:00Z',origin:'NANO_GENERATED',profileId:'selected-nano-profile',profileVersion:2,referenceBinding:'proof',receipt:{schema_version:'nano_execution_receipt_v1',voice_id:'selected-nano-profile',voice_version:2,reference_binding:'proof',wav_sha256:'a'.repeat(64)}};
+  it('records the selected profile and rejects a falsely labeled Brian',()=>{
+    const identity=b4AcceptedNarrator(voice)!;
+    expect(identity.id).toBe('nano:selected-nano-profile');
+    expect(identity.user_override).toContain(voice.sha256);
+    expect(()=>assertB4NarratorBinding('B4',voice,{name:'Brian',id:'nPczCjzI2devNBz1zQrb'})).toThrow(/METADATA_MISMATCH/);
+    expect(()=>assertB4NarratorBinding('B4',voice,identity)).not.toThrow();
+    expect(()=>assertB4NarratorBinding('B1',voice,{})).not.toThrow();
+  });
+  it('does not represent an imported WAV as verified Brian',()=>{
+    expect(b4AcceptedNarrator({...voice,origin:'IMPORTED_WAV'})?.name).toContain('speaker unverified');
   });
 });

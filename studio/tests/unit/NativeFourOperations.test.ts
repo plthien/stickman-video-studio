@@ -25,7 +25,7 @@ const reviewPayload=(task:Task,status:'REVIEWED_WITH_FINDINGS'|'REVIEWED_NO_FIND
   coverage:{target_ids:['shot-1','shot-2'],modalities:['manifest'],ranges:[],media_sha256s:[]},findings
 });
 const issue=(status:'open'|'resolved'='open')=>({
-  id:'N-001',severity:'major',status,target_ids:['shot-1'],
+  id:'N-001',severity:'major',status,target_ids:['shot-1'],editable_paths:status==='resolved'?[]:['/shot_ledger/0/meaning'],
   requirement:'The confirmed ledger must communicate a concrete, meaningful visual delta.',
   evidence:{kind:'manifest',detail:status==='resolved'?'Current corrected ledger specifies the rescued object visibly moves.':'Original ledger describes no visible change.'},
   recommendation:'Repair the precise shot_ledger meaning for shot-1.'
@@ -37,9 +37,9 @@ function stageFixture(image=false){
   const staged=stageNative(root,candidate);
   return{root,staged,candidate};
 }
-function confirmReview(root:string){
+function confirmReview(root:string,paths=['/shot_ledger/0/meaning']){
   const task=freezeLifecycleTask(appPath,root,'native','review',{targetContext:'DRAFT'}) as Task;
-  const reply=delivery(root,task,'review',reviewPayload(task,'REVIEWED_WITH_FINDINGS',[issue()]));
+  const reply=delivery(root,task,'review',reviewPayload(task,'REVIEWED_WITH_FINDINGS',[{...issue(),editable_paths:paths}]));
   const staged=stageLifecycleResult(appPath,root,'native','review',reply);
   confirmLifecycleResult(appPath,root,staged.token);
   return task;
@@ -240,17 +240,17 @@ describe('N01–N07: original Native Author plus pre-publication four-operation 
   });
   it('NF04-04/06: explicit mixed Shot and auxiliary scope remains supported while other Shots stay locked',()=>{
     const {root}=stageFixture(),review=freezeLifecycleTask(appPath,root,'native','review',{targetContext:'DRAFT'}) as Task;
-    const mixed={...issue(),evidence:{kind:'manifest',
+    const mixed={...issue(),editable_paths:['/shot_ledger/0/meaning','/manifest/shots/0/layers/0/text'],evidence:{kind:'manifest',
       detail:'Both /shot_ledger/0/meaning and /manifest/shots/0/layers/0/text require a matching visible action.'}};
     const reviewed=stageLifecycleResult(appPath,root,'native','review',
       delivery(root,review,'review',reviewPayload(review,'REVIEWED_WITH_FINDINGS',[mixed])));
     confirmLifecycleResult(appPath,root,reviewed.token);
     const suggested=suggestedCorrectScope(root,readState(root),'native','DRAFT');
-    expect(suggested.editableIds).toEqual(['shot-1']);
-    expect(suggested.editablePaths).toEqual(['/shot_ledger/0/meaning']);
+    expect(suggested.editableIds).toEqual([]);
+    expect(suggested.editablePaths).toEqual(['/shot_ledger/0/meaning','/manifest/shots/0/layers/0/text']);
     const correct=freezeLifecycleTask(appPath,root,'native','correct',{
-      targetContext:'DRAFT',editableIds:['shot-1'],
-      editablePaths:['/shot_ledger/0/meaning'],findingIds:['N-001']
+      targetContext:'DRAFT',editableIds:[],
+      editablePaths:['/shot_ledger/0/meaning','/manifest/shots/0/layers/0/text'],findingIds:['N-001']
     }) as Task;
     const artifact=structuredClone(readNativeDraft(root)!.artifact);
     ((artifact.manifest as {shots:Array<{layers:Array<{text:string}>}>}).shots[0].layers[0]).text='Action is now visible';
@@ -304,7 +304,7 @@ describe('N01–N07: original Native Author plus pre-publication four-operation 
     const {root}=stageFixture();confirmReview(root);
     expect(()=>freezeLifecycleTask(appPath,root,'native','correct',{
       targetContext:'DRAFT',editablePaths:['/shot_ledger'],findingIds:['N-001']
-    })).toThrow(/overly broad|whole-root|Invalid/i);
+    })).toThrow(/overly broad|whole-root|Invalid|CORRECT_SCOPE_EXCEEDS_STRUCTURED_REVIEW/i);
     const task=freezeLifecycleTask(appPath,root,'native','correct',{
       targetContext:'DRAFT',editablePaths:['/shot_ledger/0/meaning'],findingIds:['N-001']
     }) as Task;
@@ -322,8 +322,8 @@ describe('N01–N07: original Native Author plus pre-publication four-operation 
     const imported=importMediaFile(root,importedSource(root),'image','Owner licensed local');
     const pending=getPendingMedia(appPath,root)!;
     fulfillMedia(appPath,root,pending.token,pending.missing[0].key,imported.path,'Owner licensed local');
-    confirmReview(root);
-    const correct=freezeLifecycleTask(appPath,root,'native','correct',{targetContext:'DRAFT',editableIds:['shot-1'],findingIds:['N-001']}) as Task;
+    confirmReview(root,['/manifest/shots/0/layers/0/path']);
+    const correct=freezeLifecycleTask(appPath,root,'native','correct',{targetContext:'DRAFT',editablePaths:['/manifest/shots/0/layers/0/path'],findingIds:['N-001']}) as Task;
     const prior=readNativeDraft(root)!.artifact;
     const corrected=structuredClone(prior);
     ((corrected.manifest as {shots:Array<{layers:Array<{path:string}>}>}).shots[0].layers[0]).path='assets/images/replacement.png';
@@ -451,7 +451,7 @@ function confirmRf01Review(root:string,context:'DRAFT'|'PUBLISHED'='DRAFT'){
   const review=freezeLifecycleTask(appPath,root,'native','review',{targetContext:context}) as Task;
   const findings=[
     {...issue(),id:'RF-A',evidence:{kind:'manifest',detail:'The exact /shot_ledger/0/meaning lacks a visible before/after state.'}},
-    {...issue(),id:'RF-B',target_ids:['shot-2'],
+    {...issue(),id:'RF-B',target_ids:['shot-2'],editable_paths:['/manifest/shots/1/layers/0/text'],
       requirement:'shot-2 action and pose must show the transition',
       evidence:{kind:'manifest',detail:'The current /manifest/shots/1/layers/0/text fails to show the action.'}},
     {...issue('resolved'),id:'RF-C',target_ids:['shot-2']}
@@ -470,11 +470,11 @@ describe('RF01 — Native Correct subset authorization and confirmed lineage',()
     const {root}=stageFixture();confirmRf01Review(root);
     const task=rf01Freeze(root,['RF-B']);
     expect(task.findingIds).toEqual(['RF-B']);
-    expect(task.editableIds).toEqual(['shot-2']);
-    expect(task.editablePaths).toEqual([]);
+    expect(task.editableIds).toEqual([]);
+    expect(task.editablePaths).toEqual(['/manifest/shots/1/layers/0/text']);
     expect(task.prompt).toContain('"RF-B"');
     expect(task.prompt).toContain('"shot-2"');
-    expect(task.prompt).toContain('"editable_paths": []');
+    expect(task.prompt).toContain('/manifest/shots/1/layers/0/text');
   });
   it('RF01-02 selects auxiliary F-A without unlocking F-B or the whole shot-1',()=>{
     const {root}=stageFixture();confirmRf01Review(root);
@@ -488,34 +488,32 @@ describe('RF01 — Native Correct subset authorization and confirmed lineage',()
     const {root}=stageFixture();confirmRf01Review(root);
     const task=freezeLifecycleTask(appPath,root,'native','correct',{targetContext:'DRAFT'}) as Task;
     expect(task.findingIds).toEqual(['RF-A','RF-B']);
-    expect(task.editableIds).toEqual(['shot-2']);
-    expect(task.editablePaths).toEqual(['/shot_ledger/0/meaning']);
+    expect(task.editableIds).toEqual([]);
+    expect(task.editablePaths).toEqual(['/shot_ledger/0/meaning','/manifest/shots/1/layers/0/text']);
     const suggestions=suggestedCorrectScope(root,readState(root),'native','DRAFT',['RF-B']);
-    expect(suggestions).toMatchObject({findingIds:['RF-B'],editableIds:['shot-2'],editablePaths:[]});
+    expect(suggestions).toMatchObject({findingIds:['RF-B'],editableIds:[],editablePaths:['/manifest/shots/1/layers/0/text']});
   });
   it('RF01-04 mixed evidence supports the explicit Shot and the exact auxiliary pointer',()=>{
     const {root}=stageFixture();
     const review=freezeLifecycleTask(appPath,root,'native','review',{targetContext:'DRAFT'}) as Task;
-    const mixed={...issue(),id:'RF-M',evidence:{kind:'manifest',
+    const mixed={...issue(),id:'RF-M',editable_paths:['/shot_ledger/0/meaning','/manifest/shots/0/layers/0/text'],evidence:{kind:'manifest',
       detail:'Both /shot_ledger/0/meaning and /manifest/shots/0/layers/0/text omit the visible action.'}};
     const pending=stageLifecycleResult(appPath,root,'native','review',
       delivery(root,review,'review',reviewPayload(review,'REVIEWED_WITH_FINDINGS',[mixed])));
     confirmLifecycleResult(appPath,root,pending.token);
     const task=rf01Freeze(root,['RF-M']);
-    expect(task.editableIds).toEqual(['shot-1']);
-    expect(task.editablePaths).toEqual(['/shot_ledger/0/meaning']);
+    expect(task.editableIds).toEqual([]);
+    expect(task.editablePaths).toEqual(['/shot_ledger/0/meaning','/manifest/shots/0/layers/0/text']);
   });
   it('RF01-05 explicit empty Shot rights never refill from selected F-B',()=>{
     const {root}=stageFixture();confirmRf01Review(root);
     const task=rf01Freeze(root,['RF-A','RF-B'],{editableIds:[]});
     expect(task.editableIds).toEqual([]);
-    expect(task.editablePaths).toEqual(['/shot_ledger/0/meaning']);
+    expect(task.editablePaths).toEqual(['/shot_ledger/0/meaning','/manifest/shots/1/layers/0/text']);
   });
   it('RF01-06 explicit empty auxiliary paths never refill from selected F-A',()=>{
     const {root}=stageFixture();confirmRf01Review(root);
-    const task=rf01Freeze(root,['RF-A','RF-B'],{editablePaths:[]});
-    expect(task.editableIds).toEqual(['shot-2']);
-    expect(task.editablePaths).toEqual([]);
+    expect(()=>rf01Freeze(root,['RF-A','RF-B'],{editablePaths:[]})).toThrow(/Correct requires/);
   });
   it('RF01-07 unselected auxiliary finding cannot be changed using Shot-only rights',()=>{
     const {root}=stageFixture();confirmRf01Review(root);
@@ -552,8 +550,11 @@ describe('RF01 — Native Correct subset authorization and confirmed lineage',()
     const reused=rf01Freeze(root,['RF-B']);
     expect(reused.id).toBe(first.id);
     expect(reused.inputSha256).toBe(first.inputSha256);
-    expect(reused.editableIds).toEqual(['shot-2']);
-    expect(reused.editablePaths).toEqual([]);
+    expect(first.editableIds).toEqual([]);
+    expect(first.editablePaths).toEqual(['/manifest/shots/1/layers/0/text']);
+    expect(reused.editableIds).toEqual(first.editableIds);
+    expect(reused.editablePaths).toEqual(first.editablePaths);
+    expect(reused.findingIds).toEqual(['RF-B']);
     expect(()=>rf01Freeze(root,['RF-A'])).toThrow(/FROZEN_TASK_REBUILD_REQUIRED/);
     expect(readState(root).lifecycle!.tasks['native:correct'].id).toBe(first.id);
     const rebuilt=freezeLifecycleTask(appPath,root,'native','correct',{
@@ -593,7 +594,7 @@ describe('RF01 — Native Correct subset authorization and confirmed lineage',()
     expect(fs.readFileSync(path.join(root,'project.json'))).toEqual(prior);
     expect(readNativeDraft(root)!.artifact).toEqual(corrected);
   });
-  it('RF01-12 Published Shot-only Correct retains original native CLI validation',async()=>{
+  it('RF01-12 Published exact-path Correct retains original native CLI validation',async()=>{
     const {root,staged}=stageFixture();
     await confirmImport(appPath,root,staged.response.token,{validator:validator().run,previewSeconds:30});
     const before=fs.readFileSync(path.join(root,'project.json'));
@@ -601,8 +602,8 @@ describe('RF01 — Native Correct subset authorization and confirmed lineage',()
     const task=freezeLifecycleTask(appPath,root,'native','correct',{
       targetContext:'PUBLISHED',findingIds:['RF-B']}) as Task;
     expect(readState(root).lifecycle!.tasks['native:correct'].sourceReviewTaskId).toBe(review.id);
-    expect(task.editableIds).toEqual(['shot-2']);
-    expect(task.editablePaths).toEqual([]);
+    expect(task.editableIds).toEqual([]);
+    expect(task.editablePaths).toEqual(['/manifest/shots/1/layers/0/text']);
     const manifest=JSON.parse(before.toString('utf8')) as {shots:Array<{layers:Array<{text?:string}>}>};
     manifest.shots[1].layers[0].text='An explicit Shot-2 correction';
     const current=readState(root).external.native!.artifact as {shotLedger?:unknown[];soundScript?:unknown[];assetNeeds?:unknown[]};

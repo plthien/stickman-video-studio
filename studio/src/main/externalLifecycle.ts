@@ -2,19 +2,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {atomicJson,inspectWavBuffer,readState,resolveProjectFile,sha,strictJson,writeState,type ExternalOperation,type Stage,type StudioState} from './services.js';
-import {compileAuthority} from './externalAuthority.js';
+import {readApprovedNativeIdentity} from './identity/nativeBinding.js';
+import {compileAuthority,nativeAnimationDirection,nativeReferenceInstructions} from './externalAuthority.js';
 import {getCaptionReview,nativeVoiceTiming} from './captionReview.js';
+import {cachedNativePlan} from './nativePlanPreflight.js';
 import {alignmentText} from './alignment.js';
 import {invalidateGlabsJobsAfterNativeCorrection} from './glabs.js';
-import {rejectNativeUnsafePaths,validateAuthoring} from './sourceCitations.js';
-import {activateScriptCandidate,scriptCorrectionRechecked,freezeTask,sourceFingerprint,stageImport,confirmImport,validateScript,validateManifest,externalJsonFileDelivery,readNativeDraft,publishNativeDraftCorrection,type ConfirmOptions} from './externalTasks.js';
+import {rejectNativeUnsafePaths} from './sourceCitations.js';
+import {activateScriptCandidate,scriptCorrectionRechecked,freezeTask,sourceFingerprint,stageImport,confirmImport,validateScript,validateManifest,externalJsonFileDelivery,readNativeDraft,publishNativeDraftCorrection,publishedNativeCreativeArtifact,stagePublishedNativeCorrection,type ConfirmOptions} from './externalTasks.js';
 
 type Scope={targetIds?:string[];editableIds?:string[];editablePaths?:string[];findingIds?:string[];targetContext?:'DRAFT'|'PUBLISHED';media?:'preview'|'film'|'voice'|'captions';transferAcknowledged?:boolean};
 /** Active execution boundary; persisted Media Review types remain readable for legacy projects. */
 function requireActiveLifecycleOperation(operation:Exclude<ExternalOperation,'author'>):void{
   if(operation==='media-review')throw new Error('MEDIA_REVIEW_DISABLED: legacy history is read-only.');
 }
-type Artifact={value:unknown;sha256:string;id:string;context?:'DRAFT'|'PUBLISHED';draftRevision?:number;draftToken?:string;authorTaskId?:string};
+type Artifact={value:unknown;sha256:string;id:string;context?:'DRAFT'|'PUBLISHED';draftRevision?:number;draftToken?:string;authorTaskId?:string;publishedCorrectionTaskId?:string;latestCorrectTaskId?:string};
 const exact=(value:Record<string,unknown>,keys:string[])=>{const extra=Object.keys(value).filter(key=>!keys.includes(key));if(extra.length)throw new Error(`Unknown field: ${extra[0]}`)};
 const lifecycleDir=(root:string)=>resolveProjectFile(root,'.studio/external/lifecycle');
 const resultPath=(root:string,id:string)=>path.join(lifecycleDir(root),'results',id+'.json');
@@ -22,7 +24,7 @@ const pendingPath=(root:string)=>path.join(lifecycleDir(root),'pending.json');
 const canonical=(value:unknown):string=>Array.isArray(value)?`[${value.map(canonical).join(',')}]`:value&&typeof value==='object'?`{${Object.entries(value as Record<string,unknown>).sort(([a],[b])=>a.localeCompare(b)).map(([key,item])=>`${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`:JSON.stringify(value);
 
 /** Source-exact, read-only Native lifecycle evidence. No character-level timing. */
-function nativeLifecycleEvidence(root:string,state:StudioState){
+function nativeLifecycleEvidence(root:string,state:StudioState,appPath?:string){
   const script=state.approvedScript,voice=state.voice,alignment=state.alignment;
   if(!script||sha(script.text)!==script.sha256||!Array.isArray(script.sections)||
     script.sections.map(row=>row.text).join('\n\n')!==script.text)
@@ -56,6 +58,7 @@ function nativeLifecycleEvidence(root:string,state:StudioState){
     throw new Error('NATIVE_LIFECYCLE_APPROVED_CAPTIONS_REQUIRED');
   const timing=nativeVoiceTiming(root,state);
   return{
+    ...(appPath&&state.identityPolicy==='v1'?{upstream_character_authority:readApprovedNativeIdentity(root,appPath)}:{}),
     approved_narration:{sections:script.sections,authoring:script.authoring??null,
       revision:script.revision,sha256:script.sha256},
     accepted_wav:{path:voice.path,sha256:voice.sha256,duration_seconds:voice.duration},
@@ -77,7 +80,7 @@ function artifactFor(root:string,state:StudioState,stage:Stage,operation:Externa
     const value=state.scriptCandidate??state.approvedScript;if(!value)throw new Error('REVIEW_REQUIRED: no Script candidate or approved Script exists.');
     return{value,sha256:sha(JSON.stringify(value)),id:`script-${value.revision}`};
   }
-  const draft=readNativeDraft(root,state),published=Boolean(state.external.native);
+  const draft=requested==='PUBLISHED'?null:readNativeDraft(root,state),published=Boolean(state.external.native);
   if(draft&&published&&!requested)
     throw new Error('NATIVE_TARGET_SELECTION_REQUIRED: explicitly choose DRAFT or PUBLISHED before reviewing.');
   const context=requested??(draft?'DRAFT':'PUBLISHED');
@@ -85,14 +88,16 @@ function artifactFor(root:string,state:StudioState,stage:Stage,operation:Externa
     if(!draft)throw new Error('NATIVE_DRAFT_REQUIRED: no current staged Author candidate.');
     return{value:draft.artifact,sha256:draft.sha256,
       id:'native-draft-'+draft.authorTaskId+'-r'+draft.revision+'-'+operation,
-      context,draftRevision:draft.revision,draftToken:draft.token,authorTaskId:draft.authorTaskId};
+      context,draftRevision:draft.revision,draftToken:draft.token,authorTaskId:draft.authorTaskId,
+      publishedCorrectionTaskId:draft.publishedCorrectionTaskId,
+      latestCorrectTaskId:draft.publishedCorrectionTaskId?draft.history.at(-1)?.correctTaskId:undefined};
   }
   const file=path.join(root,'project.json');
   if(!state.external.native||!fs.existsSync(file))
     throw new Error('REVIEW_REQUIRED: no imported Published Native artifact exists.');
   const manifest=strictJson(fs.readFileSync(file,'utf8'));
   const existing=state.external.native.artifact as Record<string,unknown>|undefined;
-  const value={manifest,shot_ledger:existing?.shotLedger??[],
+  const value=state.identityPolicy==='v1'?publishedNativeCreativeArtifact(root,state):{manifest,shot_ledger:existing?.shotLedger??[],
     sound_script:existing?.soundScript??[],asset_needs:existing?.assetNeeds??[]};
   return{value,sha256:sha(JSON.stringify(value)),id:'native-'+state.external.native.revision+'-'+operation,
     context:'PUBLISHED'};
@@ -125,6 +130,7 @@ export function suggestedCorrectScope(
     .filter(item=>item.stage===stage&&(item.operation==='review'||item.operation==='recheck')&&
       (item.value as {artifact_sha256?:string})?.artifact_sha256===current.sha256&&
       (current.context!=='DRAFT'||(item.draftAuthorTaskId===current.authorTaskId&&item.draftToken===current.draftToken))&&
+      (!current.publishedCorrectionTaskId||(item.draftRevision===current.draftRevision&&item.sourceCorrectTaskId===current.latestCorrectTaskId))&&
       (stage!=='native'||item.artifactContext===current.context||
         (current.context==='PUBLISHED'&&!item.artifactContext)))
     .sort((a,b)=>b.createdAt.localeCompare(a.createdAt)||b.taskId.localeCompare(a.taskId));
@@ -142,43 +148,11 @@ export function suggestedCorrectScope(
   const findingIds=selected??unresolvedIds;
   const findingScopes:Record<string,{editableIds:string[];editablePaths:string[]}>={};
   for(const finding of unresolved){
-    const withEvidence=finding as typeof finding & {evidence?:{detail?:string};requirement?:string};
-    const evidence=[withEvidence.evidence?.detail,withEvidence.requirement].filter(Boolean).join(' ');
-    const paths=stage==='native'?
-      [...new Set(evidence.match(/\/(?:shot_ledger|sound_script|asset_needs)\/(?:0|[1-9]\d*)(?:\/[A-Za-z0-9_~\/-]+)+/g)??[])]:[];
-    const inferredPaths:string[]=[];
-    if(paths.length===1){
-      const pointer=paths[0],parts=pointer.slice(1).split('/'),
-        collection=(current.value as Record<string,unknown>)[parts[0]];
-      if(Array.isArray(collection)){
-        const row=collection[Number(parts[1])] as Record<string,unknown>|undefined;
-        if(row&&typeof row==='object'&&!Array.isArray(row)){
-          const owner=row.shot_id??row.shotId??row.target_id??row.targetId;
-          if(typeof owner==='string'&&finding.target_ids.includes(owner)){
-            try{checkEditablePaths(stage,current.value,[pointer]);inferredPaths.push(pointer);}
-            catch{/* No exact pointer authority: fail closed on inferred auxiliary edits. */}
-          }
-        }
-      }
-    }
-    // A concrete auxiliary-only finding never grants an entire Shot. A mixed
-    // finding may grant both scopes ONLY if it explicitly references a Shot
-    // field in the current manifest as well as an existing auxiliary pointer.
-    const shotPaths=stage==='native'?
-      [...new Set(evidence.match(/\/manifest\/shots\/(?:0|[1-9]\d*)\/(?:[A-Za-z0-9_~\/-]+)/g)??[])]:[];
-    const shots=stage==='native'?
-      ((current.value as {manifest:{shots?:Array<{id:string}>}}).manifest.shots??[]):[];
-    const explicitShotEvidence=shotPaths.some(pointer=>{
-      const index=Number(pointer.split('/')[3]),target=shots[index];
-      if(!target||!finding.target_ids.includes(target.id))return false;
-      try{checkEditablePaths(stage,current.value,[pointer]);return true;}
-      catch{return false;}
-    });
-    const auxiliaryOnly=paths.length>0&&!explicitShotEvidence;
-    findingScopes[finding.id]={
-      editableIds:auxiliaryOnly?[]:[...new Set(finding.target_ids)],
-      editablePaths:inferredPaths
-    };
+    // Only structured, target-bound paths confer edit authority. Historical
+    // prose is evidence for humans, never a source of editable JSON paths.
+    const paths=(finding as typeof finding & {editable_paths?:string[]}).editable_paths??[];
+    if(stage==='native'&&paths.length)validateFindingPaths(current.value,finding.target_ids,paths);
+    findingScopes[finding.id]={editableIds:stage==='native'?[]:[...finding.target_ids],editablePaths:[...paths]};
   }
   return{
     editableIds:[...new Set(findingIds.flatMap(id=>findingScopes[id]?.editableIds??[]))],
@@ -192,7 +166,9 @@ type Lineage={correctTaskId:string;reviewTaskId:string;findingIds:string[];prior
  * never an authorization to resolve a different or retired artifact. */
 function correctionLineage(state:StudioState,stage:Stage,current:Artifact):Lineage{
   const correct=state.lifecycle?.tasks[stage+':correct'];
-  if(stage==='native'&&((correct?.artifactContext??'PUBLISHED')!==current.context||
+  const fromPublished=stage==='native'&&current.context==='DRAFT'&&correct?.artifactContext==='PUBLISHED'&&
+    current.publishedCorrectionTaskId===correct.id;
+  if(stage==='native'&&!fromPublished&&((correct?.artifactContext??'PUBLISHED')!==current.context||
     (current.context==='DRAFT'&&(correct?.draftAuthorTaskId!==current.authorTaskId||correct?.draftToken!==current.draftToken))))
     throw new Error('RECHECK_LINEAGE_REQUIRED: Native correction belongs to another draft/author lineage.');
   if(!correct||correct.status!=='IMPORTED')throw new Error('RECHECK_LINEAGE_REQUIRED: a confirmed current Correct task is required.');
@@ -212,7 +188,7 @@ function correctionLineage(state:StudioState,stage:Stage,current:Artifact):Linea
   const sources=Object.values(state.lifecycle?.artifacts??{}).filter(row=>row.stage===stage&&
     (row.operation==='review'||row.operation==='recheck')&&row.createdAt<=correct.createdAt&&
     (row.value as {artifact_sha256?:string})?.artifact_sha256===correct.artifactSha256&&
-    (current.context!=='DRAFT'||(row.draftAuthorTaskId===current.authorTaskId&&row.draftToken===current.draftToken))&&
+    (correct.artifactContext!=='DRAFT'||(row.draftAuthorTaskId===correct.draftAuthorTaskId&&row.draftToken===correct.draftToken))&&
     (stage!=='native'||row.artifactContext===correct.artifactContext||
       (correct.artifactContext==='PUBLISHED'&&!row.artifactContext)))
     .filter(row=>{
@@ -239,7 +215,7 @@ function checkEditablePaths(stage:Stage,artifact:unknown,paths:string[]){
     new Set(['/manifest','/manifest/shots','/shot_ledger','/sound_script','/asset_needs','/schema']);
   const forbidden=new Set(['/manifest/voice','/manifest/captions']);
   for(const pointer of paths){
-    if(typeof pointer!=='string'||!/^\/[A-Za-z0-9_~\/-]+$/.test(pointer)||pointer.endsWith('/')||
+    if(typeof pointer!=='string'||!/^\/[A-Za-z0-9_~/-]+$/.test(pointer)||pointer.endsWith('/')||
       structural.has(pointer)||forbidden.has(pointer))throw new Error('INVALID_EDITABLE_PATH: whole-root/collection or immutable field is not an authorized edit: '+pointer);
     const parts=pointer.slice(1).split('/').map(segment=>segment.replace(/~1/g,'/').replace(/~0/g,'~'));
     if(parts.some(segment=>!segment||segment==='__proto__'||segment==='prototype'||segment==='constructor'))
@@ -319,7 +295,7 @@ function lifecycleSourceContext(state:StudioState,stage:Stage,operation:External
   }));
 }
 const authorityIdentity=(authority:ReturnType<typeof compileAuthority>)=>
-  sha(JSON.stringify(authority.sources.map(source=>[source.path,source.sha256,source.extractionSha256,source.extractionRevision])));
+  sha(JSON.stringify(authority.stage==='native'?{sources:authority.sources.map(source=>[source.path,source.sha256,source.extractionSha256,source.extractionRevision]),referenceMedia:authority.referenceMedia}:authority.sources.map(source=>[source.path,source.sha256,source.extractionSha256,source.extractionRevision])));
 function assertLifecycleFresh(appPath:string,root:string,state:StudioState,task:NonNullable<StudioState['lifecycle']>['tasks'][string],journalResume=false){
   if(!task.sourceContextSha256||task.sourceContextSha256!==lifecycleSourceContext(state,task.stage,task.operation))
     throw new Error('STALE: lifecycle brief, approved creative source or voice/alignment was changed.');
@@ -327,7 +303,7 @@ function assertLifecycleFresh(appPath:string,root:string,state:StudioState,task:
   if(!task.authorityFingerprint||task.authorityFingerprint!==authorityIdentity(authority))
     throw new Error('REBUILD_REQUIRED: installed Mode B creative authority changed.');
   if(task.stage==='native'&&task.evidenceSha256&&
-    sha(JSON.stringify(nativeLifecycleEvidence(root,state)))!==task.evidenceSha256)
+    sha(JSON.stringify(nativeLifecycleEvidence(root,state,task.identityEvidenceSha?appPath:undefined)))!==task.evidenceSha256)
     throw new Error('STALE: Native approved narration, word or caption evidence changed.');
   for(const item of task.mediaBaseline??[]){
     const live=(state.media??[]).find(row=>JSON.stringify(row)===JSON.stringify(item));
@@ -560,7 +536,7 @@ function dedicatedLifecyclePrompt(
       'Assess approved narrative event coverage, causal progression, visually meaningful changes (not literal narration rewording), composition, silhouettes, visible actions, positions, contacts and important state changes for every Shot.',
       'Assess feasible motion with documented Mode B layers/keyframes, timing and pacing against actual words/pauses, without enforcing one Shot per caption; assess readable typography and selected B style.',
       'Assess character identity/clothes/poses, locations, props, geography, screen direction and physics across adjacent AND NON-ADJACENT Shots; consider continuing world and story constraints.',
-      'Assess every image layer versus real shot_id/layer_id/safe expected path in asset_needs, generated-image feasibility and continuity references. Differentiate proposed missing assets from actually verified local media.',
+      'Assess every image layer versus real shot_id/layer_id/safe expected path in asset_needs, generated-image feasibility and continuity references. Compare explicit character_ids, visual design and continuity with the approved upstream identity evidence; identify omitted or contradictory creative choices yourself. Differentiate proposed missing assets from actually verified local media.',
       'Assess sound_script SFX/ambience tied to genuine events, rather than generic sound beds; check manifest structural feasibility, reference and timing consistency without claiming native CLI validation.',
       'TEXT-ONLY COVERAGE: use coverage.modalities=["manifest"], ranges=[], media_sha256s=[]; findings target ONLY real frozen shot IDs, with precise violated requirement, manifest/ledger evidence and actionable recommendation. No minimum finding quota; REVIEWED_NO_FINDINGS is never a preset.',
       'DO NOT claim actual image viewing, rendered motion, listened audio, caption synchronization or original CLI PASS from local paths and SHA alone. Return review findings, NOT a corrected manifest.'
@@ -590,6 +566,7 @@ function dedicatedLifecyclePrompt(
     'NOT_VERIFIED: a requested verification cannot be established from supplied evidence.',
     'payload.coverage has exactly target_ids,modalities,ranges,media_sha256s. target_ids must be actual reviewed IDs within the frozen inventory. Use script/manifest for inspectable text only; do not claim picture, motion or sound observation without actual media examination.',
     'For each finding include exactly id, severity (critical|major|minor), status (open|resolved|uncertain), target_ids (real IDs), requirement, evidence (kind, detail and supported optional SHA/time range), recommendation.',
+    ...(stage==='native'&&operation!=='media-review'?['For Native Review/Recheck include editable_paths: exact existing JSON pointers owned by the declared target IDs. Unresolved findings require explicit paths; resolved findings may use []. Never rely on prose for edit authority.']:[]),
     'Allowed evidence.kind: manifest|inferred|unverified|observed. observed claims require genuine inspection of supplied media, source_sha256 tied to attested primary media and real supported in-range time/target. Never fabricate observations.',
     'Use [] for findings only when that is the truthful outcome. Never invent a finding to meet a quota.',
     'Construct ONE COMPLETE mode-b-lifecycle-result-v1 JSON object with the exact frozen identity and the required payload fields. The identity reference below is NOT a completed result.'
@@ -645,6 +622,7 @@ Return the complete corrected artifact, not a partial patch.`
   return [
     '# MODE B EXTERNAL '+stage.toUpperCase()+' '+operation.toUpperCase()+(kind?' — '+kind.toUpperCase():''),
     '## A — OPERATION-SPECIFIC MISSION',...missions,
+    ...(stage==='native'?[nativeAnimationDirection(authority.style),nativeReferenceInstructions(authority.referenceMedia??[])]:[]),
     '## B — PROJECT BRIEF',JSON.stringify(brief,null,2),
     ...(stage==='native'?['## B2 — NATIVE SOURCE EVIDENCE (VERIFIED, READ-ONLY)',
       'Complete approved narration and real word-level timestamps. No character timings, second Author appendix or false media playback claims.',
@@ -785,7 +763,7 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
     throw new Error('REBUILD_REQUIRED: original frozen author task is unavailable for independent review/correction.');
   const originalTask=fs.readFileSync(resolveProjectFile(root,ownerTask.promptPath),'utf8');
   if(ownerTask.promptSha256!==sha(originalTask))throw new Error('REBUILD_REQUIRED: original frozen author task was modified.');
-  const evidencePack=operation==='media-review'?evidence(root,state,scope):{status:'NOT_APPLICABLE',modalities:[],ranges:[],files:[]};
+  const evidencePack=operation==='media-review'?evidence(root,state,scope):{status:'NOT_APPLICABLE',modalities:[],ranges:[],files:[],...(stage==='native'&&artifact.context==='DRAFT'?{technical_plan:cachedNativePlan(appPath,root,(artifact.value as {manifest:unknown}).manifest,nativeVoiceTiming(root,state).timelineDuration,artifact.sha256),technical_plan_instruction:'Machine validation is not an independent Review verdict. Inspect exact current artifact; identify supported findings or request explicit structural reissue if the existing Correct scope cannot repair the error.'}:{})};
   let mediaTransferAttested=false,mediaSha256s:string[]=[],mediaDuration:number|undefined;
   if(operation==='media-review'){
     const listed=evidencePack.files as Array<{path:string;sha256:string}>;
@@ -805,6 +783,9 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   // Owner-provided empty arrays are explicit authorizations, never auto-filled.
   // A verified auxiliary path does not suppress independent selected-Shot rights.
   const editableIds=[...new Set(scope.editableIds??suggested?.editableIds??[])];
+  if(operation==='correct'&&stage==='native'&&(artifact.context==='DRAFT'||state.identityPolicy==='v1')&&
+    (editableIds.length>0||editablePaths.some(pointer=>!suggested?.editablePaths.includes(pointer))))
+    throw Error('CORRECT_SCOPE_EXCEEDS_STRUCTURED_REVIEW');
   if(operation==='correct'&&!editableIds.length&&!editablePaths.length)
     throw new Error('Correct requires unresolved findings from a confirmed current-artifact Review or an explicit editable section/shot scope.');
   if(editableIds.some(id=>typeof id!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(id)))throw new Error('Invalid editable ID.');
@@ -879,7 +860,8 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
     evidencePack,mediaTransferAttested,mediaSha256s,mediaDuration,editableIds,editablePaths,findingIds,targetIds,relevantPrior,
     correctionLineage:lineage?{correctTaskId:lineage.correctTaskId,reviewTaskId:lineage.reviewTaskId}:null};
   const sourceContextSha256=lifecycleSourceContext(state,stage,operation),authorityFingerprint=authorityIdentity(authority);
-  const nativeSourceEvidence=stage==='native'?nativeLifecycleEvidence(root,state):undefined;
+  const nativeSourceEvidence=stage==='native'?nativeLifecycleEvidence(root,state,appPath):undefined;
+  const identityEvidenceSha=nativeSourceEvidence&&'upstream_character_authority' in nativeSourceEvidence?nativeSourceEvidence.upstream_character_authority?.snapshotSha:undefined;
   const evidenceSha256=nativeSourceEvidence?sha(JSON.stringify(nativeSourceEvidence)):undefined;
   const inputSha256=sha(JSON.stringify({...snapshot,sourceContextSha256,authorityFingerprint,evidenceSha256}));
   if(!rebuild&&prior?.status==='FROZEN'&&prior.inputSha256===inputSha256&&fs.existsSync(resolveProjectFile(root,prior.promptPath)))
@@ -906,7 +888,9 @@ export function freezeLifecycleTask(appPath:string,root:string,stage:Stage,opera
   fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,prompt,{encoding:'utf8',flag:'wx'});
   state.lifecycle??={tasks:{},artifacts:{}};
   state.lifecycle.tasks[key]={id,stage,operation,revision,inputSha256,artifactSha256:artifact.sha256,
-    artifactContext:artifact.context,draftToken:artifact.draftToken,draftAuthorTaskId:artifact.authorTaskId,draftRevision:artifact.draftRevision,promptPath:relative,promptSha256:sha(prompt),status:'FROZEN',createdAt:new Date().toISOString(),editableIds,editablePaths,targetIds,findingIds,sourceReviewTaskId:operation==='correct'?reviewSource?.taskId:undefined,originalTaskSha256:sha(originalTask),sourceContextSha256,authorityFingerprint,evidenceSha256,mediaTransferAttested,mediaKind:scope.media,mediaSha256s,mediaDuration,mediaBaseline:structuredClone(state.media??[])};
+    ...(stage==='native'&&(operation==='review'||operation==='recheck')?{structuredReviewScope:true}:{}),
+    ...(identityEvidenceSha?{identityEvidenceSha}:{}),
+    artifactContext:artifact.context,draftToken:artifact.draftToken,draftAuthorTaskId:artifact.authorTaskId,draftRevision:artifact.draftRevision,promptPath:relative,promptSha256:sha(prompt),status:'FROZEN',createdAt:new Date().toISOString(),editableIds,editablePaths,targetIds,findingIds,sourceReviewTaskId:operation==='correct'?reviewSource?.taskId:undefined,sourceCorrectTaskId:lineage?.correctTaskId??artifact.latestCorrectTaskId,originalTaskSha256:sha(originalTask),sourceContextSha256,authorityFingerprint,evidenceSha256,mediaTransferAttested,mediaKind:scope.media,mediaSha256s,mediaDuration,mediaBaseline:structuredClone(state.media??[])};
   writeState(root,state);
   return{...state.lifecycle.tasks[key],prompt};
 }
@@ -957,7 +941,24 @@ export function validateLocks(stage:Stage,before:unknown,after:unknown,editable:
   }
   compare(before,after,'');
 }
-function validateReview(payload:Record<string,unknown>,task:NonNullable<StudioState['lifecycle']>['tasks'][string],operation:ExternalOperation){
+/** JSON-pointer ownership is structural: resolve declared paths against the artifact. */
+function validateFindingPaths(artifact:unknown,targetIds:string[],paths:string[]){
+  if(new Set(paths).size!==paths.length)throw Error('REVIEW_EDITABLE_PATHS_DUPLICATE');
+  checkEditablePaths('native',artifact,paths);
+  const root=artifact as {manifest:{shots?:Array<{id:string}>};[key:string]:unknown};
+  for(const path of paths){
+    const parts=path.split('/');
+    let owner:unknown;
+    if(parts[1]==='manifest'&&parts[2]==='shots')owner=root.manifest.shots?.[Number(parts[3])]?.id;
+    else if(['shot_ledger','sound_script','asset_needs'].includes(parts[1])){
+      const rows=root[parts[1]];
+      const row=Array.isArray(rows)?rows[Number(parts[2])]:undefined;
+      owner=row?.shot_id??row?.shotId??row?.target_id??row?.targetId;
+    }
+    if(typeof owner!=='string'||!targetIds.includes(owner))throw Error('REVIEW_EDITABLE_PATH_TARGET_MISMATCH: '+path);
+  }
+}
+function validateReview(payload:Record<string,unknown>,task:NonNullable<StudioState['lifecycle']>['tasks'][string],operation:ExternalOperation,artifact:unknown){
   exact(payload,['schema','artifact_sha256','status','coverage','findings']);
   if(payload.schema!=='mode-b-review-v1'||payload.artifact_sha256!==task.artifactSha256||
     !['REVIEWED_WITH_FINDINGS','REVIEWED_NO_FINDINGS','INSUFFICIENT_EVIDENCE','NOT_VERIFIED'].includes(String(payload.status))||
@@ -1006,13 +1007,18 @@ function validateReview(payload:Record<string,unknown>,task:NonNullable<StudioSt
   for(const item of findings){
     if(!item||typeof item!=='object'||Array.isArray(item))throw new Error('Invalid review finding.');
     const f=item as Record<string,unknown>;
-    exact(f,['id','severity','status','target_ids','requirement','evidence','recommendation']);
+    exact(f,['id','severity','status','target_ids','requirement','evidence','recommendation',...(task.structuredReviewScope?['editable_paths']:[])]);
     if(typeof f.id!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(f.id)||ids.has(f.id))throw new Error('Invalid/duplicate finding ID.');
     ids.add(f.id);
     if(!['critical','major','minor'].includes(String(f.severity))||!['open','resolved','uncertain'].includes(String(f.status)))
       throw new Error('Invalid finding severity/status.');
     if(!Array.isArray(f.target_ids)||!f.target_ids.length||f.target_ids.some(id=>!task.targetIds?.includes(String(id))))
       throw new Error('Finding refers to an unknown shot/section target.');
+    if(task.structuredReviewScope){
+      if(!Array.isArray(f.editable_paths)||f.editable_paths.some(path=>typeof path!=='string')||
+        (f.status!=='resolved'&&!f.editable_paths.length))throw Error('REVIEW_EDITABLE_PATHS_REQUIRED');
+      validateFindingPaths(artifact,f.target_ids as string[],f.editable_paths as string[]);
+    }
     if(typeof f.requirement!=='string'||!f.requirement.trim()||typeof f.recommendation!=='string')throw new Error('Finding lacks violated requirement.');
     const ev=f.evidence as Record<string,unknown>;
     if(!ev||typeof ev!=='object'||Array.isArray(ev)||!['manifest','inferred','unverified','observed'].includes(String(ev.kind))||
@@ -1181,12 +1187,12 @@ export function stageLifecycleResult(appPath:string,root:string,stage:Stage,oper
         throw new Error('SCRIPT_CORRECT_NO_OP: unresolved findings require an actual authorized Script change.');
     }else{
       const previous=current.value as {manifest:Record<string,unknown>;shot_ledger:unknown;sound_script:unknown;asset_needs:unknown};
-      validateManifest(state,root,corrected);
+      validateManifest(state,root,corrected,appPath);
       rejectNativeUnsafePaths(corrected);
       validateLocks(stage,previous,corrected,task.editableIds??[],task.editablePaths??[]);
     }
   }else{
-    validateReview(payload,task,operation);
+    validateReview(payload,task,operation,current.value);
   }
   const responseSha256=sha(text),savedPath=resultPath(root,task.id),stagingPath=pendingPath(root);
   if(fs.existsSync(stagingPath))recoverDisabledMediaReviewPending(root,state);
@@ -1218,6 +1224,8 @@ function finalizeLifecycle(root:string,pending:Record<string,unknown>,task:NonNu
   const payload=pending.payload as Record<string,unknown>;
   state.lifecycle.artifacts[task.id]={taskId:task.id,stage:task.stage,operation:task.operation,
     artifactContext:task.artifactContext,draftAuthorTaskId:task.draftAuthorTaskId,draftToken:task.draftToken,
+    draftRevision:task.draftRevision,sourceCorrectTaskId:task.sourceCorrectTaskId,
+    ...(task.identityEvidenceSha?{identityEvidenceSha:task.identityEvidenceSha}:{}),
     artifactSha256:sha(JSON.stringify(payload)),value:payload,status:String(payload.status??'CORRECTION_STAGED'),
     createdAt:new Date().toISOString()};
   state.lifecycle.tasks[key].status='IMPORTED';
@@ -1288,7 +1296,7 @@ async function publishNativeCorrection(appPath:string,root:string,pending:Record
       throw new Error('STALE: native creative state changed during auxiliary publication.');
     const prior=current.external.native;
     if(!prior)throw new Error('REVIEW_REQUIRED: missing native authoring baseline.');
-    validateManifest(current,root,payload.artifact as unknown as Record<string,unknown>);
+    validateManifest(current,root,payload.artifact as unknown as Record<string,unknown>,appPath);
     validateLocks('native',initialArtifact.value,payload.artifact,task.editableIds??[],task.editablePaths??[]);
     const revision=prior.revision+1;
     const existing=prior.artifact as Record<string,unknown>;
@@ -1407,6 +1415,20 @@ export function confirmLifecycleResult(appPathOrRoot:string,rootOrToken:string,m
     });
     // After a durable correction, only jobs whose effective creative target
     // changed become STALE. Unrelated jobs and approved bindings remain intact.
+    invalidateGlabsJobsAfterNativeCorrection(appPath,root);
+    return finalizeLifecycle(root,pending,task);
+  }
+  if(pending.operation==='correct'&&pending.stage==='native'&&state.identityPolicy==='v1'){
+    const corrected=(pending.payload as {artifact:Record<string,unknown>}).artifact;
+    validateLocks('native',original.value,corrected,task.editableIds??[],task.editablePaths??[]);
+    const source=task.sourceReviewTaskId?state.lifecycle?.artifacts[task.sourceReviewTaskId]:undefined;
+    if(!source||!task.identityEvidenceSha||source.identityEvidenceSha!==task.identityEvidenceSha||
+      source.status!=='REVIEWED_WITH_FINDINGS'||source.artifactContext!=='PUBLISHED'||
+      (source.value as {artifact_sha256?:string})?.artifact_sha256!==task.artifactSha256||
+      source.artifactSha256!==sha(JSON.stringify(source.value)))throw Error('NATIVE_CREATIVE_REVIEW_REQUIRED');
+    stagePublishedNativeCorrection(appPath,root,corrected,{correctTaskId:task.id,reviewTaskId:source.taskId,
+      editableIds:task.editableIds??[],editablePaths:task.editablePaths??[],findingIds:task.findingIds??[],
+      baselineSha256:task.artifactSha256,responseSha256:String(pending.responseSha256)});
     invalidateGlabsJobsAfterNativeCorrection(appPath,root);
     return finalizeLifecycle(root,pending,task);
   }

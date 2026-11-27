@@ -6,7 +6,7 @@ import { atomicJson, readState, resolveProjectFile, sha, strictJson, writeState 
 export interface CaptionCue { start: number; end: number; text: string }
 export interface CaptionReviewRecord {
   revision: number; path: string; sha256: string; sourceSha256: string; note: string; approvedAt: string;
-  mode?: 'AUTO'|'MANUAL';
+  mode?: 'AUTO'|'MANUAL'; authorTaskId?:string;
 }
 export interface CaptionDraftRecord { path: string; sha256: string; sourceSha256: string; boundaries: number[] }
 export interface NativeVoiceTiming { lead: number; tail: number; trimStart: number; timelineDuration: number; voiceStart: number }
@@ -94,11 +94,23 @@ export function getCaptionReview(root: string) {
   let status:'REVIEW_REQUIRED'|'STALE_REVIEW'|'CORRUPT_REGISTERED_REVIEW'|'VERIFIED'|'AUTO_VERIFIED'='REVIEW_REQUIRED',approved:({cues:CaptionCue[]}&CaptionReviewRecord)|null=null;
   if(review){if(review.sourceSha256!==sourceSha256)status='STALE_REVIEW';else{try{const bytes=fs.readFileSync(resolveProjectFile(root,review.path));if(sha(bytes)!==review.sha256)throw new Error('hash');const cues=readCues(root,review.path),boundaries=boundariesFromCues(words,cues);if(!same(cues,buildCues(words,boundaries,offset,nativeVoiceTiming(root,state).timelineDuration)))throw new Error('content');approved={...review,cues};status=review.mode==='AUTO'?'AUTO_VERIFIED':'VERIFIED'}catch{status='CORRUPT_REGISTERED_REVIEW'}}}
   const draft=state.alignment?.captionDraft;
-  const validDraft=draft && draft.sourceSha256===sourceSha256 && fs.existsSync(resolveProjectFile(root,draft.path)) && sha(fs.readFileSync(resolveProjectFile(root,draft.path)))===draft.sha256;
-  return {words,original,sourceSha256,status,workflowStatus:status==='VERIFIED'?'USER_APPROVED':status==='STALE_REVIEW'?'STALE':status,approved,
+  let verifiedDraft: (NonNullable<NonNullable<typeof state.alignment>['captionDraft']>&{cues:CaptionCue[]})|null=null;
+  if(draft?.sourceSha256===sourceSha256){
+    try{
+      const bytes=fs.readFileSync(resolveProjectFile(root,draft.path));
+      const cues=readCues(root,draft.path);
+      if(sha(bytes)===draft.sha256&&same(cues,buildCues(words,draft.boundaries,offset,duration)))
+        verifiedDraft={...draft,cues};
+    }catch{/* stale/corrupt draft is not an approval candidate */}
+  }
+  const author=state.alignment?.captionAuthorTask;
+  const validAuthor=author?.sourceSha256===sourceSha256&&author.inputSha256===sha(JSON.stringify({sourceSha256,words,offset,duration}))?author:null;
+  const draftKind=verifiedDraft?(verifiedDraft.technicalDraft?'TECHNICAL':verifiedDraft.authorTaskId&&validAuthor?.status==='IMPORTED'&&validAuthor.taskId===verifiedDraft.authorTaskId?'AI_AUTHORED':verifiedDraft.authorTaskId?'CORRUPT':'OWNER_CORRECTED'):draft?'STALE_OR_CORRUPT':'NONE';
+  const canApproveDraft=draftKind==='AI_AUTHORED'||draftKind==='OWNER_CORRECTED';
+  return {words,original,sourceSha256,captionAuthorTask:validAuthor,draftKind,canApproveDraft,status,workflowStatus:status==='VERIFIED'?'USER_APPROVED':status==='STALE_REVIEW'?'STALE':status,approved,
     wordCount:words.length, cueCount:approved?.cues.length??original.length, duration,
     error:status==='REVIEW_REQUIRED'?state.alignment?.captionAutoError:undefined,
-    draft: validDraft ? { ...draft, cues: readCues(root,draft!.path) } : null,
+    draft: verifiedDraft,
     originalBoundaries,shift:offset};
 }
 function invalidateTimingDependents(root:string,state:ReturnType<typeof readState>,approvedSource:string|undefined,currentSource:string) {
@@ -112,33 +124,82 @@ function readCues(root:string,relative:string):CaptionCue[] {
   if (!Array.isArray(value)) throw new Error('Caption review is not an array.');
   return value;
 }
+/** Freeze exact aligned words. Indices are one-based cumulative word counts,
+ * equivalent to exclusive ends into the zero-based ordered word array. */
+export function freezeCaptionAuthorTask(root:string){
+  const {state,alignment,words,sourceSha256,offset,duration}=inputs(root,{allowCoreRegroup:true});
+  const taskId=randomUUID(),inputSha256=sha(JSON.stringify({sourceSha256,words,offset,duration}));
+  const envelope={schema:'mode-b-caption-author-result-v1',project_id:state.project.id,
+    task_id:taskId,input_sha256:inputSha256,source_sha256:sourceSha256,
+    payload:{end_word_indices:[]}};
+  const prompt=[
+    '# STICKMAN — External AI Caption Author',
+    'Choose semantic phrase boundaries using only these exact aligned words. Preserve every word and its order. Return ONLY cumulative one-based end-word counts, strictly increasing, final count exactly equal to the number of words.',
+    'Respect one-line Core limits: at most 8 aligned words, 58 characters and 3.5 seconds per cue. No invented words, timestamps or rewritten narration.',
+    JSON.stringify(words.map((word,index)=>({index:index+1,...word})),null,2),
+    'Frozen JSON result envelope (fill payload, preserve identity):',
+    JSON.stringify(envelope,null,2)
+  ].join('\n\n');
+  alignment.captionAuthorTask={taskId,sourceSha256,inputSha256,prompt,status:'FROZEN'};
+  writeState(root,state);return alignment.captionAuthorTask;
+}
+export function importCaptionAuthorResult(root:string,text:string){
+  const {state,alignment,words,offset,duration,sourceSha256}=inputs(root,{allowCoreRegroup:true});
+  const task=alignment.captionAuthorTask;
+  if(!task||task.status!=='FROZEN'||task.sourceSha256!==sourceSha256||
+    task.inputSha256!==sha(JSON.stringify({sourceSha256,words,offset,duration})))
+    throw Error('CAPTION_AUTHOR_TASK_STALE');
+  if(Buffer.byteLength(text,'utf8')>4*1024*1024)throw Error('CAPTION_AUTHOR_RESULT_OVERSIZE');
+  const result=strictJson(text) as Record<string,unknown>;
+  if(!result||typeof result!=='object'||Array.isArray(result)||
+    Object.keys(result).sort().join('|')!==['schema','project_id','task_id','input_sha256','source_sha256','payload'].sort().join('|')||
+    result.schema!=='mode-b-caption-author-result-v1'||result.project_id!==state.project.id||
+    result.task_id!==task.taskId||result.input_sha256!==task.inputSha256||result.source_sha256!==sourceSha256)
+    throw Error('CAPTION_AUTHOR_ENVELOPE_INVALID');
+  const payload=result.payload as {end_word_indices:number[]};
+  if(!payload||typeof payload!=='object'||Array.isArray(payload)||
+    Object.keys(payload).join('|')!=='end_word_indices')throw Error('CAPTION_AUTHOR_PAYLOAD_INVALID');
+  const boundaries=payload.end_word_indices,cues=buildCues(words,boundaries,offset,duration);
+  const relative='.studio/alignment/caption-ai-draft-'+randomUUID()+'.json';
+  atomicJson(resolveProjectFile(root,relative),cues);
+  alignment.captionDraft={path:relative,sha256:sha(fs.readFileSync(resolveProjectFile(root,relative))),
+    sourceSha256,boundaries:[...boundaries],authorTaskId:task.taskId};
+  alignment.captionAuthorTask={...task,status:'IMPORTED'};
+  writeState(root,state);return {cues,sourceSha256,status:'REVIEW_REQUIRED' as const};
+}
 export function draftCaptionReview(root:string,boundaries:number[]) {
   const {state,alignment,words,offset,duration,sourceSha256}=inputs(root,{allowCoreRegroup:true});
   const cues=buildCues(words,boundaries,offset,duration);
   const relative=`.studio/alignment/caption-draft-${randomUUID()}.json`;
   atomicJson(resolveProjectFile(root,relative),cues);
-  alignment.captionDraft={path:relative,sha256:sha(fs.readFileSync(resolveProjectFile(root,relative))),sourceSha256,boundaries:[...boundaries]};
+  const task=alignment.captionAuthorTask;
+  const authorTaskId=task?.status==='IMPORTED'&&task.sourceSha256===sourceSha256?task.taskId:undefined;
+  alignment.captionDraft={path:relative,sha256:sha(fs.readFileSync(resolveProjectFile(root,relative))),sourceSha256,boundaries:[...boundaries],
+    ...(authorTaskId?{authorTaskId}:{})};
   writeState(root,state);
   return {cues,sourceSha256,status:'REVIEW_REQUIRED'};
 }
-export function approveCaptionReview(root:string,note:string) {
+export function approveCaptionReview(root:string,note:string,expectedSha?:string) {
   if (typeof note!=='string' || !note.trim()) throw new Error('Explicit caption revision review note is required.');
   const {state,alignment,words,offset,duration,sourceSha256}=inputs(root,{allowCoreRegroup:true});
   const draft=alignment.captionDraft;
   if (!draft || draft.sourceSha256!==sourceSha256 || sha(fs.readFileSync(resolveProjectFile(root,draft.path)))!==draft.sha256) throw new Error('Caption draft source is stale or missing.');
+  if(expectedSha!==undefined&&expectedSha!==draft.sha256)throw Error('CAPTION_APPROVAL_STALE');
+  if(draft.technicalDraft)throw Error('CAPTION_TECHNICAL_DRAFT_REQUIRES_AI_AUTHOR_OR_EXPLICIT_MANUAL_CORRECTION');
+  if(!getCaptionReview(root).canApproveDraft)throw Error('CAPTION_DRAFT_AUTHORITY_INVALID');
   const cues=buildCues(words,draft.boundaries,offset,duration);
   if (!same(cues,readCues(root,draft.path))) throw new Error('Caption draft was changed outside review.');
   const existing=alignment.captionReview;
-  if(existing&&existing.sourceSha256===sourceSha256&&fs.existsSync(resolveProjectFile(root,existing.path))&&sha(fs.readFileSync(resolveProjectFile(root,existing.path)))===existing.sha256&&same(readCues(root,existing.path),cues)){
+  if(existing&&existing.sourceSha256===sourceSha256&&fs.existsSync(resolveProjectFile(root,existing.path))&&sha(fs.readFileSync(resolveProjectFile(root,existing.path)))===existing.sha256&&same(readCues(root,existing.path),cues)&&existing.mode!=='AUTO'&&existing.authorTaskId===draft.authorTaskId){
     alignment.captionDraft=undefined;writeState(root,state);return{...existing,cues};
   }
   const revision=(alignment.captionReview?.revision??0)+1;
   const relative=`.studio/alignment/caption-review-${revision}-${randomUUID()}.json`;
   atomicJson(resolveProjectFile(root,relative),cues);
-  alignment.captionReview={revision,path:relative,sha256:sha(fs.readFileSync(resolveProjectFile(root,relative))),sourceSha256,note:note.trim(),approvedAt:new Date().toISOString(),mode:'MANUAL'};
+  alignment.captionReview={revision,path:relative,sha256:sha(fs.readFileSync(resolveProjectFile(root,relative))),sourceSha256,note:note.trim(),approvedAt:new Date().toISOString(),mode:'MANUAL',...(draft.authorTaskId?{authorTaskId:draft.authorTaskId}:{})};
   alignment.captionDraft=undefined;
   if(state.tasks?.native)state.tasks.native.status='STALE';
-  state.preview=undefined;state.approval=undefined;state.render=undefined;
+  state.nativeReadiness=undefined;state.preview=undefined;state.approval=undefined;state.render=undefined;
   writeState(root,state);
   return { ...alignment.captionReview,cues };
 }
@@ -146,7 +207,7 @@ export function approvedCaptionCues(root:string):CaptionCue[] {
   const {state,alignment,words,offset,duration,sourceSha256}=inputs(root,{allowCoreRegroup:true});
   const review=alignment.captionReview;
   invalidateTimingDependents(root,state,review?.sourceSha256,sourceSha256);
-  if (!review || review.sourceSha256!==sourceSha256) throw new Error('Caption REVIEW_REQUIRED: generate auto captions or approve an exact word-grounded manual revision first.');
+  if (!review || review.sourceSha256!==sourceSha256) throw new Error('Caption REVIEW_REQUIRED: approve exact word-grounded AI or owner-reviewed boundaries first.');
   const bytes=fs.readFileSync(resolveProjectFile(root,review.path));
   if (sha(bytes)!==review.sha256) throw new Error('Approved caption revision was modified.');
   const cues=JSON.parse(bytes.toString('utf8')) as CaptionCue[];
@@ -196,6 +257,16 @@ export function autoCaptionReview(root:string){
   const boundaries:number[]=[];
   for(let i=0;i<words.length;){const j=next[i];if(j<=i)throw new Error('CAPTION_REVIEW_REQUIRED: grouping cannot cover all spoken words.');boundaries.push(j);i=j;}
   const cues=buildCues(words,boundaries,offset,duration);
+  if(state.identityPolicy==='v1'){
+    // The local grouping is a technical preview only. It cannot authorize a
+    // new Native task without explicit semantic authoring/owner review.
+    const current=getCaptionReview(root);
+    if(current.canApproveDraft&&current.draft)return {status:'REVIEW_REQUIRED' as const,cues:current.draft.cues,revision:existing?.revision??0};
+    const relative='.studio/alignment/caption-technical-draft-'+randomUUID()+'.json';
+    atomicJson(resolveProjectFile(root,relative),cues);
+    alignment.captionDraft={path:relative,sha256:sha(fs.readFileSync(resolveProjectFile(root,relative))),sourceSha256,boundaries,technicalDraft:true};
+    writeState(root,state);return {status:'REVIEW_REQUIRED' as const,cues,revision:existing?.revision??0};
+  }
   const relative=`.studio/alignment/caption-auto-${(existing?.revision??0)+1}-${randomUUID()}.json`;
   atomicJson(resolveProjectFile(root,relative),cues);
   // Do not publish against a changed WAV/script/word/core/voice-timing fingerprint.
@@ -211,3 +282,5 @@ export function autoCaptionReview(root:string){
   writeState(root,latest);
   return{status:'AUTO_VERIFIED' as const,cues,revision};
 }
+
+export function ensureCaptionAuthorTask(root:string){const current=getCaptionReview(root);if(current.status==='VERIFIED'||current.canApproveDraft||current.captionAuthorTask?.status==='FROZEN')return current.captionAuthorTask;return freezeCaptionAuthorTask(root);}

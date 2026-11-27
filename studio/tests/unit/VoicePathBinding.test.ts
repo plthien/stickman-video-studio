@@ -7,7 +7,7 @@ import {importApprovedWav} from '../../src/main/voiceMedia';
 import {cleanup,fixture,wav} from './SixIssueFixtures';
 afterEach(cleanup);
 describe('original init voice path matches actual accepted narration, with no fixture shortcut',()=>{
-  it('binds an original Core scaffold path to owner-imported WAV and preserves B4 identity/timing',()=>{
+  it('binds an original Core scaffold path to owner-imported WAV, replaces unverified B4 identity and preserves timing',()=>{
     const {root}=fixture({style:'B4'}),file=path.join(root,'project.json');
     const manifest=JSON.parse(fs.readFileSync(file,'utf8'));
     // The real original autopilot init writes narration.wav; reproduce its mismatch.
@@ -16,7 +16,7 @@ describe('original init voice path matches actual accepted narration, with no fi
     const incoming=path.join(root,'incoming.wav');fs.writeFileSync(incoming,wav(2));
     const imported=importApprovedWav(root,incoming);
     const saved=JSON.parse(fs.readFileSync(file,'utf8'));
-    expect(saved.voice).toMatchObject({path:'assets/audio/narration.wav',name:'Brian',id:'original-voice',user_override:'Owner narrator',lead:0.5,tail:1,trim_start:0});
+    expect(saved.voice).toMatchObject({path:'assets/audio/narration.wav',name:'Owner-imported WAV (speaker unverified)',id:'imported-wav:'+imported.sha256,user_override:'Owner imported this narration WAV; speaker identity not independently verified.',lead:0.5,tail:1,trim_start:0});
     expect(imported.path).toBe(saved.voice.path);
     expect(imported.sha256).toBe(readState(root).voice?.sha256);
     expect(fs.existsSync(path.join(root,saved.voice.path))).toBe(true);

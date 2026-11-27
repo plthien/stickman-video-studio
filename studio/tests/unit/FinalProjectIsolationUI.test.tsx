@@ -39,6 +39,7 @@ describe('REG-03 final project-session isolation',()=>{
   it('REG03-F01 approve A then switch B ignores late success',async()=>{const gate=deferred<{state:NativeStudioState;stdout:string}>();bridge({nativeRun:()=>gate.promise});render(<AppStateProvider><Harness><ApprovalPanel onDetails={()=>{}}/></Harness></AppStateProvider>);fireEvent.change(await screen.findByLabelText('Approval note'),{target:{value:'reviewed A'}});fireEvent.click(screen.getByRole('checkbox'));fireEvent.click(screen.getByRole('button',{name:'Approve reviewed preview'}));fireEvent.click(screen.getByRole('button',{name:'Switch B'}));gate.resolve({state:{...A,approval:{note:'reviewed A',previewSha256:preview.sha256}},stdout:''});await flush();expect(screen.getByLabelText('active-project')).toHaveTextContent('B');expect(screen.queryByText('Native preview approval recorded against current evidence.')).not.toBeInTheDocument();expect(screen.queryByText('VERIFIED')).not.toBeInTheDocument()});
   it('REG03-F02 approve A rejection after switch B is invisible',async()=>{const gate=deferred<{state:NativeStudioState;stdout:string}>();bridge({nativeRun:()=>gate.promise});render(<AppStateProvider><Harness><ApprovalPanel onDetails={()=>{}}/></Harness></AppStateProvider>);fireEvent.change(await screen.findByLabelText('Approval note'),{target:{value:'reviewed A'}});fireEvent.click(screen.getByRole('checkbox'));fireEvent.click(screen.getByRole('button',{name:'Approve reviewed preview'}));fireEvent.click(screen.getByRole('button',{name:'Switch B'}));gate.reject(new Error('A approval failed'));await flush();expect(screen.queryByText(/A approval failed/)).not.toBeInTheDocument();expect(screen.getByLabelText('active-project')).toHaveTextContent('B')});
   it('REG03-F03 import A then switch B before fulfill does not continue binding',async()=>{
+    const confirm=vi.spyOn(window,'confirm').mockReturnValue(true);
     const imported=deferred<{path:string}>(),importMedia=vi.fn(()=>imported.promise),fulfill=vi.fn();
     bridge({pendingMedia:async()=>candidate,importMedia,fulfillMedia:fulfill});
     render(<AppStateProvider><Harness><StoryboardWorkspace/></Harness></AppStateProvider>);
@@ -52,10 +53,12 @@ describe('REG-03 final project-session isolation',()=>{
     fireEvent.click(screen.getByRole('button',{name:'Switch B'}));
     imported.resolve({path:'media/a.png'});
     await flush();
+    expect(confirm).not.toHaveBeenCalled();
     expect(fulfill).not.toHaveBeenCalled();
     expect(screen.getByLabelText('active-project')).toHaveTextContent('B');
   });
   it('REG03-F04 fulfill A already started cannot update B pending or native state',async()=>{
+    const confirm=vi.spyOn(window,'confirm').mockReturnValue(true);
     const fulfilled=deferred<typeof candidate>(),projectState=vi.fn(async()=>A),
       fulfillMedia=vi.fn(()=>fulfilled.promise);
     bridge({pendingMedia:async()=>candidate,importMedia:async()=>({path:'media/a.png'}),
@@ -69,13 +72,30 @@ describe('REG-03 final project-session isolation',()=>{
     fireEvent.click(screen.getByRole('button',{name:'Import and bind target'}));
     // Prove the target-bound async fulfillment actually began before the switch.
     await waitFor(()=>expect(fulfillMedia).toHaveBeenCalledWith(
-      'A','pending-A','shot-1:image-1','media/a.png','Owned'));
+      'A','pending-A','shot-1:image-1','media/a.png','Owned',true));
+    expect(confirm).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole('button',{name:'Switch B'}));
     fulfilled.resolve({...candidate,status:'FULFILLED',missing:[]});
     await flush();
     expect(projectState).not.toHaveBeenCalled();
     expect(screen.getByLabelText('active-project')).toHaveTextContent('B');
     expect(screen.queryByText(/FULFILLED/)).not.toBeInTheDocument();
+  });
+  it('REG03-F04B declining explicit image approval does not bind the imported file',async()=>{
+    const confirm=vi.spyOn(window,'confirm').mockReturnValue(false);
+    const importMedia=vi.fn(async()=>({path:'media/a.png'})),fulfillMedia=vi.fn();
+    bridge({pendingMedia:async()=>candidate,importMedia,fulfillMedia});
+    render(<AppStateProvider><Harness><StoryboardWorkspace/></Harness></AppStateProvider>);
+    fireEvent.click(screen.getByText('Advanced · manual Import & Bind, raw Native ledgers and diagnostics'));
+    await screen.findByRole('option',{name:/IMAGE.*shot-1/});
+    fireEvent.change(screen.getByLabelText('Exact missing candidate image layer or original audio track'),
+      {target:{value:'shot-1:image-1'}});
+    fireEvent.change(screen.getByLabelText('Owner-confirmed rights/source'),{target:{value:'Owned'}});
+    fireEvent.click(screen.getByRole('button',{name:'Import and bind target'}));
+    await waitFor(()=>expect(confirm).toHaveBeenCalledTimes(1));
+    expect(importMedia).toHaveBeenCalledTimes(1);
+    expect(fulfillMedia).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('active-project')).toHaveTextContent('A');
   });
   it('REG03-F05 refresh pending A cannot display A pending on B',async()=>{
     const refresh=deferred<typeof candidate|null>();

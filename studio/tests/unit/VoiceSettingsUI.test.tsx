@@ -24,6 +24,8 @@ const project=(id:string,voice=false):NativeStudioState=>({
 });
 function Seed({state,children}:{state:NativeStudioState;children:ReactNode}){
   const {setNative}=useAppState();
+  // Seed once per supplied state; the context setNative identity changes on every provider render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(()=>setNative(state),[state]);
   return children;
 }

@@ -9,9 +9,77 @@ export interface AuthoritySource {
   path:string; sha256:string; extractionSha256:string; extractionRevision:string;
   applicability:string[]; disposition:Disposition; headings:string[]; text:string; locations?:string[]; blocks?:Array<{location:string;text:string}>;
 }
-export const AUTHORITY_EXTRACTION_REVISION = 'stage-exact-v2';
+export const AUTHORITY_EXTRACTION_REVISION = 'stage-exact-v3';
+const LEGACY_SCRIPT_MEDIA_EXTRACTION_REVISION = 'stage-exact-v2';
 
 const STYLE:Record<string,string>={B1:'b1-minimal-handdrawn.md',B2:'b2-colorful-handdrawn.md',B3:'b3-television.md',B4:'b4-survival-storytelling.md'};
+
+const NATIVE_REFERENCE_MEDIA:Record<string,readonly string[]>={
+  B1:['assets/b1/approved-2026-10-23.mp4','assets/b1/approved-2026-10-23-contact-sheet.png',
+    'assets/b1/approved-2026-10-23-motion-sheet.png','assets/b1/character-acting-reference.png',
+    'assets/b1/approved-2026-10-24-longform-contact-sheet.jpg'],
+  B2:['assets/b2/approved-style-board.jpg'],
+  B3:['assets/b3/accepted-implementation-board.jpg','assets/b3/accepted-dog.png',
+    'assets/b3/accepted-dog-motion.mp4','assets/b3/accepted-chair.png','assets/b3/accepted-chair-motion.mp4'],
+  B4:['assets/b4/reference-01-motor-room.png','assets/b4/reference-02-rooftop.png',
+    'assets/b4/reference-03-driver.png','assets/b4/reference-04-street.png','assets/b4/reference-05-opposite-rooftop.png']
+};
+const NATIVE_REFERENCE_TEXT:Record<string,readonly string[]>={
+  B1:['assets/b1/approved-baseline.json','assets/b1/approved-production-standard.json'],
+  B2:['assets/b2/approved-style-board.json'],
+  B3:['assets/b3/reference-manifest.json'],
+  B4:['assets/b4/approved-style.json','assets/b4/style-lock.txt']
+};
+export function nativeReferenceInventory(appPath:string,style:string){
+  const names=NATIVE_REFERENCE_MEDIA[style];
+  if(!names)throw new Error('Unsupported Native reference style: '+style);
+  const root=nativeSkillRoot(appPath).root;
+  return names.map(relative=>{
+    const file=path.join(root,relative);
+    if(!fs.existsSync(file)||!fs.statSync(file).isFile())throw new Error('Required Mode B reference media missing: '+relative);
+    const bytes=fs.readFileSync(file);
+    if(!bytes.length)throw new Error('Required Mode B reference media empty: '+relative);
+    return {path:relative,sha256:sha(bytes),bytes:bytes.length,style,transferStatus:'LOCAL_ONLY_NOT_TRANSFERRED' as const};
+  });
+}
+export function nativeReferenceInstructions(inventory:ReturnType<typeof nativeReferenceInventory>){
+  return ['## Selected-style reference media (local inventory; not evidence of transfer)',
+    'Studio can export the actual selected-style reference files beside the Native prompt. Manually attach relevant images and motion clips before claiming any observation. A filename, hash or contact sheet does not establish moving-picture or audio inspection. If the authorized private B3 original or full B1 reference film is unavailable, disclose that comparison limit; bundled implementation evidence is not proof of exact replication.',
+    JSON.stringify(inventory,null,2)].join('\n\n');
+}
+export function exportNativeReferencePackage(appPath:string,style:string,promptFile:string,promptSha256:string){
+  const inventory=nativeReferenceInventory(appPath,style);
+  const root=nativeSkillRoot(appPath).root;
+  const directory=fs.mkdtempSync(promptFile+'.references-');
+  try{
+    for(const item of inventory){
+      const bytes=fs.readFileSync(path.join(root,item.path));
+      if(sha(bytes)!==item.sha256)throw new Error('Mode B reference changed during export: '+item.path);
+      const destination=path.join(directory,item.path);
+      fs.mkdirSync(path.dirname(destination),{recursive:true});
+      fs.writeFileSync(destination,bytes,{flag:'wx'});
+      if(sha(fs.readFileSync(destination))!==item.sha256)throw new Error('Mode B reference export SHA mismatch: '+item.path);
+    }
+    fs.writeFileSync(path.join(directory,'reference-package.json'),JSON.stringify({
+      schema:'mode-b-native-reference-package-v1',style,promptSha256,inventory,
+      notice:'Local export only. Attach actual files to External ChatGPT; no transfer or observation is attested.'
+    },null,2)+'\n',{flag:'wx'});
+    return directory;
+  }catch(error){fs.rmSync(directory,{recursive:true,force:true});throw error;}
+}
+/** Creative directions; not a new executable grammar or semantic validator. */
+export function nativeAnimationDirection(style:string){
+  return [
+    'NATIVE ANIMATION PRODUCTION — the original manifest is the executable animation design, not a slideshow storyboard. Apply only the selected B1–B4 style; ignore unrelated A/B5 routes and agent-only tool dispatch.',
+    'For each shot, design its visible start, story-specific event and visible end against the real spoken words. Use shot_ledger to explain word-aligned event time, acting/expression, moving subject/prop, contact/support/weight, composition, occlusion and continuity. Explain the original executable mechanism and required pose/state assets. Keep metadata out of project.json.',
+    'Design layer decomposition and asset_needs together: a prop that moves independently needs independently composable artwork or supported declarative artwork. A flat composed image cannot yield independent limb or prop movement. Describe isolated/registered assets and any required transparency in content without inventing provider capabilities or claiming validated alpha. Declare exact supported per-target orientation (9:16, 16:9, 1:1, 3:4 or 4:3) when needed. For explicit output requirements use asset_needs.output={composition: composed|isolated, background: opaque|transparent, preparation: preserve|border_key, registration: string, key_rgb?: [R,G,B]}. For border_key choose exact RGB absent from the artwork and request an entirely uniform opaque border-connected key background, with a clear margin on all sides and no antialiased key-colored fringe. Studio removes only exact border-connected pixels; if preservation or preparation is unsuitable, require owner review. No automatic crop or registration inference. Use the existing schema and safe native paths.',
+    'Use original keys, increasing shot-relative seconds, x/y/w/angle (radians)/alpha/progress and selective visibility from/to as applicable. Use the 1280-wide design plane, back-to-front ordering, correct image geometry and stable explicit identities. Supported pose/state switching uses authored separate images and visibility; no inferred rig, automatic limb motion, image-to-video or physics engine.',
+    ...(style==='B3'?['B3 only: use documented group/children, numeric paths, shapes, local pivots and group-local coordinates, scaleX/scaleY and selective visibility when appropriate. Preserve nested independent image children and occlusion. Never invent path morphing.']:['Do not use B3-only group, path, pivot or scaleX/scaleY mechanisms in this style.']),
+    ...(style==='B4'?['B4: retain fixed b4-hook-v1 opening, meaningful picture-state changes, deliberate-hold exception and three-second narrative shot rule. Exceptional holds require real scoped owner approval. Do not impose B1–B3 inactivity quota or mandatory limb animation.']:['B1–B3: meaningful local actor/prop/information motion with original project-unique layer id, motion role/reason and effective keys; preserve the 2.5-second principal-picture inactivity gate. Global camera moves, no-op keys and caption turnover do not satisfy it. Do not add arbitrary motion or force every layer to move.']),
+    'Use the original sound contract: tie actual track/cue intentions to the shot event and exact timeline, including environment, material/weight/perspective, intentional cuts and voice-first balance as applicable. Distinguish required source from acquired licensed media; never invent audio, rights, tracks or playback observations.',
+    'Separate planned design, supported executable mechanisms, actual rendered motion and observed creative quality. Text review can evaluate the first two only. No fake CLI PASS, rendered frames, verified alpha, sound or actual media observation from paths or SHA alone.'
+  ].join('\n\n');
+}
 
 const STYLE_SCRIPT_HEADINGS:Record<string,string[]>={
   B1:['## Visual language','## Stick-figure features and acting — B1 only','## Rhythm and sound','## Acceptance'],
@@ -159,7 +227,7 @@ function source(appPath:string,relative:string,style:string,stage:Stage,operatio
   const text=focused?.text??selectSections(full,headings,relative);
   if(!text.trim())throw new Error('REBUILD_REQUIRED: required authority is empty: '+relative);
   return {path:relative,sha256:sha(bytes),extractionSha256:sha(text),
-    extractionRevision:focused?SCRIPT_AUTHOR_EXTRACTION_REVISION:AUTHORITY_EXTRACTION_REVISION,
+    extractionRevision:focused?SCRIPT_AUTHOR_EXTRACTION_REVISION:stage==='script'?LEGACY_SCRIPT_MEDIA_EXTRACTION_REVISION:AUTHORITY_EXTRACTION_REVISION,
     applicability:[style,stage,operation],disposition,
     headings:focused?.headings??headings,...(focused?{locations:focused.locations,blocks:focused.blocks}:{}),text};
 }
@@ -181,6 +249,8 @@ export function compileAuthority(appPath:string,style:string,stage:Stage,operati
     specs.push(['references/autopilot-runtime.md',[],'KEEP']);
     specs.push(['references/autopilot-production-qa.md',[],'KEEP']);
     specs.push(['references/autopilot-sound-system.md',[],'KEEP']);
+    if(stage==='native'&&style==='B1')specs.push(['references/b1-production-qa.md',[],'KEEP']);
+    if(stage==='native')for(const relative of NATIVE_REFERENCE_TEXT[style])specs.push([relative,[],'KEEP']);
     if(style==='B4'){
       specs.push(['references/b4-opening-direction.md',[],'KEEP']);
       specs.push(['references/b4-audio-direction.md',[],'KEEP']);
@@ -215,7 +285,8 @@ export function compileAuthority(appPath:string,style:string,stage:Stage,operati
       'original CLI execution, actual preview/render verification and owner approval'],
     AGENT_ONLY:['automatic tool dispatch, local terminal/browser automation and unattended producer calls']
   }:undefined;
-  return {version:stage==='script'&&(['author','review','correct','recheck'] as ExternalOperation[]).includes(operation)?SCRIPT_AUTHOR_EXTRACTION_REVISION:AUTHORITY_EXTRACTION_REVISION,style,stage,operation,rules,sources,
+  const referenceMedia=stage==='native'?nativeReferenceInventory(appPath,style):undefined;
+  return {...(referenceMedia?{referenceMedia}:{}),version:stage==='script'?(operation==='media-review'?LEGACY_SCRIPT_MEDIA_EXTRACTION_REVISION:SCRIPT_AUTHOR_EXTRACTION_REVISION):AUTHORITY_EXTRACTION_REVISION,style,stage,operation,rules,sources,
     ...(scriptAuthorClassification?{scriptAuthorClassification}:{}),
     matrix:{KEEP:sources.map(item=>item.path),
       MOVE_TO_NATIVE:stage==='script'?['references/autopilot-runtime.md','native project.json contract','native CLI validation and production approval']:[],

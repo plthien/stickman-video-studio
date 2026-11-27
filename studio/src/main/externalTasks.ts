@@ -1,11 +1,22 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { atomicJson, nativeSkillRoot, readState, resolveProjectFile, runProcess, safeImportedFile, sha, strictJson, writeState, type Stage, type StudioState } from './services.js';
+import { assertB4NarratorBinding, atomicJson, nativeSkillRoot, readState, resolveProjectFile, runProcess, safeImportedFile, sha, strictJson, writeState, type Stage, type StudioState } from './services.js';
 import { approvedCaptionCues, nativeVoiceTiming } from './captionReview.js';
 import { rejectNativeUnsafePaths, validateAuthoring } from './sourceCitations.js';
-import { compileAuthority } from './externalAuthority.js';
-import {imageRequirementFingerprintSources} from './imageRequirements.js';
+import { compileAuthority,nativeAnimationDirection,nativeReferenceInventory,nativeReferenceInstructions } from './externalAuthority.js';
+import {imageRequirementFingerprintSources,imageRequirementsForTarget} from './imageRequirements.js';
+import {assetOutputForTarget,verifyArtwork,verifyRatio} from './assetPreparation.js';
+import {inspectNativePlan,nativePlanPreflight} from './nativePlanPreflight.js';
+import {structuredSoundCues,assertAudioReceipt,type AudioPreparationReceipt} from './soundRequirements.js';
+import {readApprovedNativeIdentity,validateNativeBindingPayload} from './identity/nativeBinding.js';
+import {currentDraftIdentityReceipt,publishNativeIdentityReceipt,assertPublishedIdentityCurrent,readNativeIdentityReceipt} from './identity/finalGate.js';
+import {createContinuityResolver} from './identity/continuityGraph.js';
+import {verifyReferenceFile,type IdentityDecoder} from './identity/referencePublication.js';
+import {contentHash} from './identity/contracts.js';
+import {readGlabsJob} from './glabs.js';
+import {verifyOwnerImageApproval} from './identity/ownerMediaAuthority.js';
+import type {OwnerImageApproval} from './identity/ownerMediaAuthority.js';
 
 export function externalOutputFilename(
   stage:Stage,operation:'author'|'review'|'correct'|'recheck'|'media-review',
@@ -47,6 +58,7 @@ const projectContext = (state: StudioState, root: string, stage:Stage) => {
     if(!state.approvedScript||sha(state.approvedScript.text)!==state.approvedScript.sha256)throw new Error('Native task BLOCKED: current approved script evidence is missing or corrupt.');
     if(!state.voice||state.voice.stale)throw new Error('Native task BLOCKED: current accepted narration is missing or stale.');
     const audio=fs.readFileSync(resolveProjectFile(root,state.voice.path));if(sha(audio)!==state.voice.sha256)throw new Error('Native task BLOCKED: accepted narration bytes changed.');
+    assertB4NarratorBinding(state.project.style,state.voice,manifest.voice);
     if(!state.alignment)throw new Error('Native task BLOCKED: real word alignment is missing.');
     words=readJsonValue(resolveProjectFile(root,state.alignment.path));captionCues=readJsonValue(resolveProjectFile(root,state.alignment.captionsPath));
     approvedCues=approvedCaptionCues(root);
@@ -57,7 +69,8 @@ const projectContext = (state: StudioState, root: string, stage:Stage) => {
 };
 /** Native prompt projection v1: keep sourceFingerprint() on full frozen evidence.
  * This is an output-size change only; never rewrite the accepted alignment file. */
-function nativePromptProjection(context:ReturnType<typeof projectContext>,root:string){
+function nativePromptProjection(context:ReturnType<typeof projectContext>,root:string,
+  appPath:string){
   const source=context as unknown as Record<string,unknown> & {
     alignment?:{words?:unknown;caption_cues?:unknown;approved_caption_cues?:unknown;
       provenance?:unknown;words_sha256?:unknown;cues_sha256?:unknown;
@@ -79,7 +92,16 @@ function nativePromptProjection(context:ReturnType<typeof projectContext>,root:s
   }
   const {assets:unusedAssets,media_ledger:unusedLedger,...common}=source;
   void unusedAssets;void unusedLedger;
+  const approvedIdentity=readState(root).identityPolicy==='v1'?
+    readApprovedNativeIdentity(root,appPath):null;
   return {...common,
+    ...(approvedIdentity?{
+      upstream_character_authority:{
+        ...approvedIdentity,
+        // Reviewed structured creative records are transported intact; no prose inference.
+        characters:approvedIdentity.characters
+      }
+    }:{}),
     prompt_projection_version:'native-author-word-only-v1',
     alignment:{
       provenance:source.alignment?.provenance,
@@ -104,7 +126,9 @@ export function sourceFingerprint(appPath: string, root: string, stage: Stage) {
   // New unassigned media files never change creative authority. Existing assets are
   // separately snapshotted with their exact bytes at freeze and checked at both gates.
   const creative = Object.fromEntries(Object.entries(context).filter(([key]) => key !== 'assets' && key !== 'media_ledger'));
-  return sha(JSON.stringify({ stage, creative, authority }));
+  const identity=stage==='native'&&state.identityPolicy==='v1'?
+    readApprovedNativeIdentity(root,appPath).snapshotSha:null;
+  return sha(JSON.stringify({ stage, creative, authority, ...(identity?{identity}:{}) }));
 }
 const mediaSnapshot = (state: StudioState) => (state.media ?? []).map(row => ({
   path: row.path, sha256: row.sha256, rights: row.rights, kind: row.kind,
@@ -166,7 +190,7 @@ function scriptAuthorPrompt(
     provenance,
     authority,
     '## 5. Exact JSON output contract',
-    'Return exactly one JSON object matching the frozen identity envelope. Keep schema, project_id, task_id, revision, input_sha256 and stage unchanged. The JSON payload below is a fictional kite-story FORMAT EXAMPLE, not narration or creative direction for the requested project. Preserve the frozen outer identity exactly; replace every example section, sentence and authoring choice with original, brief-specific work. Never copy the kite example into your final answer.',
+    'Return exactly one JSON object matching the frozen identity envelope. Keep schema, project_id, task_id, revision, input_sha256 and stage unchanged. The JSON payload below is a CONTENT-FREE STRUCTURAL SHELL, deliberately invalid as a completed Script because sections is empty. Preserve the frozen outer identity exactly; replace the empty sections with original, project-specific spoken narration and populate authoring only with supported decisions. NEVER return this shell, empty sections, placeholder narration or invented creative examples as the final result.',
     JSON.stringify(response,null,2),
     'Required payload: schema="mode-b-script-v1"; sections is a non-empty ordered array of {id,text}; authoring is a JSON object. Each id must be unique, 1–80 characters of A–Z/a–z/0–9/_/-, with no spaces. Each text must contain only meaningful narration intended to be spoken. The approved narration text is the ordered sections[].text values joined with two newline characters.',
     'authoring contains production-relevant creative choices, never spoken narration. creative_direction, characters, continuity, style_decisions, voice_intentions and sound_intentions are suggested descriptive fields, not an additional mandatory nested schema. Include concrete details where relevant; do not fabricate characters, citations or irrelevant structure. source_references, if used, must be actual trustworthy inert citations in the existing accepted format, not media paths or instructions.',
@@ -193,9 +217,11 @@ export function freezeTask(appPath: string, root: string, stage: Stage, rebuild 
     state.externalTaskArchive.push({stage,operation:'author',task:{...prior,status:prior.status==='IMPORTED'?'IMPORTED':'STALE'}});
     prior.status='STALE';
   }
+  if(stage==='native'&&state.identityPolicy==='v1'&&state.alignment?.captionReview?.mode==='AUTO')
+    throw Error('CAPTION_AI_OR_OWNER_REVIEW_REQUIRED: historical automatic grouping is not authority for new Native authoring.');
   const revision = (prior?.revision ?? 0) + 1; const id = randomUUID();
   const response = stage === 'script'
-    ? { schema: 'mode-b-external-result-v1', project_id: state.project.id, task_id: id, revision, input_sha256: inputSha256, stage, payload: { schema: 'mode-b-script-v1', sections: [{id:'opening',text:'At sunrise, a red kite escaped into the wind.'},{id:'resolution',text:'By evening, the kite returned carrying a small ribbon.'}], authoring: {creative_direction:{premise:'A lost kite becomes a small adventure.'},characters:[{id:'child',description:'One child follows the kite through the same town.'}],continuity:{rules:['The kite stays red throughout the story.']},style_decisions:{visual_intent:'Make the flight and return causally readable.'},voice_intentions:{tone:'Curious and warm.'},sound_intentions:{intent:'Wind rises with the kite, then settles.'},source_references:[]} } }
+    ? { schema: 'mode-b-external-result-v1', project_id: state.project.id, task_id: id, revision, input_sha256: inputSha256, stage, payload: { schema: 'mode-b-script-v1', sections: [], authoring: {} } }
     : { schema: 'mode-b-external-result-v1', project_id: state.project.id, task_id: id, revision, input_sha256: inputSha256, stage, payload: { manifest: {...(context as {native_manifest:Record<string,unknown>}).native_manifest,shots:[],captions:(context as {alignment:{approved_caption_cues:unknown}}).alignment.approved_caption_cues,voice:(context as {native_manifest:Record<string,unknown>}).native_manifest.voice}, shot_ledger: [], sound_script: [], asset_needs: [] } };
   const prompt = stage==='native'?`# ORIGINAL MODE B MANUAL CHATGPT HANDOFF — VISUAL / SHOT / SOUND / NATIVE MANIFEST\n\nThis is a manual transport boundary in the original Mode B workflow. Do not invent a parallel engine. Do not call tools, return Markdown, executable code or local absolute paths. Public HTTP(S) research citation URLs are permitted ONLY inside script payload.authoring.source_references as inert metadata; never use remote URLs as native assets or executable paths. Return exactly one JSON object matching the frozen envelope below.\n\n## NATIVE AUTHOR MISSION — VISUAL DIRECTION, NOT NARRATION TRANSCRIPTION
 - Read the COMPLETE approved script and the exact source-extracted Mode B authority below. Preserve established world, character identities, causal events and visual priorities.
@@ -205,19 +231,25 @@ export function freezeTask(appPath: string, root: string, stage: Stage, rebuild 
 - Preserve native voice settings and the EXACT current approved caption cue array. Caption boundaries need not coincide with Shot boundaries. No fixed shot count, duration or one-Shot-per-caption rule.
 - Every manifest.shots[] entry MUST have a unique explicit stable id (for example sh_001); match that exact id in shot_ledger and sound_script target IDs. Studio cannot Review/Correct or map Shot/Layer media without explicit Shot IDs. Do not use implicit array indices as Shot IDs.
 - In shot_ledger explain each real shot_id's meaning, visible state, important delta, composition, continuity, motion and constraints using the existing auxiliary ledger format; do not place unsupported extra metadata in manifest.shots.
-- In sound_script place only justified real SFX/ambience intentions tied to actual targets/events; distinguish proposed sounds from existing assets.
+- In sound_script place only justified real SFX/ambience intentions tied to actual targets/events; distinguish proposed sounds from existing assets. Each actual manifest audio entry MUST have exactly one structured sidecar cue using the contract cue_id, track (sfx|ambience|dialogue|music|audio_cuts), track_index, source_kind (file|procedural|cut), source_requirement, optional preparation (preserve|pcm16), optional reuse {path,sha256}. Track/index must point to the actual manifest entry; timeline coordinates come from that entry. For music use index 0. Include precise role/line, material, timing and perspective in source_requirement; no new fields in original manifest audio tracks. Use reuse only for exact previously registered rights-cleared local source bytes; no invented hashes. Original procedural SFX and audio cuts need no external file.
 - For EVERY generated image, declare a real manifest.shots[] image layer with an immutable id and safe missing project-relative path. The corresponding asset_needs must name the SAME real Shot ID, layer ID and expected path using the accepted auxiliary format. Describe actual content, orientation and continuity references. Never claim the image exists or fabricate an asset SHA.
+- If upstream_character_authority is present (F24), EVERY managed Native image target MUST have exactly ONE STRUCTURED asset_needs row with shot_id, layer_id, expected_path, content, REQUIRED asset_kind (background|character|pose|prop|object|other), character_ids (explicit array). For asset_kind character or pose, character_ids MUST be nonempty and contain only canonical character IDs; background/character-free object may use []. Omitting asset_kind is never a valid fallback. Declare optional typed continuity_source {shot_id,layer_id,relation} only for a real earlier managed image. Core @b1/ built-ins are not paid-image targets. Only use canonical char_id values supplied by upstream_character_authority. Do NOT invent characters, omit a target, add identity fields to manifest/project.json, or use legacy string asset_needs for F24 targets. Review exact owner-approved canonical source and identity lineage SHA.
+- For exact reuse of an earlier approved image, declare reuse_approved {shot_id,layer_id, optional sha256 only if known}, together with matching continuity_source (same_setup or match_composition). Source and destination must have identical cast, asset_kind, orientation and output requirements. The owner authorizes the actual source SHA after approval. Never fabricate a hash or reuse similar but different artwork.
 - Cross-check complete story coverage, temporal order, shot/layer ids, motion feasibility, character/object continuity and every G-Labs-compatible frozen image target. Only actual imported assets with rights and matching SHA may be described as present.
 - Return ONE COMPLETE Native candidate with manifest, shot_ledger, sound_script and asset_needs. Do not return Review/Correct/Recheck verdicts, a published project, fake CLI validation, media observations or a rendered film.
 
+${nativeAnimationDirection(state.project.style)}
+
+${nativeReferenceInstructions(nativeReferenceInventory(appPath,state.project.style))}
+
 ## ACTUAL AUTHORING SOURCE (COMPACT PROJECTION v1; SOURCE EVIDENCE UNCHANGED)
-${JSON.stringify(nativePromptProjection(context,root), null, 2)}
+${JSON.stringify(nativePromptProjection(context,root,appPath), null, 2)}
 
 ## REQUIRED RESPONSE ENVELOPE\n${JSON.stringify(response, null, 2)}\n\nThe RESPONSE ENVELOPE is a structural starting point, NOT a valid finished film. Fill every required shot, ledger and actual field with project-specific verified data; no placeholder values, invented media, or fabricated timing. The outer identity fields must be returned byte-for-value. For native authoring, payload.manifest is the original B1–B4 project.json v1 and must contain no Studio/task metadata. Ground every shot in the approved script and actual word/caption timing. List missing media honestly; never fabricate an existing asset path.\n\n## AUTHORITATIVE INSTALLED MODE B SOURCES (SOURCE-EXACT VERIFIED STAGE EXTRACTIONS)\n${sources.map(item => `\n--- BEGIN ${item.relative} [full SHA256 ${item.sha256}; extraction SHA256 ${item.extractionSha256}; revision ${item.extractionRevision}; sections ${item.headings.join(' | ') || 'complete original'}] ---\n${item.text}\n--- END ${item.relative} ---`).join('\n')}\n`:'';
   const corePrompt=stage==='script'?scriptAuthorPrompt(context,response,sources):prompt.replace('Do not call tools, return Markdown, executable code or local absolute paths.','Do not claim or use local CLI, local media, paid providers, or file inspection without actual access. Return no Markdown, executable code, secrets, or local absolute paths. Public research is permitted when demanded and evidence is cited.');
   const finalPrompt=corePrompt+'\n'+externalJsonFileDelivery(stage,'author',revision,id);
   const relative = `.studio/external/tasks/${stage}-${revision}-${id}.md`; const target = resolveProjectFile(root, relative); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, finalPrompt, { encoding: 'utf8', flag: 'wx' });
-  state.tasks ??= {}; state.tasks[stage] = { id, revision, inputSha256, sourceFingerprint: inputSha256, ...(stage==='native'?{assetBaseline:assetSnapshot(root),mediaBaseline:mediaSnapshot(state)}:{}), promptSha256: sha(finalPrompt), promptPath: relative, status: 'FROZEN', createdAt: new Date().toISOString() }; writeState(root, state); return { ...state.tasks[stage], prompt:finalPrompt };
+  state.tasks ??= {}; state.tasks[stage] = { id, revision, inputSha256, sourceFingerprint: inputSha256, ...(stage==='native'?{assetBaseline:assetSnapshot(root),mediaBaseline:mediaSnapshot(state),...(state.identityPolicy==='v1'?{soundContract:'structured-v1' as const}:{})}:{}), promptSha256: sha(finalPrompt), promptPath: relative, status: 'FROZEN', createdAt: new Date().toISOString() }; writeState(root, state); return { ...state.tasks[stage], prompt:finalPrompt };
 }
 
 interface Envelope { schema: string; project_id: string; task_id: string; revision: number; input_sha256: string; stage: Stage; payload: Record<string, unknown> }
@@ -242,13 +274,25 @@ const mediaRelative=(root:string,relative:string,kind:'image'|'sfx')=>{
     ? /\.(png|jpe?g)$/i.test(relative) && ((header[0]===0x89&&header.toString('ascii',1,4)==='PNG')||(header[0]===0xff&&header[1]===0xd8&&header[2]===0xff))
     : /\.(wav|mp3|m4a|aac|ogg|flac)$/i.test(relative) && (['RIFF','ID3','fLaC','OggS'].includes(header.toString('ascii',0,4))||(header[0]===0xff&&(header[1]&0xe0)===0xe0));
 };
+/** Studio-managed images are exact paid/imported media. Native Core @b1/
+ * assets are built-ins and remain renderable, but require no G-Labs approval. */
+export function isManagedNativeImagePath(path:unknown):path is string{
+  return typeof path==='string'&&!path.startsWith('@b1/');
+}
 function nativeRefs(manifest:Record<string,unknown>):MissingNativeReference[]{
   const refs:MissingNativeReference[]=[];
+  const seenImageIds=new Set<string>();
   const shots=manifest.shots as Array<Record<string,unknown>>;
   const visit=(layers:unknown[],shot:Record<string,unknown>,index:number,parentFrom=0)=>{
     for(const layerValue of layers){
       const layer=layerValue as Record<string,unknown>;
-      if(layer?.type==='image'&&typeof layer.path==='string'&&!layer.path.startsWith('@b1/')){
+      if(layer?.type==='image'&&typeof layer.id==='string'&&layer.id){
+        const identity=index+':'+layer.id;
+        if(seenImageIds.has(identity))
+          throw Error('NATIVE_DUPLICATE_IMAGE_LAYER_ID');
+        seenImageIds.add(identity);
+      }
+      if(layer?.type==='image'&&isManagedNativeImagePath(layer.path)){
         const shotId=typeof shot.id==='string'?shot.id:undefined,layerId=typeof layer.id==='string'?layer.id:undefined;
         refs.push({key:'image:'+index+':'+String(layerId??''),kind:'image',path:layer.path,shotId,shotIndex:index,layerId,scopeStart:Number(shot.start)+Math.max(parentFrom,Number(layer.from??0))});
       }
@@ -293,7 +337,17 @@ function verifiedMedia(root:string,state:StudioState,ref:MissingNativeReference,
 function collectMissing(root:string,state:StudioState,manifest:Record<string,unknown>){
   return nativeRefs(manifest).filter(ref=>!verifiedMedia(root,state,ref,ref.path));
 }
-export function validateManifest(state: StudioState, root: string, payload: Record<string, unknown>) {
+/** Exact layer identities only. No renderer metadata is added to project.json. */
+export function nativeImageTargetsFromManifest(manifest:Record<string,unknown>){
+  return nativeRefs(manifest).filter(ref=>ref.kind==='image').map(ref=>{
+    if(!ref.shotId||!ref.layerId||typeof ref.shotIndex!=='number')
+      throw Error('NATIVE_IMAGE_TARGET_IDENTITY_REQUIRED');
+    return{key:ref.key,shotId:ref.shotId,layerId:ref.layerId,path:ref.path,
+      shotIndex:ref.shotIndex};
+  });
+}
+export function validateManifest(state: StudioState, root: string,
+  payload: Record<string, unknown>,appPath?:string) {
   exactKeys(payload, ['manifest','shot_ledger','sound_script','asset_needs']);
   for(const field of ['shot_ledger','sound_script','asset_needs'])if(!Array.isArray(payload[field]))throw new Error('Native correction must include a complete '+field+' array.');
   const manifest = payload.manifest as Record<string, unknown>;
@@ -306,6 +360,7 @@ export function validateManifest(state: StudioState, root: string, payload: Reco
   if(!state.voice||state.voice.stale||(manifest.voice as Record<string,unknown>).path!==state.voice.path||!fs.existsSync(resolveProjectFile(root,state.voice.path))||sha(fs.readFileSync(resolveProjectFile(root,state.voice.path)))!==state.voice.sha256)throw new Error('Manifest voice does not bind actual current accepted WAV bytes.');
   const approved=approvedCaptionCues(root);
   if(JSON.stringify(manifest.captions)!==JSON.stringify(approved))throw new Error('Native captions must exactly match the current approved word-grounded revision (AUTO_VERIFIED or USER_APPROVED); rebuild after regroup.');
+  assertB4NarratorBinding(state.project.style,state.voice,manifest.voice);
   const timing=nativeVoiceTiming(root,state), candidateVoice=manifest.voice as Record<string,unknown>;
   const candidateLead=candidateVoice.lead??0,candidateTail=candidateVoice.tail??0,candidateTrim=candidateVoice.trim_start??0;
   if(candidateLead!==timing.lead||candidateTail!==timing.tail||candidateTrim!==timing.trimStart)throw new Error('Native voice timing must match the currently reviewed lead/tail/trim_start configuration.');
@@ -334,6 +389,11 @@ export function validateManifest(state: StudioState, root: string, payload: Reco
     if(expected!==undefined&&(typeof expected!=='string'||expected!==existing[0].path))
       throw new Error('NATIVE_ASSET_NEED_PATH_MISMATCH: expected asset path differs from actual image layer.');
   }
+  if(state.identityPolicy==='v1'){
+    if(!appPath)throw Error('IDENTITY_NATIVE_APP_PATH_REQUIRED');
+    validateNativeBindingPayload(root,appPath,manifest,payload.asset_needs as unknown[]);
+  }
+  structuredSoundCues(manifest,payload.sound_script as unknown[],state.tasks?.native?.soundContract==='structured-v1');
   return {manifest,shotLedger:payload.shot_ledger??[],soundScript:payload.sound_script??[],assetNeeds:payload.asset_needs??[],missing:collectMissing(root,state,manifest)};
 }
 interface PendingImport {
@@ -343,6 +403,7 @@ interface PendingImport {
   references:MissingNativeReference[];fulfillments:Record<string,{relative:string;sha256:string;rights:string;kind:'image'|'sfx'}>;
   createdAt:string;
   draftHistory?:NativeDraftRevision[];
+  publishedCorrection?:{correctTaskId:string;baselineSha256:string;receiptSha:string};
 }
 interface NativeDraftRevision {
   schema:'mode-b-native-draft-revision-v1';
@@ -375,7 +436,17 @@ const readPending=(root:string):PendingImport=>{
     if(pending.draftHistory.length){
       const author=strictJson(readUtf8(frozenResponse)) as {payload?:Record<string,unknown>};
       const p=author.payload;
-      if(!p||pending.draftHistory[0].previousSha256!==sha(JSON.stringify({
+      const first=pending.draftHistory[0];
+      if(pending.publishedCorrection){
+        const origin=pending.publishedCorrection,reply=author as {task_id?:string;operation?:string;payload?:Record<string,unknown>};
+        const corrected=p?.artifact as Record<string,unknown>|undefined;
+        if(!corrected||reply.operation!=='correct'||reply.task_id!==origin.correctTaskId||
+          first.correctTaskId!==origin.correctTaskId||p?.artifact_sha256!==origin.baselineSha256||
+          first.previousSha256!==origin.baselineSha256||
+          first.artifactSha256!==sha(JSON.stringify({manifest:corrected.manifest,shot_ledger:corrected.shot_ledger,
+            sound_script:corrected.sound_script,asset_needs:corrected.asset_needs})))
+          throw Error('NATIVE_PUBLISHED_CORRECTION_LINEAGE_INVALID');
+      }else if(!p||first.previousSha256!==sha(JSON.stringify({
         manifest:p.manifest,shot_ledger:p.shot_ledger,sound_script:p.sound_script,asset_needs:p.asset_needs
       })))throw new Error('NATIVE_DRAFT_AUTHOR_LINEAGE_INVALID');
     }
@@ -412,10 +483,49 @@ export function readNativeDraft(root:string,state=readState(root)){
   if(pending.projectId!==state.project.id||!author||author.status!=='FROZEN'||
     author.id!==pending.taskId||author.revision!==pending.revision||author.inputSha256!==pending.inputSha256)
     throw new Error('NATIVE_DRAFT_STALE_AUTHOR_TASK');
+  if(pending.publishedCorrection&&(readNativeIdentityReceipt(root)?.receiptSha!==pending.publishedCorrection.receiptSha||
+    sha(JSON.stringify(publishedNativeCreativeArtifact(root,state)))!==pending.publishedCorrection.baselineSha256))
+    throw Error('NATIVE_PUBLISHED_CORRECTION_BASELINE_STALE');
   const artifact=nativeDraftValue(pending);
   return{context:'DRAFT' as const,token:pending.token,authorTaskId:pending.taskId,
     revision:1+(pending.draftHistory?.length??0),artifact,sha256:sha(JSON.stringify(artifact)),
-    history:pending.draftHistory??[]};
+    history:pending.draftHistory??[],...(pending.publishedCorrection?{publishedCorrectionTaskId:pending.publishedCorrection.correctTaskId}:{})};
+}
+export async function inspectCurrentNativePlan(appPath:string,root:string){
+  const state=readState(root),draft=readNativeDraft(root,state);
+  if(!draft||state.identityPolicy!=='v1')return null;
+  const report=await inspectNativePlan(appPath,root,draft.artifact.manifest,nativeVoiceTiming(root,state).timelineDuration,draft.sha256);
+  const latest=readNativeDraft(root);if(!latest||latest.sha256!==draft.sha256||latest.token!==draft.token||nativeVoiceTiming(root,readState(root)).timelineDuration!==nativeVoiceTiming(root,state).timelineDuration)throw Error('NATIVE_PLAN_STALE_DURING_VALIDATION');
+  return report;
+}
+export async function requireCurrentNativePlan(appPath:string,root:string){
+  const report=await inspectCurrentNativePlan(appPath,root);
+  if(report&&report.plan!=='PASS')throw Error('NATIVE_PLAN_'+report.plan+' ['+report.candidateSha+']: '+report.error);
+  return report;
+}
+/** Creative authority is a confirmed independent review, not a structural validator.
+ * Bind the verdict to the complete current artifact and original Author task. */
+export function requireReviewedNativeDraft(state:StudioState,draft:NonNullable<ReturnType<typeof readNativeDraft>>,identityEvidenceSha:string){
+  const rows=Object.values(state.lifecycle?.artifacts??{}).filter(row=>
+    row.stage==='native'&&(row.operation==='review'||row.operation==='recheck')&&
+    row.artifactContext==='DRAFT'&&row.draftToken===draft.token&&row.draftAuthorTaskId===draft.authorTaskId&&
+    (!draft.publishedCorrectionTaskId||(row.draftRevision===draft.revision&&row.sourceCorrectTaskId===draft.history.at(-1)?.correctTaskId))&&
+    (row.value as {artifact_sha256?:string})?.artifact_sha256===draft.sha256)
+    .sort((a,b)=>b.createdAt.localeCompare(a.createdAt)||b.taskId.localeCompare(a.taskId));
+  const latest=rows[0];
+  const result=latest?.value as {artifact_sha256?:string;status?:string;findings?:unknown[];coverage?:{target_ids?:string[];modalities?:string[]}}|undefined;
+  const manifest=draft.artifact.manifest as {shots?:Array<{id:string}>};
+  const targets=(manifest.shots??[]).map(shot=>shot.id);
+  if(!latest||latest.identityEvidenceSha!==identityEvidenceSha||latest.status!=='REVIEWED_NO_FINDINGS'||result?.status!=='REVIEWED_NO_FINDINGS'||
+    latest.artifactSha256!==sha(JSON.stringify(result))||
+    !Array.isArray(result.findings)||result.findings.some(f=>(f as {status?:string})?.status!=='resolved')||
+    !Array.isArray(result.coverage?.target_ids)||result.coverage.target_ids.length!==targets.length||
+    new Set(result.coverage.target_ids).size!==targets.length||
+    targets.some(id=>!result.coverage!.target_ids!.includes(id))||
+    !result.coverage.modalities?.includes('manifest')||
+    (draft.history.length>0&&latest.operation!=='recheck'))
+    throw Error('NATIVE_CREATIVE_REVIEW_REQUIRED: confirm a clean Review or Recheck for the exact current Native draft.');
+  return latest.artifactSha256;
 }
 /** Fingerprint only the target's effective visual instructions and global
  * visual dependencies, never the entire draft or unrelated Shot revisions. */
@@ -495,7 +605,7 @@ export function publishNativeDraftCorrection(appPath:string,root:string,original
     editableIds:string[];editablePaths:string[];findingIds:string[]}){
   const state=readState(root),draft=readNativeDraft(root,state);
   if(!draft)throw new Error('NATIVE_DRAFT_REQUIRED');
-  const normalized=validateManifest(state,root,corrected);
+  const normalized=validateManifest(state,root,corrected,appPath);
   const newArtifact={manifest:normalized.manifest,shot_ledger:normalized.shotLedger,
     sound_script:normalized.soundScript,asset_needs:normalized.assetNeeds};
   const newSha256=sha(JSON.stringify(newArtifact));
@@ -508,10 +618,11 @@ export function publishNativeDraftCorrection(appPath:string,root:string,original
   if(draft.sha256!==originalSha256)throw new Error('NATIVE_DRAFT_STALE_CORRECTION');
   assertTaskCurrent(appPath,root,'native',state);
   const pending=readPending(root);
+  const nextRefs=pending.publishedCorrection?nativeRefs(normalized.manifest):normalized.missing;
   if(pending.token!==draft.token)throw new Error('NATIVE_DRAFT_TOKEN_CHANGED');
   const kept=Object.fromEntries(Object.entries(pending.fulfillments).filter(([key,binding])=>{
     const previous=pending.references.find(ref=>ref.key===key);
-    const next=normalized.missing.find(ref=>ref.key===key);
+    const next=nextRefs.find(ref=>ref.key===key);
     if(!previous||!next||JSON.stringify(previous)!==JSON.stringify(next))return false;
     if(previous.kind==='image'){
       // Even unchanged IDs/paths cannot reuse a paid image when its creative
@@ -521,12 +632,17 @@ export function publishNativeDraftCorrection(appPath:string,root:string,original
       const newIdentity=imageTargetIdentity(state,draft.authorTaskId,draft.token,
         draft.revision+1,newArtifact,key);
       if(oldIdentity.fingerprint!==newIdentity.fingerprint)return false;
+    }else{
+      const oldCue=structuredSoundCues(draft.artifact.manifest as Record<string,unknown>,draft.artifact.sound_script as unknown[]).find(c=>c.key===key);
+      const newCue=structuredSoundCues(normalized.manifest,normalized.soundScript as unknown[]).find(c=>c.key===key);
+      if(JSON.stringify(oldCue??null)!==JSON.stringify(newCue??null))return false;
     }
     const saved=state.media?.find(row=>row.path===binding.relative&&row.kind===binding.kind&&
       row.sha256===binding.sha256&&row.rights===binding.rights);
     const file=resolveProjectFile(root,binding.relative);
     return Boolean(saved&&fs.existsSync(file)&&sha(fs.readFileSync(file))===binding.sha256);
   }));
+  if(pending.publishedCorrection)pruneUnfulfilledContinuity(root,appPath,newArtifact,kept);
   const recordPath='.studio/external/draft-revisions/native-'+randomUUID()+'.json';
   const record={schema:'mode-b-native-draft-revision-v1' as const,
     revision:draft.revision+1,authorTaskId:draft.authorTaskId,previousSha256:originalSha256,
@@ -538,7 +654,7 @@ export function publishNativeDraftCorrection(appPath:string,root:string,original
   fs.writeFileSync(target,JSON.stringify(record,null,2)+'\n',{flag:'wx'});
   const updated:PendingImport={...pending,
     payload:{...normalized},payloadSha256:sha(JSON.stringify(normalized)),
-    references:normalized.missing,fulfillments:kept,
+    references:nextRefs,fulfillments:kept,
     draftHistory:[...(pending.draftHistory??[]),{
       schema:'mode-b-native-draft-revision-v1',revision:record.revision,
       authorTaskId:record.authorTaskId,previousSha256:record.previousSha256,
@@ -548,6 +664,136 @@ export function publishNativeDraftCorrection(appPath:string,root:string,original
       recordPath,recordSha256:sha(fs.readFileSync(target))
     }]};
   atomicJson(pendingPath(root),updated);
+  return readNativeDraft(root)!;
+}
+/** Published project.json contains fulfilled media paths; creative asset_needs
+ * retains the authored expected paths. Reverse ONLY this explicit mapping
+ * for a v1 Published Review/Correct, never modify the renderer's file. */
+export function publishedNativeCreativeArtifact(root:string,state:StudioState){
+  const native=state.external.native;
+  if(!native)throw Error('NATIVE_PUBLISHED_BASELINE_REQUIRED');
+  const bytes=fs.readFileSync(resolveProjectFile(root,'project.json'));
+  const manifest=strictJson(bytes.toString('utf8')) as Record<string,unknown>;
+  const existing=native.artifact as {shotLedger?:unknown[];soundScript?:unknown[];assetNeeds?:unknown[]};
+  const asset_needs=existing.assetNeeds??[];
+  const receipt=readNativeIdentityReceipt(root);
+  if(!receipt||receipt.nativeProjectSha!==sha(bytes))throw Error('IDENTITY_PUBLISHED_NATIVE_SOURCE_STALE');
+  for(const ref of nativeRefs(manifest).filter(row=>row.kind==='image')){
+    const need=asset_needs.find(value=>{
+      const row=value as {shot_id?:string;layer_id?:string}|null;
+      return row!=null&&row.shot_id===ref.shotId&&row.layer_id===ref.layerId;
+    }) as {expected_path?:string}|undefined;
+    if(typeof need?.expected_path!=='string')throw Error('NATIVE_PUBLISHED_ASSET_NEED_MISSING');
+    const bound=receipt.rows.find(row=>row.targetKey===ref.key);
+    if(bound?(bound.imagePath!==ref.path||bound.shotId!==ref.shotId||bound.layerId!==ref.layerId):
+      ref.path!==need.expected_path)throw Error('NATIVE_PUBLISHED_MAPPING_STALE');
+    exactNativeTarget(manifest,ref).path=need.expected_path;
+  }
+  return{manifest,shot_ledger:existing.shotLedger??[],sound_script:existing.soundScript??[],asset_needs};
+}
+function pruneUnfulfilledContinuity(root:string,appPath:string,artifact:{manifest:Record<string,unknown>;asset_needs:unknown},
+  kept:PendingImport['fulfillments']){
+  const plans=validateNativeBindingPayload(root,appPath,artifact.manifest,artifact.asset_needs as unknown[]).plans;
+  const byLayer=new Map(plans.map(plan=>[plan.shotId+'/'+plan.layerId,plan.targetKey]));
+  for(const plan of plans){
+    const source=plan.continuitySource;
+    if(source&&!kept[byLayer.get(source.shot_id+'/'+source.layer_id)??''])delete kept[plan.targetKey];
+  }
+}
+/** Reopen the original Author provenance for an explicitly confirmed Published
+ * Correct. Existing image approvals retain their immutable token and fingerprint.
+ * The actual lifecycle Correct response is the frozen response, not a synthetic
+ * AI Author reply. The last-good publication remains untouched until Confirm. */
+export function stagePublishedNativeCorrection(appPath:string,root:string,
+  corrected:Record<string,unknown>,proof:{correctTaskId:string;reviewTaskId:string;
+    editableIds:string[];editablePaths:string[];findingIds:string[];baselineSha256:string;responseSha256:string}){
+  const state=readState(root);
+  if(state.identityPolicy!=='v1')throw Error('NATIVE_PUBLISHED_CORRECTION_POLICY_REQUIRED');
+  if(fs.existsSync(pendingPath(root))){
+    const active=readPending(root);
+    if(active.publishedCorrection?.correctTaskId===proof.correctTaskId){
+      const task=state.tasks?.native;
+      if(!task||task.id!==active.taskId||active.responseSha256!==proof.responseSha256||
+        active.publishedCorrection.baselineSha256!==proof.baselineSha256||
+        readNativeIdentityReceipt(root)?.receiptSha!==active.publishedCorrection.receiptSha)
+        throw Error('NATIVE_PUBLISHED_CORRECTION_RECOVERY_REQUIRED');
+      if(task.status==='IMPORTED'){
+        task.status='FROZEN';task.sourceFingerprint=sourceFingerprint(appPath,root,'native');
+        task.assetBaseline=assetSnapshot(root);task.mediaBaseline=mediaSnapshot(state);writeState(root,state);
+      }
+      return readNativeDraft(root)!;
+    }
+    throw Error('NATIVE_PUBLISHED_CORRECTION_DRAFT_CONFLICT: resolve the existing draft first.');
+  }
+  const author=state.tasks?.native;
+  if(!author||author.status!=='IMPORTED')throw Error('NATIVE_PUBLISHED_AUTHOR_REQUIRED');
+  const receipt=assertPublishedIdentityCurrent(root,appPath,'SAMPLE')!;
+  const baseline=publishedNativeCreativeArtifact(root,state);
+  if(sha(JSON.stringify(baseline))!==proof.baselineSha256)throw Error('NATIVE_PUBLISHED_CORRECTION_BASELINE_STALE');
+  const normalized=validateManifest(state,root,corrected,appPath);
+  const artifact={manifest:normalized.manifest,shot_ledger:normalized.shotLedger,
+    sound_script:normalized.soundScript,asset_needs:normalized.assetNeeds};
+  const verified=validateNativeBindingPayload(root,appPath,artifact.manifest,artifact.asset_needs as unknown[]);
+  const oldPlans=validateNativeBindingPayload(root,appPath,baseline.manifest,baseline.asset_needs).plans;
+  const oldRefs=nativeRefs(baseline.manifest),refs=nativeRefs(artifact.manifest);
+  const originalApprovals=receipt.rows.map(row=>{
+    if(row.sourceJobId){
+      const job=readGlabsJob(root,row.sourceJobId);
+      return{row,token:job.token,authorTaskId:job.authorTaskId,creative:job.targetCreativeSha256,
+        previous:job.identityPreviousSourceSha??null,rights:job.approved!.rights};
+    }
+    const owner=verifyOwnerImageApproval(state,{approvalId:row.ownerApprovalId,targetKey:row.targetKey,
+      shotId:row.shotId,layerId:row.layerId,imagePath:row.imagePath,imageSha:row.imageSha,
+      targetBindingSha:row.targetBindingSha,previousDependencySha:row.previousDependencySha});
+    if(!owner)throw Error('NATIVE_PUBLISHED_OWNER_APPROVAL_MISSING');
+    const media=state.media?.find(item=>item.ownerImageApproval?.approvalId===owner.approvalId);
+    if(!media)throw Error('NATIVE_PUBLISHED_OWNER_MEDIA_MISSING');
+    return{row,token:owner.draftToken,authorTaskId:owner.authorTaskId,creative:owner.targetCreativeSha,
+      previous:owner.previousDependencySha,rights:media.rights};
+  });
+  const token=originalApprovals[0]?.token??randomUUID();
+  if(originalApprovals.some(item=>item.token!==token||item.authorTaskId!==author.id))
+    throw Error('NATIVE_PUBLISHED_AUTHOR_LINEAGE_MISMATCH');
+  const kept:PendingImport['fulfillments']={};
+  for(const item of originalApprovals){
+    const {row}=item,key=row.targetKey;
+    const before=oldRefs.find(ref=>ref.key===key),after=refs.find(ref=>ref.key===key);
+    const priorPlan=oldPlans.find(plan=>plan.targetKey===key),plan=verified.plans.find(plan=>plan.targetKey===key);
+    if(!before||!after||!priorPlan||!plan||JSON.stringify(before)!==JSON.stringify(after)||
+      priorPlan.targetBindingSha!==row.targetBindingSha||plan.targetBindingSha!==row.targetBindingSha||
+      item.previous!==row.previousDependencySha)continue;
+    const oldIdentity=imageTargetIdentity(state,author.id,token,1,baseline,key);
+    const newIdentity=imageTargetIdentity(state,author.id,token,2,artifact,key);
+    if(oldIdentity.fingerprint!==item.creative||newIdentity.fingerprint!==item.creative||
+      !verifiedMedia(root,state,after,row.imagePath,item.rights))continue;
+    kept[key]={relative:row.imagePath,sha256:row.imageSha,rights:item.rights,kind:'image'};
+  }
+  // Previously fulfilled audio is already present at its exact licensed path.
+  pruneUnfulfilledContinuity(root,appPath,artifact,kept);
+  const responsePath='.studio/external/lifecycle/results/'+proof.correctTaskId+'.json';
+  if(sha(fs.readFileSync(resolveProjectFile(root,responsePath)))!==proof.responseSha256)
+    throw Error('NATIVE_PUBLISHED_CORRECTION_RESPONSE_STALE');
+  const artifactSha256=sha(JSON.stringify(artifact));
+  const recordPath='.studio/external/draft-revisions/native-'+randomUUID()+'.json';
+  const revisionRecord={schema:'mode-b-native-draft-revision-v1' as const,revision:2,authorTaskId:author.id,
+    previousSha256:proof.baselineSha256,artifactSha256,correctTaskId:proof.correctTaskId,
+    reviewTaskId:proof.reviewTaskId,authorizedEditableIds:proof.editableIds,
+    authorizedEditablePaths:proof.editablePaths,authorizedFindingIds:proof.findingIds};
+  const recordFile=resolveProjectFile(root,recordPath);
+  fs.mkdirSync(path.dirname(recordFile),{recursive:true});
+  fs.writeFileSync(recordFile,JSON.stringify({...revisionRecord,artifact},null,2)+'\n',{flag:'wx'});
+  const pending:PendingImport={schema:'mode-b-pending-import-v2',token,projectId:state.project.id,stage:'native',
+    taskId:author.id,revision:author.revision,inputSha256:author.inputSha256,responsePath,
+    responseSha256:proof.responseSha256,payload:normalized,payloadSha256:sha(JSON.stringify(normalized)),
+    before:baseline.manifest,references:refs,fulfillments:kept,createdAt:new Date().toISOString(),
+    publishedCorrection:{correctTaskId:proof.correctTaskId,baselineSha256:proof.baselineSha256,receiptSha:receipt.receiptSha},
+    draftHistory:[{...revisionRecord,recordPath,recordSha256:sha(fs.readFileSync(recordFile))}]};
+  // Persist the pending record first. If state writing is interrupted, the
+  // identical Confirm Correct can resume this exact original author/token.
+  atomicJson(pendingPath(root),pending);
+  author.status='FROZEN';author.sourceFingerprint=sourceFingerprint(appPath,root,'native');
+  author.assetBaseline=assetSnapshot(root);author.mediaBaseline=mediaSnapshot(state);
+  writeState(root,state);
   return readNativeDraft(root)!;
 }
 const pendingResult=(root:string,pending:PendingImport)=>{
@@ -563,11 +809,21 @@ function resolvePendingCandidate(root:string,state:StudioState,pending:PendingIm
     const original=pending.references.find(ref=>ref.key===key);
     if(!original)throw new Error('Media fulfillment has no frozen missing-native target.');
     if(!verifiedMedia(root,state,original,binding.relative,binding.rights)||!fs.existsSync(resolveProjectFile(root,binding.relative))||sha(fs.readFileSync(resolveProjectFile(root,binding.relative)))!==binding.sha256||binding.kind!==original.kind)throw new Error('Approved media binding/file/hash/rights is stale.');
+    if(original.kind==='sfx'){
+      const cue=structuredSoundCues(value.manifest,Array.isArray(value.soundScript)?value.soundScript:[]).find(c=>c.key===key);
+      const registered=state.media?.find(row=>row.kind==='sfx'&&row.path===binding.relative&&row.sha256===binding.sha256&&row.rights===binding.rights&&row.track===original.track&&row.trackIndex===original.trackIndex);
+      if(cue||registered?.audioReceipt)assertAudioReceipt(root,state.project.id,pending.token,key,binding.relative,binding.sha256,binding.rights,cue,registered?.audioReceipt);
+    }
     const target=exactNativeTarget(manifest,original);
     if(target.path!==original.path)throw new Error('Frozen native target path was changed without authorization.');
     target.path=binding.relative;
   }
-  return {manifest,missing:collectMissing(root,state,manifest),shotLedger:value.shotLedger,soundScript:value.soundScript,assetNeeds:value.assetNeeds};
+  const missing=collectMissing(root,state,manifest);
+  // A published correction may still have the old approved file at the same
+  // path. Only the exact retained/new fulfillment authorizes a managed image.
+  if(pending.publishedCorrection)for(const ref of pending.references)
+    if(ref.kind==='image'&&!pending.fulfillments[ref.key]&&!missing.some(row=>row.key===ref.key))missing.push(ref);
+  return {manifest,missing,shotLedger:value.shotLedger,soundScript:value.soundScript,assetNeeds:value.assetNeeds};
 }
 function assertTaskCurrent(appPath:string,root:string,stage:Stage,state:StudioState){
   try{return assertFrozenSource(appPath,root,stage,state)}catch(error){
@@ -578,13 +834,18 @@ function assertTaskCurrent(appPath:string,root:string,stage:Stage,state:StudioSt
 }
 export function stageImport(appPath: string, root: string, stage: Stage, text: string) {
   const state=readState(root),task=assertTaskCurrent(appPath,root,stage,state);
+  if(stage==='native'&&fs.existsSync(pendingPath(root))){
+    const prior=readPending(root);
+    if(prior.taskId===task.id&&prior.publishedCorrection)throw Error('NATIVE_PUBLISHED_CORRECTION_DRAFT_ACTIVE: explicitly Rebuild Author to replace it.');
+  }
   const envelope=validateEnvelope(state,stage,strictJson(text));
-  const payload=stage==='script'?validateScript(envelope.payload):validateManifest(state,root,envelope.payload);
+  const payload=stage==='script'?validateScript(envelope.payload):validateManifest(state,root,envelope.payload,appPath);
   const responseSha256=sha(text);
   if(fs.existsSync(pendingPath(root))){
     const prior=readPending(root);
     if(prior.projectId===state.project.id&&prior.taskId===task.id&&prior.revision===task.revision&&prior.stage===stage&&prior.responseSha256===responseSha256)return pendingResult(root,prior);
   }
+  if(stage==='native'&&fs.existsSync(pendingPath(root))){const prior=readPending(root);if(prior.taskId!==task.id){const bytes=fs.readFileSync(pendingPath(root)),archive=resolveProjectFile(root,'.studio/external/recovery/pending-'+sha(bytes)+'.json');fs.mkdirSync(path.dirname(archive),{recursive:true});if(!fs.existsSync(archive))fs.writeFileSync(archive,bytes,{flag:'wx'});if(sha(fs.readFileSync(archive))!==sha(bytes))throw Error('NATIVE_PENDING_ARCHIVE_SHA_MISMATCH');}}
   const responsePath='.studio/external/responses/'+stage+'-'+task.id+'-'+task.revision+'-'+responseSha256+'.json';
   const responseFile=resolveProjectFile(root,responsePath);fs.mkdirSync(path.dirname(responseFile),{recursive:true});
   if(fs.existsSync(responseFile)){if(sha(fs.readFileSync(responseFile))!==responseSha256)throw new Error('Original frozen response file changed.');}
@@ -630,7 +891,7 @@ export function getNativeImageGallery(_appPath:string,root:string){
       for(const node of layers){
         if(!node||typeof node!=='object'||Array.isArray(node))continue;
         const layer=node as Record<string,unknown>,layerId=String(layer.id??'');
-        if(layer.type==='image'&&typeof layer.path==='string'&&shotId&&layerId){
+        if(layer.type==='image'&&isManagedNativeImagePath(layer.path)&&shotId&&layerId){
           const key='image:'+index+':'+layerId;
           const ref=frozenRefs.find(row=>row.key===key&&row.shotId===shotId&&row.path===layer.path);
           const binding=ref?pending.fulfillments[key]:undefined;
@@ -675,7 +936,7 @@ export function importMediaFile(root:string,source:string,kind:'image'|'sfx',rig
   // File import alone never claims native mapping and never corrupts a frozen task.
   writeState(root,state);return{...entry,status:'IMPORTED_UNASSIGNED'};
 }
-export function fulfillMedia(appPath:string,root:string,token:string,key:string,relative:string,rights:string,hooks:{afterPending?:()=>void;afterState?:()=>void}={}){
+export function fulfillMedia(appPath:string,root:string,token:string,key:string,relative:string,rights:string,hooks:{afterPending?:()=>void;afterState?:()=>void;ownerReviewed?:true;providerApproval?:true;decode?:IdentityDecoder;audioReceipt?:AudioPreparationReceipt}={}){
   const pending=readPending(root),state=readState(root);
   if(pending.stage!=='native'||pending.projectId!==state.project.id||pending.token!==token)throw new Error('Project/pending token mismatch.');
   if(pending.taskId!==assertTaskCurrent(appPath,root,'native',state).id||pending.revision!==state.tasks?.native?.revision)throw new Error('Frozen task binding mismatch.');
@@ -686,17 +947,62 @@ export function fulfillMedia(appPath:string,root:string,token:string,key:string,
   const hash=sha(fs.readFileSync(resolveProjectFile(root,relative)));
   const original=state.media?.find(item=>item.path===relative&&item.sha256===hash&&item.kind===ref.kind&&item.rights===rights.trim());
   if(!original)throw new Error('Imported file SHA, rights or media kind mismatch.');
+  if(ref.kind==='image'){
+    const rows=(pending.payload as {assetNeeds:unknown[]}).assetNeeds??[];
+    const target={shotId:ref.shotId??'',layerId:ref.layerId??'',path:ref.path};
+    const reuse=imageRequirementsForTarget(rows,target).effective.find(row=>Boolean((row.source as {reuse_approved?:unknown}|null)?.reuse_approved));
+    if(reuse){
+      const source=createContinuityResolver(appPath,root).resolve(key);
+      if(!source||source.path!==relative||source.sha256!==hash||hooks.ownerReviewed!==true||hooks.providerApproval===true)throw Error('ASSET_REUSE_EXACT_APPROVED_SOURCE_REQUIRED');
+    }
+    const output=assetOutputForTarget(rows,target);
+    const ratios=[...new Set(imageRequirementsForTarget(rows,target).effective.map(row=>row.orientation).filter(v=>['1:1','3:4','4:3','9:16','16:9'].includes(v)))];
+    if(ratios.length>1)throw Error('ASSET_ORIENTATION_CONFLICT');
+    if(output||ratios.length){
+      const decoded=hooks.decode?.(fs.readFileSync(resolveProjectFile(root,relative)));
+      if(!decoded)throw Error('ASSET_OUTPUT_DECODE_REQUIRED');
+      if(ratios[0])verifyRatio(decoded,ratios[0]);
+      if(output)verifyArtwork(decoded,output);
+    }
+  }
+  if(ref.kind==='sfx'){
+    const rows=structuredSoundCues((pending.payload as {manifest:Record<string,unknown>}).manifest,(pending.payload as {soundScript:unknown[]}).soundScript??[]);
+    const cue=rows.find(row=>row.key===key);
+    if(cue||hooks.audioReceipt)assertAudioReceipt(root,state.project.id,pending.token,key,relative,hash,rights.trim(),cue,hooks.audioReceipt);
+  }
   const binding={relative,sha256:hash,rights:rights.trim(),kind:ref.kind};
   const previous=pending.fulfillments[key];
   if(previous){if(JSON.stringify(previous)!==JSON.stringify(binding))throw new Error('A frozen target cannot be silently remapped; rebuild/review the task.');return pendingResult(root,pending);}
-  const mapped={...original,...(ref.kind==='image'?{shotId:ref.shotId,layerId:ref.layerId}:{track:ref.track,trackIndex:ref.trackIndex})};
-  const pendingBefore=structuredClone(pending);state.media=[...(state.media??[]).filter(item=>!(item.path===relative&&item.shotId===ref.shotId&&item.layerId===ref.layerId&&item.track===ref.track&&item.trackIndex===ref.trackIndex)),mapped];
+  if(state.identityPolicy==='v1'&&ref.kind==='image'&&hooks.ownerReviewed!==true&&hooks.providerApproval!==true)
+    throw Error('OWNER_IMAGE_EXPLICIT_APPROVAL_REQUIRED');
+  let ownerImageApproval:OwnerImageApproval|undefined;
+  if(state.identityPolicy==='v1'&&ref.kind==='image'&&hooks.ownerReviewed===true){
+    const draft=readNativeDraft(root,state)!;
+    const resolver=createContinuityResolver(appPath,root),plan=resolver.getBinding(key);
+    const reviewSha=requireReviewedNativeDraft(state,draft,plan.upstreamSnapshotSha);
+    const verified=verifyReferenceFile(root,relative,hash),decoded=hooks.decode?.(verified.bytes);
+    if(!decoded||!Number.isSafeInteger(decoded.width)||!Number.isSafeInteger(decoded.height)||
+      decoded.width<1||decoded.height<1||!Buffer.isBuffer(decoded.png)||decoded.png.length<24)
+      throw Error('OWNER_IMAGE_DECODE_REQUIRED');
+    const body:Omit<OwnerImageApproval,'approvalSha'>={
+      schema:'owner-native-image-approval-v1',approvalId:randomUUID(),projectId:state.project.id,
+      draftToken:draft.token,authorTaskId:draft.authorTaskId,targetKey:key,shotId:plan.shotId,layerId:plan.layerId,
+      imagePath:relative,imageSha:hash,rightsSha:contentHash(rights.trim()),
+      targetCreativeSha:nativeImageTargetIdentityFromSnapshot(state,draft,key).fingerprint,
+      targetBindingSha:plan.targetBindingSha,previousDependencySha:resolver.resolve(key)?.dependencySha??null,
+      reviewSha,approvedAt:new Date().toISOString()};
+    ownerImageApproval={...body,approvalSha:contentHash(body)};
+  }
+  const mapped={...original,...(ref.kind==='image'?{shotId:ref.shotId,layerId:ref.layerId}:{track:ref.track,trackIndex:ref.trackIndex}),
+    ...(ownerImageApproval?{ownerImageApproval}:{}),...(hooks.audioReceipt?{audioReceipt:hooks.audioReceipt}:{})};
+  const pendingBefore=structuredClone(pending);state.media=[...(state.media??[]).filter(item=>!(item.path===relative&&item.shotId===ref.shotId&&item.layerId===ref.layerId&&item.track===ref.track&&item.trackIndex===ref.trackIndex)||
+    Boolean(pending.publishedCorrection&&item.ownerImageApproval&&item.ownerImageApproval.approvalId!==ownerImageApproval?.approvalId)),mapped];
   pending.fulfillments[key]=binding;
   atomicJson(fulfillmentTxnPath(root),{schema:'media-fulfillment-transaction-v2',pendingBefore,key,binding,ownedMapping:mapped,createdAt:new Date().toISOString()});
   try{atomicJson(pendingPath(root),pending);hooks.afterPending?.();writeState(root,state);hooks.afterState?.();fs.unlinkSync(fulfillmentTxnPath(root));return pendingResult(root,pending)}catch(error){atomicJson(pendingPath(root),pendingBefore);const rollback=readState(root);rollback.media=withoutOwnedMapping(rollback.media,mapped);writeState(root,rollback);if(fs.existsSync(fulfillmentTxnPath(root)))fs.unlinkSync(fulfillmentTxnPath(root));throw error}
 }
 type Validator=(exe:string,args:string[],options:{cwd:string})=>Promise<{code:number;stdout:string;stderr:string}>;
-export interface ConfirmOptions { previewSeconds?:number; allowSampleDraft?:boolean; validator?:Validator }
+export interface ConfirmOptions { previewSeconds?:number; allowSampleDraft?:boolean; fullProduction?:true; validator?:Validator }
 const checkedSeconds=(result:{code:number;stdout:string;stderr:string},label:string)=>{
   if(result.code!==0)throw new Error(result.stderr.trim()||result.stdout.trim()||'Original native '+label+' validator failed.');
   let proof:Record<string,unknown>;
@@ -727,9 +1033,26 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
     fs.unlinkSync(pendingPath(root));return state;
   }
   const seconds=validateSeconds(options.previewSeconds);
+  if(state.identityPolicy==='v1'){
+    const draft=readNativeDraft(root,state)!;
+    await nativePlanPreflight(appPath,root,draft.artifact.manifest,nativeVoiceTiming(root,state).timelineDuration,draft.sha256);
+    const latest=readPending(root);
+    if(latest.token!==pending.token||latest.payloadSha256!==pending.payloadSha256||JSON.stringify(latest.fulfillments)!==JSON.stringify(pending.fulfillments))throw Error('NATIVE_PLAN_STALE_DURING_VALIDATION');
+  }
   const resolved=resolvePendingCandidate(root,state,pending);
+  if(options.fullProduction&&resolved.missing.length)throw Error('FULL_PRODUCTION_MEDIA_REQUIRED: '+resolved.missing.map(ref=>ref.key).join(', '));
   const missingInside=resolved.missing.filter(ref=>ref.scopeStart<seconds);
   if(missingInside.length)throw new Error('Missing media inside the selected sample: '+missingInside.map(item=>item.key).join(', '));
+  const identitySampleReceipt=state.identityPolicy==='v1'?
+    currentDraftIdentityReceipt(root,appPath,seconds):null;
+  const identityFullReceipt=state.identityPolicy==='v1'&&
+    !resolved.missing.some(ref=>ref.kind==='image')?
+    currentDraftIdentityReceipt(root,appPath):null;
+  const identityReceiptFile=state.identityPolicy==='v1'?
+    resolveProjectFile(root,'.studio/identity/native-publication-v1.json'):null;
+  const beforeIdentityReceiptBytes=identityReceiptFile&&fs.existsSync(identityReceiptFile)?
+    fs.readFileSync(identityReceiptFile):null;
+  let writtenIdentityReceiptSha:string|null=null;
   // The unmodified original native CLI decides whether the candidate is valid.
   const candidate=path.join(root,'.project-candidate-'+randomUUID()+'.json');
   const current=path.join(root,'project.json'),beforeBytes=fs.readFileSync(current),runner=options.validator??runProcess;
@@ -745,8 +1068,12 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
     if(!resolved.missing.length){
       const result=await runner(process.execPath,[cli,'validate',candidate],{cwd});
       if(result.code===0)full=checkedSeconds(result,'full-film');
+      else if(options.fullProduction)throw Error('FULL_PRODUCTION_VALIDATION_FAILED: '+(result.stderr.trim()||result.stdout.trim()||'Original full validator failed.'));
     }
     if(!full&&!options.allowSampleDraft)throw new Error('Only SAMPLE_READY. Explicitly approve incomplete draft promotion; full-film is not ready.');
+    const identityReceipt=full?identityFullReceipt:identitySampleReceipt;
+    if(state.identityPolicy==='v1'&&!identityReceipt)
+      throw Error('IDENTITY_FULL_NATIVE_MEDIA_UNVERIFIED');
     // CLI validation is async: do not promote a frozen candidate whose project,
     // approved script, WAV, words, caption revision or approved media changed
     // while the native process was running.
@@ -758,6 +1085,10 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
     const again=resolvePendingCandidate(root,fresh,diskPending);
     if(JSON.stringify(again.manifest)!==JSON.stringify(resolved.manifest)||JSON.stringify(again.missing)!==JSON.stringify(resolved.missing))throw new Error('Native candidate or missing-media ledger changed during validation.');
     if(!fs.readFileSync(current).equals(beforeBytes))throw new Error('Last-good native manifest changed during validation; staged confirmation is stale.');
+    if(identityReceipt&&JSON.stringify(currentDraftIdentityReceipt(root,appPath,
+      identityReceipt.scope==='SAMPLE'?seconds:undefined))!==
+      JSON.stringify(identityReceipt))
+      throw new Error('IDENTITY_NATIVE_DRAFT_LINEAGE_CHANGED_DURING_CLI');
     const readiness:NonNullable<StudioState['nativeReadiness']>={sampleReady:true,fullReady:Boolean(full),previewSeconds:seconds,checkedSeconds:sample.checkedSeconds,
       validationSha256:sample.fingerprint,missingOutsideScope:resolved.missing.map(item=>item.key),
       reviewedDraft:!full&&options.allowSampleDraft===true,verifiedAt:new Date().toISOString()};
@@ -774,8 +1105,16 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
     oldConfirmedResponseSha=fresh.tasks!.native!.confirmedResponseSha256;
     oldConfirmedResponsePath=fresh.tasks!.native!.confirmedResponsePath;
     fresh.external.native={revision,artifact:{...again,missing:again.missing},importedAt:new Date().toISOString()};
-    fresh.nativeReadiness=readiness;fresh.preview=undefined;fresh.approval=undefined;fresh.render=undefined;fresh.tasks!.native!.status='IMPORTED';fresh.tasks!.native!.confirmedResponseSha256=pending.responseSha256;fresh.tasks!.native!.confirmedResponsePath=pending.responsePath;
+    fresh.nativeReadiness=readiness;fresh.preview=undefined;fresh.approval=undefined;fresh.render=undefined;fresh.tasks!.native!.status='IMPORTED';
+    // A Published Correct is already journaled under its own lifecycle task.
+    // Keep the original Author response identity instead of relabeling Correct JSON.
+    if(!pending.publishedCorrection){fresh.tasks!.native!.confirmedResponseSha256=pending.responseSha256;fresh.tasks!.native!.confirmedResponsePath=pending.responsePath;}
     committedState=fresh;writeState(root,fresh);stateCommitted=true;
+    if(identityReceipt){
+      const published=publishNativeIdentityReceipt(root,appPath,
+        identityReceipt,sha(fs.readFileSync(current)));
+      writtenIdentityReceiptSha=published.receiptSha;
+    }
     atomicJson(path.join(root,'.studio','revisions','native-'+revision+'.json'),again.manifest);
     atomicJson(path.join(root,'.studio','revisions','native-authoring-'+revision+'.json'),{shot_ledger:again.shotLedger,sound_script:again.soundScript,asset_needs:again.assetNeeds,fulfillments:diskPending.fulfillments,missing:again.missing});
     fs.unlinkSync(pendingPath(root));return fresh;
@@ -804,6 +1143,22 @@ async function confirmImportOnce(appPath: string, root: string, token: string, o
         writeState(root,rollback);
       }else conflict=true;
     }
+    // The Studio-only receipt is part of this Native Confirm transaction.
+    // Restore prior exact bytes only if our committed receipt is still the
+    // current one and the manifest/state rollback has not conflicted with
+    // any newer independent change. Never overwrite a newer receipt.
+    if(writtenIdentityReceiptSha&&identityReceiptFile){
+      const currentReceipt=fs.existsSync(identityReceiptFile)?
+        strictJson(fs.readFileSync(identityReceiptFile,'utf8')) as Record<string,unknown>:null;
+      if(currentReceipt?.receiptSha!==writtenIdentityReceiptSha)conflict=true;
+      else if(!conflict){
+        if(beforeIdentityReceiptBytes){
+          const restored=identityReceiptFile+'.'+randomUUID()+'.restore';
+          fs.writeFileSync(restored,beforeIdentityReceiptBytes,{flag:'wx'});
+          fs.renameSync(restored,identityReceiptFile);
+        }else fs.unlinkSync(identityReceiptFile);
+      }
+    }
     if(conflict)throw new Error('RECOVERY_REQUIRED: newer independent changes prevented unsafe native rollback; original error: '+String(error));
     throw error;
   }finally{
@@ -827,7 +1182,8 @@ export function scriptCorrectionRechecked(state:StudioState):boolean {
       (!value.findings||value.findings.every(f=>f.status==='resolved'));
   });
 }
-export function activateScriptCandidate(root:string,state:StudioState,source:'AUTHOR_IMPORT'|'RECHECK'):boolean {
+export function activateScriptCandidate(root:string,state:StudioState,source:'AUTHOR_IMPORT'|'RECHECK',ownerAuthorized=false):boolean {
+  if(state.identityPolicy==='v1'&&!ownerAuthorized)return false;
   const candidate=state.scriptCandidate;
   if(!candidate||sha(candidate.text)!==candidate.sha256||
     candidate.sections.map(row=>row.text).join('\n\n')!==candidate.text)
@@ -836,14 +1192,14 @@ export function activateScriptCandidate(root:string,state:StudioState,source:'AU
     throw new Error('STALE: Script Author task no longer owns this candidate.');
   if(source==='RECHECK'&&!scriptCorrectionRechecked(state))
     throw new Error('RECHECK_REQUIRED: corrected Script must pass a current independent Recheck.');
-  if(state.approvedScript?.sha256===candidate.sha256&&
+  if(state.approvedScript?.sha256===candidate.sha256&&(!ownerAuthorized||state.approvedScript.revision===candidate.revision)&&
     JSON.stringify(state.approvedScript.authoring??null)===JSON.stringify(candidate.authoring??null))return false;
   const changed=state.approvedScript?.sha256!==candidate.sha256;
   const creativeChanged=JSON.stringify(state.approvedScript?.authoring??null)!==JSON.stringify(candidate.authoring??null);
   const approved:NonNullable<StudioState['approvedScript']>={
     sections:candidate.sections,text:candidate.text,sha256:candidate.sha256,revision:candidate.revision,
-    approvedAt:new Date().toISOString(),approvedBy:'AUTO',
-    approvalNote:source==='AUTHOR_IMPORT'?'Auto-activated after confirmed Script Author import.':'Auto-activated after passed Script Recheck.',
+    approvedAt:new Date().toISOString(),approvedBy:ownerAuthorized?'OWNER':'AUTO',
+    approvalNote:ownerAuthorized?'Owner explicitly approved the exact Script candidate.':source==='AUTHOR_IMPORT'?'Auto-activated after confirmed Script Author import.':'Auto-activated after passed Script Recheck.',
     authoring:candidate.authoring
   };
   // Write the exact revision before publishing it into active project state.
@@ -882,4 +1238,18 @@ export async function confirmImport(appPath:string,root:string,token:string,opti
   activeConfirmations.add(key);
   try{return await confirmImportOnce(appPath,root,token,options);}
   finally{activeConfirmations.delete(key);}
+}
+
+export function approveCurrentScript(root:string,input:{sha256:string;revision:number;taskId:string;ownerAuthorized:true}){
+ const state=readState(root),candidate=state.scriptCandidate;
+ if(input.ownerAuthorized!==true||!candidate||candidate.sha256!==input.sha256||candidate.revision!==input.revision||candidate.taskId!==input.taskId)throw Error('SCRIPT_APPROVAL_STALE');
+ const corrected=state.lifecycle?.tasks['script:correct']?.id===candidate.taskId;
+ if(!corrected&&state.tasks?.script?.status!=='IMPORTED')throw Error('SCRIPT_IMPORT_REQUIRED');
+ if(state.identityPolicy==='v1'){
+   const op=corrected?'recheck':'review',candidateSha=sha(JSON.stringify(candidate));
+   const report=Object.values(state.lifecycle?.artifacts??{}).filter(x=>x.stage==='script'&&x.operation===op&&(x.value as {artifact_sha256?:string}).artifact_sha256===candidateSha).sort((a,b)=>b.createdAt.localeCompare(a.createdAt))[0];
+   if(!report||report.status!=='REVIEWED_NO_FINDINGS'||report.artifactSha256!==sha(JSON.stringify(report.value)))throw Error('SCRIPT_INDEPENDENT_REVIEW_REQUIRED');
+ }
+ if(activateScriptCandidate(root,state,corrected?'RECHECK':'AUTHOR_IMPORT',true))writeState(root,state);
+ return state;
 }

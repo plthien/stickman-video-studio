@@ -3,6 +3,7 @@ import {useEffect,useLayoutEffect,useRef,useState} from 'react';
 import {useAppState} from '../../app/AppState';
 import {Badge,Button,Card,CardHeader} from '../../components/ui';
 import {LegacyStoryboardWorkspace} from './LegacyStoryboardWorkspace';
+import {SoundAssetsPanel} from './SoundAssetsPanel';
 import {ShotImageGallery,type GalleryTarget,type GalleryCard} from './ShotImageGallery';
 
 type Studio=NonNullable<Window['studio']>;
@@ -110,7 +111,6 @@ export function StoryboardWorkspace(){
     setSubmission(null);setBatchProgress(null);
     if(scope&&window.studio)void refresh(scope).catch(e=>{if(isCurrentProjectSession(scope))setError(message(e));});
     // The session guard prevents async responses from being applied to another project.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   },[id,native?.nativeDraft?.token,native?.nativeDraft?.revision,native?.external?.native?.revision]);
   // Electron's independent GET-only coordinator pushes each persisted provider
   // transition. A selected completed job immediately resolves its image URL
@@ -240,7 +240,7 @@ export function StoryboardWorkspace(){
   // Backend re-verifies lineage, references and chargeable state before POST.
   const eligibleBulk=prepared&&pending&&prepared.token===pending.token&&config?
     prepared.jobs.filter(item=>{
-      if(item.state!=='READY'||!item.prompt.trim())return false;
+      if(item.state!=='READY'||item.reuseApproved||!item.prompt.trim())return false;
       const target=galleryTargets.find(candidate=>candidate.key===item.targetKey&&
         candidate.shotId===item.shotId&&candidate.layerId===item.layerId&&
         candidate.path===item.path);
@@ -261,6 +261,8 @@ export function StoryboardWorkspace(){
     }).map(item=>({...item,regenerate:jobs.some(job=>
       job.token===pending.token&&job.targetKey===item.targetKey)})):[];
   const bulkRegenerated=eligibleBulk.filter(item=>item.regenerate).length;
+  const eligibleReuse=prepared?.jobs.filter(j=>j.reuseApproved&&(j.state==='READY'&&j.reuseSource||j.reuseBatchSource)&&galleryTargets.some(t=>t.key===j.targetKey&&!t.fulfilled))??[];
+  const approveReuseBatch=async()=>{const scope=captureProjectSession(),draft=native?.nativeDraft,studio=window.studio;if(!scope||!draft||!studio?.reuseApprovedAssets||!eligibleReuse.length)return;setBusy(true);setError('');try{const result=await studio.reuseApprovedAssets(scope.projectId,{token:draft.token,candidateSha:draft.artifactSha256,ownerAuthorized:true,items:eligibleReuse.map(j=>({targetKey:j.targetKey,sourceSha:(j.reuseSource??j.reuseBatchSource)!.sha256}))});if(!isCurrentProjectSession(scope))return;setError(result.filter(r=>r.status==='FAILED').map(r=>r.targetKey+': '+r.detail).join(' | '));const state=await studio.projectState(scope.projectId);setNativeIfSessionCurrent(scope,state);await refresh(scope);}catch(e){if(isCurrentProjectSession(scope))setError(message(e));}finally{if(isCurrentProjectSession(scope))setBusy(false);}};
   const galleryPreviewKey=cards.map(card=>[
     card.job?.id??'',card.job?.staged?.path??'',
     card.job?.staged?.sha256??''
@@ -332,9 +334,10 @@ export function StoryboardWorkspace(){
       spec.path!==target.path)return;
     setBusy(true);setError('');
     try{
+      if(!window.confirm('Approve this exact edited prompt and reference selection for the current image target?'))return;
       const next=await window.studio.saveImagePrompt(scope.projectId,{
         targetKey,fingerprint:spec.draftIdentity.creativeFingerprint,
-        styleSha256:spec.styleProfileRef.sha256,prompt,references
+        styleSha256:spec.styleProfileRef.sha256,prompt,references,ownerReviewed:true
       });
       if(isCurrentProjectSession(scope))setPrepared(next);
     }catch(error){if(isCurrentProjectSession(scope))setError(message(error));}
@@ -417,7 +420,7 @@ export function StoryboardWorkspace(){
       recoveryEpoch.current+=1;
       const result=await studio.glabsGenerate(scope.projectId,{
         targetKey,prompt:spec.prompt,model:config.model,
-        aspectRatio:config.aspectRatio,references:[...spec.references],
+        aspectRatio:spec.requestedOrientation??config.aspectRatio,references:[...spec.references],
         authorized:true,regenerate:true,acknowledgeUnknown:true,
         preparedFingerprint:spec.draftIdentity.creativeFingerprint
       });
@@ -479,7 +482,7 @@ export function StoryboardWorkspace(){
         }
         const response=await window.studio.glabsGenerate(scope.projectId,{
           targetKey:item.targetKey,prompt:item.prompt,model:selectedConfig.model,
-          aspectRatio:selectedConfig.aspectRatio,references:[...item.references],
+          aspectRatio:item.requestedOrientation??selectedConfig.aspectRatio,references:[...item.references],
           authorized:true,regenerate:item.regenerate,acknowledgeUnknown:false,
           preparedFingerprint:item.draftIdentity.creativeFingerprint
         });
@@ -550,7 +553,7 @@ export function StoryboardWorkspace(){
     try{
       const result=await window.studio.glabsGenerate(scope.projectId,{
         targetKey:entry.targetKey,prompt:entry.prompt,model:config.model,
-        aspectRatio:config.aspectRatio,references:[...entry.references],
+        aspectRatio:entry.requestedOrientation??config.aspectRatio,references:[...entry.references],
         authorized:true,regenerate:attempts.length>0,acknowledgeUnknown:false,
         preparedFingerprint:entry.draftIdentity.creativeFingerprint
       });
@@ -646,6 +649,8 @@ export function StoryboardWorkspace(){
     ?.target.shotId??shotIds[0]??'';
   return <div className="stack" data-testid="storyboard-automation">
     <Card>
+      {prepared?.jobs.filter(j=>j.reuseApproved).map(j=><div className="info" key={j.targetKey}>Exact reuse: {j.shotId}/{j.layerId} · {j.reuseSource?.path??(j.reuseBatchSource?'Authorized batch dependency · '+j.reuseBatchSource.path:j.reason)}</div>)}
+      {eligibleReuse.length>0&&<Button disabled={busy||!window.studio?.reuseApprovedAssets} onClick={()=>void approveReuseBatch()}>Authorize All Exact Reuse ({eligibleReuse.length})</Button>}
       <CardHeader title="Storyboard Images" action={<Badge tone={native?.nativeDraft?'mint':'amber'}>{native?.nativeDraft?'DRAFT':'NO DRAFT'}</Badge>}/>
       <div className="storyboard-compact-toolbar">
         <div className="info" data-testid="image-queue-counts">
@@ -706,6 +711,7 @@ export function StoryboardWorkspace(){
         <div className="info">{prepared?.shotCount??shotIds.length} Shots · {prepared?.uniquePaths??new Set(imageTargets.map(item=>item.path)).size} distinct paths</div>
       </details>
     </Card>
+    <SoundAssetsPanel revision={native?.nativeDraft?.artifactSha256??''} refreshKey={pending?.missing.length??0} onBound={()=>{const scope=captureProjectSession();if(!scope||!window.studio)return;void window.studio.projectState(scope.projectId).then(state=>{if(setNativeIfSessionCurrent(scope,state))return refresh(scope);}).catch(e=>{if(isCurrentProjectSession(scope))setError(message(e));});}}/>
     <Card>
       <CardHeader title={shotId?shotId+' · Shot Image Gallery':'Shot Image Gallery'}/>
       <div className="storyboard-compact-toolbar">

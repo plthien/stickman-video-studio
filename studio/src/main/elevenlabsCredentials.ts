@@ -35,7 +35,7 @@ export function elevenLabsStatus(userData:string,cipher:CredentialCipher,environ
   };
 }
 export function saveElevenLabsKey(userData:string,cipher:CredentialCipher,key:string):ElevenLabsCredentialStatus{
-  if(typeof key!=='string'||!key.trim()||key.length>2048||/[\r\n\x00-\x1f\x7f]/.test(key))
+  if(typeof key!=='string'||!key.trim()||key.length>2048||[...key].some(character=>{const code=character.codePointAt(0)??0;return code<0x20||code===0x7f;}))
     throw new Error('Enter a valid non-empty ElevenLabs API key.');
   if(!cipher.isEncryptionAvailable())throw new Error('OS-protected encryption is unavailable. The API key was not saved.');
   const file=secretFile(userData),folder=path.dirname(file);

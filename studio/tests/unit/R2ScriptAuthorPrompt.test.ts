@@ -34,7 +34,8 @@ describe('R2 focused source-exact Script Author handoff',()=>{
       expect(author.scriptAuthorClassification?.AGENT_ONLY.length).toBeGreaterThan(0);
       expect(author.sources.length).toBeGreaterThanOrEqual(5);
       expect(author.sources.some(source=>source.path==='references/autopilot-runtime.md')).toBe(false);
-      expect(native.version).toBe('stage-exact-v2');
+      expect(native.version).toBe('stage-exact-v3');
+      expect(native.referenceMedia?.length).toBeGreaterThan(0);
       expect(native.sources.some(source=>source.path==='references/autopilot-runtime.md')).toBe(true);
       for(const source of author.sources){
         const original=fs.readFileSync(path.join(nativeSkillRoot(appPath).root,source.path));
@@ -99,7 +100,11 @@ describe('R2 focused source-exact Script Author handoff',()=>{
     expect(task.prompt).not.toContain('REQUIRED_NONEMPTY_ARRAY');
     expect(task.prompt).not.toContain('REPLACE_WITH_ACTUAL_SECTION_ID');
     expect(task.prompt).toContain('source SHA256');
-    expect(task.prompt).toContain('Never copy the kite example');
+    // The former hard-coded kite-story example was deliberately removed.
+    // Require the generic source-grounded guard instead of reviving that sample.
+    expect(task.prompt).toContain('CONTENT-FREE STRUCTURAL SHELL');
+    expect(task.prompt).toContain('No copied example text, structural placeholders');
+    expect(task.prompt).not.toContain('Never copy the kite example');
     expect(task.prompt).toContain('"language": "English"');
     expect(task.prompt).toContain('"ratio": "9:16"');
     const contractStart=task.prompt.indexOf('{\n',task.prompt.indexOf('## 5. Exact JSON output contract'));
@@ -114,7 +119,10 @@ describe('R2 focused source-exact Script Author handoff',()=>{
       schema:'mode-b-external-result-v1',project_id:readState(root).project.id,
       task_id:task.id,revision:task.revision,input_sha256:task.inputSha256,stage:'script'
     });
-    expect(validateScript(example.payload).sections.map(s=>s.id)).toEqual(['opening','resolution']);
+    // The frozen envelope intentionally contains a non-importable structural shell.
+    // It must not silently become sample narration or a valid Script candidate.
+    expect(example.payload).toEqual({schema:'mode-b-script-v1',sections:[],authoring:{}});
+    expect(()=>validateScript(example.payload)).toThrow('Invalid script payload.');
     expect(sha(task.prompt)).toBe(task.promptSha256);
     expect(sha(fs.readFileSync(path.join(root,task.promptPath)))).toBe(task.promptSha256);
     expect(task.inputSha256).toBe(sourceFingerprint(appPath,root,'script'));

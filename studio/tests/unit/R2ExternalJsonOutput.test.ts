@@ -113,7 +113,7 @@ describe('R2 frozen task JSON attachment delivery',()=>{
           payload:{schema:'mode-b-review-v1',artifact_sha256:life.artifactSha256,
             status:'REVIEWED_WITH_FINDINGS',
             coverage:{target_ids:[target],modalities:[row.stage==='script'?'script':'manifest'],ranges:[],media_sha256s:[]},
-            findings:[{id:findingId,status:'open',severity:'major',target_ids:[target],
+            findings:[{id:findingId,status:'open',severity:'major',target_ids:[target],...(row.stage==='native'?{editable_paths:['/manifest/shots/0/layers/0/text']}:{}),
               requirement:'An explicitly supplied stage-specific test requirement.',
               evidence:{kind:'manifest',detail:'Synthetic test-only finding attached to the exact current artifact.'},
               recommendation:'Make an authorized scoped repair.'}]}

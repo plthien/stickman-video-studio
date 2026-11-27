@@ -2,9 +2,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {afterEach,describe,expect,it,vi} from 'vitest';
-import {prepareNativeImages,prepareNativeImageTarget,saveNativeImagePrompt,loadImageStyleProfile,compileImageJobSpecs} from '../../src/main/imagePreparation';
+import {prepareNativeImages,prepareNativeImageTarget,saveNativeImagePrompt,loadImageStyleProfile} from '../../src/main/imagePreparation';
 import {readNativeDraft,nativeImageTargetIdentity,publishNativeDraftCorrection} from '../../src/main/externalTasks';
-import {readState,sha} from '../../src/main/services';
+import {sha} from '../../src/main/services';
 import {appPath,cleanup,fixture,nativePayload,stageNative} from './SixIssueFixtures';
 
 afterEach(()=>{vi.restoreAllMocks();vi.unstubAllGlobals();cleanup();});

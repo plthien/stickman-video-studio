@@ -41,7 +41,8 @@ function preparedSpec(layerId:string):NonNullable<GalleryCard['spec']>{
     assetKind:'other',state:'READY',reason:'',prompt,
     promptSha256:'d'.repeat(64),effectivePrompt:prompt,
     effectivePromptSha256:'d'.repeat(64),sourceDescription:'verified source',
-    sourceLedger:'',sourceRows:[],references:[],styleAnchors:[],
+    sourceLedger:'',sourceRows:[],
+    references:[],styleAnchors:[],
     styleProfileRef:{id:'B1',sha256:'b'.repeat(64),path:'references/b1-minimal-handdrawn.md'},
     draftIdentity:{projectId:'A',authorTaskId:'author-A',token:'token-A',revision:1,
       creativeFingerprint:'a'.repeat(64)},
@@ -407,7 +408,9 @@ describe('F25 compact fixed-card thumbnail gallery and accessible original-size 
   it('F25-TEST-05 ESC, Close and backdrop dismiss and restore focus without event fallthrough',()=>{
     const approve=vi.fn(),generate=vi.fn();
     render(<Harness approve={approve} generate={generate}/>);
-    let {trigger,dialog}=openPortrait();
+    const opened=openPortrait();
+    const trigger=opened.trigger;
+    let dialog=opened.dialog;
     const close=within(dialog).getByRole('button',{name:'Close Preview'});
     const fit=within(dialog).getByRole('button',{name:'Fit Screen'});
     expect(document.activeElement).toBe(close);

@@ -5,7 +5,7 @@ import path from 'node:path';
 import {afterEach,describe,expect,it,vi} from 'vitest';
 import {captureAlignmentPin,publishAlignment} from '../../src/main/alignment';
 import {approveCaptionReview,draftCaptionReview,getCaptionReview} from '../../src/main/captionReview';
-import {fulfillMedia,getPendingMedia,importMediaFile} from '../../src/main/externalTasks';
+import {freezeTask,validateScript,fulfillMedia,getPendingMedia,importMediaFile} from '../../src/main/externalTasks';
 import {cancelJob,nativeJob} from '../../src/main/nativeJobs';
 import {currentNativeEvidence} from '../../src/main/nativeEvidence';
 import {createProjectStaged} from '../../src/main/projectCreation';
@@ -107,5 +107,37 @@ describe('UT-MF07 project-keyed renderer state',()=>{
     expect(source).toContain('activeKey.current===sessionKey');
     expect(source).not.toContain('[projectId,setJson,setResult]');
     expect(source).not.toMatch(/useEffect\(\(\)=>\{setJson\(''\);setResult\('idle'\);setPending\(null\);/);
+  });
+});
+
+describe('UT-MF08 content-free Script Author template',()=>{
+  it('MF08-1 frozen Script Author envelope is project-bound and has no invented story',()=>{
+    const {root}=fixture();
+    const frozen=freezeTask(appPath,root,'script');
+    const prompt=frozen.prompt;
+    const section=prompt.split('## 5. Exact JSON output contract')[1];
+    expect(section).toBeDefined();
+    const envelopeText=section!.split('Required payload:')[0];
+    const begin=envelopeText.indexOf('{');
+    const end=envelopeText.lastIndexOf('}');
+    expect(begin).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(begin);
+    const envelope=JSON.parse(envelopeText.slice(begin,end+1)) as {
+      schema:string;project_id:string;task_id:string;revision:number;
+      input_sha256:string;stage:string;
+      payload:{schema:string;sections:unknown[];authoring:Record<string,unknown>}
+    };
+    expect(envelope).toMatchObject({
+      schema:'mode-b-external-result-v1',project_id:readState(root).project.id,
+      task_id:frozen.id,revision:frozen.revision,input_sha256:frozen.inputSha256,
+      stage:'script',
+      payload:{schema:'mode-b-script-v1',sections:[],authoring:{}}
+    });
+    expect(prompt).toContain('CONTENT-FREE STRUCTURAL SHELL');
+    expect(envelopeText).not.toMatch(/red kite|lost kite|small ribbon|child follows|at sunrise/i);
+    // The structural shell is deliberately NOT importable as a finished Script.
+    expect(()=>validateScript(envelope.payload)).toThrow('Invalid script payload.');
+    expect(sha(fs.readFileSync(path.join(root,frozen.promptPath))))
+      .toBe(frozen.promptSha256);
   });
 });
