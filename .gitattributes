@@ -1,3 +1,5 @@
-# B4's immutable style prompt is verified by raw SHA-256 in Original Core.
-# Preserve the exact committed bytes on checkout, including Windows autocrlf.
-/skills/directing-stickman-videos/assets/b4/style-lock.txt -text
+# The bundled Original Core is a byte-pinned resource pack: its B4 style lock
+# verifies SHA-256 fingerprints of text resources (assets/b4/style-lock.txt),
+# so Core text files must check out with LF endings on every platform,
+# independent of the machine's core.autocrlf setting.
+skills/directing-stickman-videos/** text=auto eol=lf
