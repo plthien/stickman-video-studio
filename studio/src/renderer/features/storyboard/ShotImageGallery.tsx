@@ -104,11 +104,13 @@ function CardPromptEditor({card,onSave,projectId}:{
   const spec=card.spec;
   const [prompt,setPrompt]=useState(spec?.prompt??'');
   const [references,setReferences]=useState((spec?.identityOwnerReferences??spec?.references??[]).join(', '));
+  const specPrompt=spec?.prompt,specIdentityReferences=spec?.identityOwnerReferences,
+    specReferences=spec?.references;
   useEffect(()=>{
-    setPrompt(spec?.prompt??'');
-    setReferences((spec?.identityOwnerReferences??spec?.references??[]).join(', '));
+    setPrompt(specPrompt??'');
+    setReferences((specIdentityReferences??specReferences??[]).join(', '));
   },[spec?.draftIdentity.creativeFingerprint,spec?.promptSha256,
-    spec?.identityOwnerReferences?.join('|'),spec?.references.join('|')]);
+    specPrompt,specIdentityReferences,specReferences]);
   if(!spec)return <div className="info">No source-backed prompt is currently prepared for this target.</div>;
   const parsed=references.split(',').map(value=>value.trim()).filter(Boolean);
   return <div className="stack">
@@ -176,6 +178,7 @@ function ImagePreviewLightbox({card,url,onClose,triggerRef}:{
   const closeRef=useRef<HTMLButtonElement>(null);
   useEffect(()=>{
     const previousFocus=document.activeElement instanceof HTMLElement?document.activeElement:null;
+    const trigger=triggerRef.current;
     closeRef.current?.focus();
     const handleKey=(event:KeyboardEvent)=>{
       if(event.key==='Escape'){
@@ -197,7 +200,7 @@ function ImagePreviewLightbox({card,url,onClose,triggerRef}:{
     document.addEventListener('keydown',handleKey);
     return()=>{
       document.removeEventListener('keydown',handleKey);
-      if(triggerRef.current?.isConnected)triggerRef.current.focus();
+      if(trigger?.isConnected)trigger.focus();
       else if(previousFocus?.isConnected)previousFocus.focus();
     };
   },[onClose,triggerRef]);

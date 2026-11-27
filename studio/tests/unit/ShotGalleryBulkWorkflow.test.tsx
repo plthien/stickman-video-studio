@@ -73,7 +73,7 @@ function install({initial=4,rejectIndex=-1,superseded=false}:{
     const former={...job(0),status:'APPROVED',targetCreativeSha256:'9'.repeat(64)};
     records=[former,...records];
   }
-  let fulfilled=new Set<string>();
+  const fulfilled=new Set<string>();
   const pendingMedia=vi.fn(async(id:string)=>id==='A'?{
     token:'token-A',status:'WAITING_FOR_MEDIA',missing:targets.filter(t=>!fulfilled.has(t.key)),
     after:{shots,captions:[]},fulfillments:Object.fromEntries(

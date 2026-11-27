@@ -408,7 +408,9 @@ describe('F25 compact fixed-card thumbnail gallery and accessible original-size 
   it('F25-TEST-05 ESC, Close and backdrop dismiss and restore focus without event fallthrough',()=>{
     const approve=vi.fn(),generate=vi.fn();
     render(<Harness approve={approve} generate={generate}/>);
-    let {trigger,dialog}=openPortrait();
+    const opened=openPortrait();
+    const trigger=opened.trigger;
+    let dialog=opened.dialog;
     const close=within(dialog).getByRole('button',{name:'Close Preview'});
     const fit=within(dialog).getByRole('button',{name:'Fit Screen'});
     expect(document.activeElement).toBe(close);

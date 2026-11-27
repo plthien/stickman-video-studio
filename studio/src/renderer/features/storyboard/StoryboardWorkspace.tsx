@@ -111,7 +111,6 @@ export function StoryboardWorkspace(){
     setSubmission(null);setBatchProgress(null);
     if(scope&&window.studio)void refresh(scope).catch(e=>{if(isCurrentProjectSession(scope))setError(message(e));});
     // The session guard prevents async responses from being applied to another project.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   },[id,native?.nativeDraft?.token,native?.nativeDraft?.revision,native?.external?.native?.revision]);
   // Electron's independent GET-only coordinator pushes each persisted provider
   // transition. A selected completed job immediately resolves its image URL

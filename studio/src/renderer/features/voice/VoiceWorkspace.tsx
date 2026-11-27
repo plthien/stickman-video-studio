@@ -26,6 +26,9 @@ export function VoiceWorkspace() {
     ]);
     if(isCurrentProjectSession(scope)){setJobAction(next);setTimingEvidence(evidence);}
   };
+  // Deps are curated: the session helpers change identity on every provider
+  // render, and the session guard rejects scopes from another project.
+  /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(()=>{
     setJobAction(null);setTimingEvidence(false);
     const scope=captureProjectSession();
@@ -34,6 +37,10 @@ export function VoiceWorkspace() {
       if(isCurrentProjectSession(scope))setMessage('Voice status unavailable: '+String(error));
     });
   },[id,audioSha,native?.longform?.status]);
+  /* eslint-enable react-hooks/exhaustive-deps */
+  // Deps are curated: the session helpers change identity on every provider
+  // render, and the session guard rejects scopes from another project.
+  /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(()=>{
     if(status!=='busy'||!id)return;
     const timer=window.setInterval(()=>{
@@ -45,6 +52,10 @@ export function VoiceWorkspace() {
     },1500);
     return()=>window.clearInterval(timer);
   },[id,status]);
+  /* eslint-enable react-hooks/exhaustive-deps */
+  // Deps are curated: the session helpers change identity on every provider
+  // render, and the session guard rejects scopes from another project.
+  /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(()=>{
     let active=true;setPlaybackUrl('');setPlaybackError('');
     const scope=captureProjectSession();
@@ -57,6 +68,7 @@ export function VoiceWorkspace() {
     });
     return()=>{active=false};
   },[id,audioSha,voiceStale,playbackRetry]);
+  /* eslint-enable react-hooks/exhaustive-deps */
   const hasAlignment = Boolean(native?.alignment);
   const wordsSha256 = native?.alignment?.wordsSha256;
   const captionRevision = native?.alignment?.captionReview?.revision;
